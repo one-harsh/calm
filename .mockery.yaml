@@ -1,0 +1,14 @@
+with-expecter: true
+inpackage: true
+dir: "{{.InterfaceDir}}"
+filename: "mock_{{.InterfaceNameSnake}}.go"
+mockname: "Mock{{.InterfaceName}}"
+boilerplate-file: ".mockery-header.txt"
+
+# Port interfaces are registered here as they are defined.
+# Mocks are generated in the same package as the interface,
+# behind //go:build mocks (added by boilerplate-file above).
+packages:
+  github.com/one-harsh/calm/internal/db:
+    interfaces:
+      DAL:

@@ -1,0 +1,42 @@
+# Build artifacts
+/bin/
+/dist/
+/build/
+*.exe
+*.test
+*.out
+
+# Local data
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.calm/
+~/.calm/
+
+# Coverage
+coverage.txt
+coverage.html
+*.cover
+*.coverprofile
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Mockery cache
+.mockery/
+
+# go-task cache
+.task/
+
+# Local env overrides
+.env
+.env.local

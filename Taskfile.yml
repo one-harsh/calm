@@ -1,0 +1,248 @@
+version: "3"
+
+vars:
+  BIN_DIR: "{{.ROOT_DIR}}/bin"
+  CALM_BIN: "{{.BIN_DIR}}/calm"
+  ADAPTER_BIN: "{{.BIN_DIR}}/calm-adapter"
+  TEST_TAGS: "mocks"
+  LDFLAGS: "-s -w"
+
+env:
+  CGO_ENABLED: "0"
+
+tasks:
+  default:
+    desc: Quality gate — fmt, lint, test, build (inner-loop "am I clean?" check)
+    summary: |
+      Inner-loop quality gate. Runs fmt → lint → test → build in order
+      so the source tree is formatted, lint-clean, fully tested, and
+      buildable in one shot.
+
+      Differs from `task ci`: `ci` also runs `gen:check` to assert that
+      generated files (genapi, mocks) match the spec/interfaces. Use `ci`
+      before pushing; use bare `task` while iterating.
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test
+      - task: build
+
+  tools:install:
+    desc: Install developer tools and refresh goenv shims
+    summary: |
+      Installs gofumpt, goimports, mockery v2, golangci-lint v2, and
+      oapi-codegen v2 into the active Go version's GOPATH/bin, then runs
+      `goenv rehash` so the binaries become visible on PATH via shim.
+
+      Without the rehash step, newly-installed tools aren't reachable
+      from `task` invocations because the goenv shim only proxies tools
+      it knows about at shim-creation time.
+
+      Run once after switching Go versions, or after editing this list.
+    cmds:
+      - go install mvdan.cc/gofumpt@latest
+      - go install golang.org/x/tools/cmd/goimports@latest
+      - go install github.com/vektra/mockery/v2@latest
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+      - go install github.com/google/addlicense@latest
+      - goenv rehash
+
+  tidy:
+    desc: go mod tidy
+    cmds:
+      - go mod tidy
+
+  fmt:
+    desc: Format code (gofumpt + goimports + SPDX headers on Go files)
+    cmds:
+      - gofumpt -w .
+      - goimports -local github.com/one-harsh/calm -w .
+      - addlicense -c "The CALM Authors" -s=only -l apache -ignore '**/*.yaml' -ignore '**/*.yml' -ignore '**/*.sql' -ignore '**/Dockerfile' -ignore '**/*.gen.go' -ignore '**/mock_*.go' -ignore 'bin/**' -ignore '.task/**' .
+
+  lint:
+    desc: Run golangci-lint and verify SPDX headers on Go files
+    cmds:
+      - golangci-lint run ./...
+      - addlicense -check -c "The CALM Authors" -s=only -l apache -ignore '**/*.yaml' -ignore '**/*.yml' -ignore '**/*.sql' -ignore '**/Dockerfile' -ignore '**/*.gen.go' -ignore '**/mock_*.go' -ignore 'bin/**' -ignore '.task/**' .
+
+  gen:api:
+    desc: Regenerate API types/server/client from docs/api/openapi.yaml
+    summary: |
+      Runs oapi-codegen against `docs/api/openapi.yaml` (the canonical formal
+      contract per CLAUDE.md) and produces `internal/api/genapi/genapi.gen.go`.
+
+      Edit the YAML, run this, commit both. Never hand-edit *.gen.go files —
+      `task gen:check` (in `task ci`) will fail on drift.
+    cmds:
+      - mkdir -p internal/api/genapi
+      - oapi-codegen -config oapi-codegen.yaml docs/api/openapi.yaml
+    sources:
+      - docs/api/openapi.yaml
+      - oapi-codegen.yaml
+    generates:
+      - internal/api/genapi/genapi.gen.go
+
+  gen:mocks:
+    desc: Regenerate mockery mocks (in-package, build-tagged "mocks")
+    summary: |
+      Deletes existing `mock_*.go` files under internal/ first, then runs
+      mockery v2 against `.mockery.yaml`. The delete-first step catches
+      orphaned mocks if a port interface is removed but its mock survives.
+
+      Mocks are in-package (same Go package as the interface) and carry
+      `//go:build mocks` so they don't ship in prod binaries. Tests run
+      with `-tags=mocks` (set in this Taskfile).
+    cmds:
+      - find internal -type f -name 'mock_*.go' -delete
+      - mockery
+
+  gen:check:
+    desc: Re-run codegen and fail if generated files drift from committed state
+    summary: |
+      Drift gate for codegen. Re-runs `gen:api` and `gen:mocks`, then asserts
+      that the affected generated files match their committed copies.
+
+      Watched pathspecs (only generated files, not whole directories):
+        - 'internal/api/genapi/*.gen.go'  (oapi-codegen output)
+        - 'internal/**/mock_*.go'         (mockery in-package output)
+
+      Catches the "I edited the spec/interface but forgot to commit the
+      regenerated code" class of bug. Wired into `task ci`.
+    cmds:
+      - task: gen:api
+      - task: gen:mocks
+      - |
+        if ! git diff --quiet -- 'internal/api/genapi/*.gen.go' 'internal/**/mock_*.go'; then
+          echo "ERROR: generated files are out of date. Run 'task gen:api' and 'task gen:mocks' and commit." >&2
+          git --no-pager diff --stat -- 'internal/api/genapi/*.gen.go' 'internal/**/mock_*.go' >&2
+          exit 1
+        fi
+
+  build:
+    desc: Build both binaries (static, no CGO)
+    deps: [build:calm, build:adapter]
+
+  build:calm:
+    desc: Build the CALM service binary
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.CALM_BIN}} ./cmd/calm
+    sources:
+      - cmd/calm/**/*.go
+      - internal/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.CALM_BIN}}"
+
+  build:adapter:
+    desc: Build the MCP adapter binary
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.ADAPTER_BIN}} ./cmd/calm-adapter
+    sources:
+      - cmd/calm-adapter/**/*.go
+      - adapter/**/*.go
+      - internal/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.ADAPTER_BIN}}"
+
+  test:
+    desc: Run unit tests then integration tests
+    cmds:
+      - task: test:unit
+      - task: test:integration
+
+  test:unit:
+    desc: Run unit tests (excludes ./test/integration/...; in-package mocks compile in via -tags={{.TEST_TAGS}})
+    cmds:
+      - |
+        PKGS=$(go list ./... | grep -v 'test/integration')
+        go test -tags={{.TEST_TAGS}} -race -count=1 $PKGS
+
+  test:integration:
+    desc: Run integration tests against the dev Postgres (requires `task dev:up`)
+    summary: |
+      Each suite run creates a fresh `calm_test_<rand>` database under the
+      long-lived Postgres sidecar, runs migrations into it, runs all tests,
+      and drops the database at teardown. Requires `task dev:up` to have
+      started the sidecar; tests fail fast with a hint if Postgres is
+      unreachable.
+    env:
+      CALM_TEST_PG_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+    cmds:
+      - go test -tags={{.TEST_TAGS}} -race -count=1 ./test/integration/...
+
+  bench:
+    desc: Run Go benchmarks under ./internal/... (not part of `task ci`)
+    summary: |
+      Runs `-bench=. -benchmem` against all packages. Benchmarks are
+      excluded from `task test` / `task ci` because they're slow and
+      machine-dependent. Use this when measuring a perf-driven decision.
+
+      Cold-cache numbers require dropping OS page cache between runs:
+        macOS:  sudo purge && task bench
+        Linux:  echo 3 | sudo tee /proc/sys/vm/drop_caches && task bench
+    cmds:
+      - go test -tags={{.TEST_TAGS}} -bench=. -benchmem -run=^$ ./internal/...
+
+  ci:
+    desc: CI gate - codegen drift check, lint, test, build
+    summary: |
+      Full pre-merge gate: gen:check (codegen drift) → lint → test → build.
+
+      Safe to run anywhere with the toolchain installed. CI calls this; humans
+      can run it before pushing. For inner-loop "am I clean?" without the
+      drift check, use bare `task` (the default target) which skips gen:check.
+    cmds:
+      - task: gen:check
+      - task: lint
+      - task: test
+      - task: build
+
+  run:local:
+    desc: Run the CALM service locally against the dev Postgres
+    summary: |
+      Builds and runs the CALM binary against the local dev Postgres started
+      by `task dev:up` (default DSN
+      `postgres://postgres:postgres@localhost:5432/calm?sslmode=disable`).
+
+      Override config via env: CALM_ADDR, CALM_STORAGE_DSN, CALM_LOG_LEVEL,
+      etc. (see internal/config/config.go).
+    deps: [build:calm]
+    cmds:
+      - "{{.CALM_BIN}}"
+
+  dev:up:
+    desc: Start local Postgres (with pg_textsearch + pg_trgm) for development
+    summary: |
+      Builds (first time) and starts the local-dev Postgres service defined in
+      docker-compose.yml. The image bundles pg_textsearch (compiled from source
+      against postgres:17) and runs Postgres with `-c shared_preload_libraries=pg_textsearch`
+      so the BM25 access method is available without further config.
+
+      Connection string for `task run:local CALM_STORAGE=postgres`:
+        postgres://postgres:postgres@localhost:5432/calm?sslmode=disable
+
+      Data persists across runs in the named docker volume `calm-pg-data`.
+      Use `task dev:down` to stop; data survives. Wipe with `docker volume rm calm-pg-data`.
+    cmds:
+      - docker compose up -d --wait
+
+  dev:down:
+    desc: Stop local-dev Postgres (data volume preserved)
+    cmds:
+      - docker compose down
+
+  docker:build:
+    desc: Build the CALM Docker image
+    cmds:
+      - docker build -t calm:dev .
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}}

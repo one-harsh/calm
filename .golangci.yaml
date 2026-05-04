@@ -1,0 +1,78 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  build-tags:
+    - mocks
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - govet
+    - gosec
+    - ineffassign
+    - staticcheck
+    - unused
+    - gocritic
+    - revive
+  settings:
+    revive:
+      # Aligned with CLAUDE.md: comments only when they describe a non-obvious
+      # constraint. Don't force generic doc comments on every exported symbol.
+      rules:
+        - name: package-comments
+          disabled: true
+        - name: exported
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+        - name: unused-receiver
+          disabled: true
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
+  exclusions:
+    paths:
+      - ".*\\.gen\\.go$"
+      - "internal/api/genapi/.*"
+    rules:
+      - path: "mock_.*\\.go$"
+        linters:
+          - errcheck
+          - gocritic
+          - gosec
+          - revive
+          - staticcheck
+          - unused
+      - path: "_test\\.go$"
+        linters:
+          - errcheck
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/one-harsh/calm

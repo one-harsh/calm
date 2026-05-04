@@ -1,0 +1,29 @@
+# Image is built from deploy/dev/postgres/Dockerfile to bundle pg_textsearch
+# alongside Postgres 17. shared_preload_libraries is set via the postgres
+# command flags rather than a mounted config file — fewer files, same effect.
+
+services:
+  postgres:
+    build:
+      context: deploy/dev/postgres
+    image: calm-dev-postgres:17-pgts
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_textsearch
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: calm
+    ports:
+      - "5432:5432"
+    volumes:
+      - calm-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d calm"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  calm-pg-data:

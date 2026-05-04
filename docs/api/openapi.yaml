@@ -1,0 +1,764 @@
+openapi: 3.0.3
+info:
+  title: CALM API
+  version: 1.0.0
+  description: |
+    Formal contract for the CALM HTTP API. The HLD (`docs/HLD.md` §6) is the
+    canonical *intent*; this file is the canonical *contract*. Code is generated
+    against this spec via oapi-codegen. Drift between the two is checked in CI.
+
+    All requests carry `Authorization: Bearer <key>`. CALM resolves the key to a
+    namespace and enforces it on every operation. Cross-namespace access returns
+    404 (invisibility, not denial) per HLD §6.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      summary: Service health
+      description: |
+        Operational health endpoint. Returns 200 when the process is up and its
+        dependencies (Postgres connection, required extensions) are reachable;
+        503 when degraded. Unauthenticated — k8s probes do not carry bearer
+        tokens. Suitable for both liveness and readiness probes at v1; a
+        liveness/readiness split can be introduced later without breaking this
+        endpoint.
+      tags: [operational]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResult' }
+        '503':
+          description: Service is degraded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResult' }
+
+  /v1/version:
+    get:
+      operationId: getVersion
+      summary: Service version
+      description: |
+        Returns the running binary's version metadata. Unauthenticated.
+        Useful for deployment verification and incident triage.
+      tags: [operational]
+      security: []
+      responses:
+        '200':
+          description: Version metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VersionResult' }
+
+  /v1/sessions:
+    post:
+      operationId: createSession
+      summary: Create a session
+      description: |
+        HLD §6. Session ID is workload-provided and opaque. Namespace is resolved
+        from the API key, never from the body. Optional `client` identifier
+        auto-registers on first reference (HLD DL01); omitted means `default`.
+      tags: [sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSessionRequest' }
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/sessions/{session_id}:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+    delete:
+      operationId: deleteSession
+      summary: Tear down a session and all its data
+      description: |
+        HLD §6 / §8. Sources, chunks, vocabulary, events, and labels cascade.
+        Response carries cascade counts so workloads can audit what was removed
+        without a follow-up read.
+      tags: [sessions]
+      responses:
+        '200':
+          description: Session deleted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteSessionResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/sessions/{session_id}/sources:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+    get:
+      operationId: listSources
+      summary: List ingested sources within a session
+      description: HLD §6. End-of-work observability — what was indexed and how much.
+      tags: [sessions]
+      responses:
+        '200':
+          description: Sources
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListSourcesResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/sessions/{session_id}/snapshot:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+      - in: query
+        name: budget_bytes
+        schema: { type: integer, minimum: 256, maximum: 8192, default: 2048 }
+        description: Byte budget for the snapshot. HLD §11 caps at 8KB.
+    get:
+      operationId: getSnapshot
+      summary: Return session events ordered by priority and recency within a byte budget
+      description: |
+        HLD §6 / §8. Generic event store (DL08) — CALM does not interpret event
+        content or build a structured state representation. Workloads needing
+        structured shapes build them in their own middleware from the returned
+        event stream.
+      tags: [sessions]
+      responses:
+        '200':
+          description: Snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnapshotResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/ingest:
+    post:
+      operationId: ingest
+      summary: Ingest raw content; return a compact representation
+      description: |
+        HLD §4 / §6. Chunks, indexes, optionally orders the compact summary by
+        intent relevance via RRF (DL05). Same `source` label within a session
+        replaces previous content idempotently (invariant #6).
+      tags: [ingest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IngestRequest' }
+      responses:
+        '200':
+          description: Compact representation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/search:
+    post:
+      operationId: search
+      summary: Query indexed content within a session
+      description: |
+        HLD §4 / §6 / §7. Three-layer fallback (primary tokenizer → trigram →
+        fuzzy) is internal. Layer 1 runs against both `chunks_fts_prose` and
+        `chunks_fts_code` and the two rankings are RRF-fused; results from both
+        tokenization paths come back in one ranked list. Workload does not scope
+        by content_type.
+      tags: [search]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SearchRequest' }
+      responses:
+        '200':
+          description: Ranked results, grouped by query
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/events:
+    post:
+      operationId: writeEvents
+      summary: Record session events
+      description: |
+        HLD §4 / §6. `type` is workload-defined (no fixed taxonomy). `priority`
+        is required (1=critical, 4=noise). `data` is opaque to CALM. Generic
+        event store (DL08) — CALM persists and serves; workloads interpret.
+      tags: [events]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WriteEventsRequest' }
+      responses:
+        '202':
+          description: Events accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WriteEventsResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/events/{session_id}:
+    parameters:
+      - $ref: '#/components/parameters/SessionID'
+      - in: query
+        name: types
+        schema:
+          type: array
+          items: { type: string }
+        style: form
+        explode: false
+        description: Comma-separated list of event types to filter by.
+      - in: query
+        name: min_priority
+        schema: { type: integer, minimum: 1, maximum: 4 }
+        description: Return only events with priority ≤ this value (lower = more important).
+      - in: query
+        name: limit
+        schema: { type: integer, minimum: 1, maximum: 1000 }
+    get:
+      operationId: readEvents
+      summary: Read events for a session
+      description: HLD §6. Supports filtering by `type` and `min_priority`.
+      tags: [events]
+      responses:
+        '200':
+          description: Events
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadEventsResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/manage/sessions:
+    parameters:
+      - in: query
+        name: client
+        schema: { type: string }
+        description: Filter by client identifier within the API key's namespace.
+      - in: query
+        name: labels
+        style: deepObject
+        explode: true
+        schema:
+          type: object
+          additionalProperties: { type: string }
+        description: |
+          Label filter. Serialized as `labels[key]=value` (deepObject style).
+          Multiple pairs are AND-ed.
+    get:
+      operationId: manageListSessions
+      summary: List sessions in the API key's namespace
+      description: HLD §6. Scoped to the API key's namespace. Returns rich session info including labels, last activity, and event count.
+      tags: [manage]
+      responses:
+        '200':
+          description: Sessions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListManagedSessionsResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      operationId: manageDeleteSessions
+      summary: Bulk-delete sessions in the namespace
+      description: HLD §6. `dry_run=true` returns the affected count without deleting.
+      tags: [manage]
+      parameters:
+        - in: query
+          name: dry_run
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Result of delete (or dry-run count)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteManagedSessionsResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/manage/clients:
+    get:
+      operationId: manageListClients
+      summary: List clients in the API key's namespace
+      description: |
+        HLD §6. Read-only at v1 — operators can see which clients exist and
+        their activity. Useful for spotting typo-clients and dead workloads.
+      tags: [manage]
+      responses:
+        '200':
+          description: Clients
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListClientsResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/manage/clients/{client}:
+    parameters:
+      - in: path
+        name: client
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 256 }
+    delete:
+      operationId: manageDeleteClient
+      summary: Remove a client and cascade all its sessions
+      description: |
+        HLD §6. Cascades through `sessions.client` FK — all the client's
+        sessions, sources, chunks, events, and labels are removed. The `default`
+        client cannot be deleted (returns 409) — it's the bootstrap fallback
+        for sessions without a `client` field.
+      tags: [manage]
+      parameters:
+        - in: query
+          name: dry_run
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Result of delete (or dry-run count)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteClientResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    SessionID:
+      in: path
+      name: session_id
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 256 }
+
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: |
+        Resource not found within the caller's namespace. Cross-namespace
+        access returns 404, not 403 — invisibility, not denial.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Request conflicts with current state (e.g., duplicate session, attempt to delete `default` client)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: Body exceeds the 1MB ingest cap (HLD §11)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Per-namespace rate limit exceeded (HLD §11)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        endpoint: { type: string }
+        detail: { type: string }
+
+    Session:
+      description: |
+        Session as echoed in the createSession response. Matches HLD §6 — minimal
+        confirmation of what CALM committed, after namespace resolution, client
+        auto-registration, and operator-ceiling clamping on `ttl_minutes`.
+      type: object
+      required: [session_id, namespace, client, ttl_minutes, created_at]
+      properties:
+        session_id: { type: string }
+        namespace: { type: string }
+        client: { type: string }
+        ttl_minutes: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    ManagedSession:
+      description: Session shape returned by the management API. Adds last_activity, labels, and event_count to the core Session fields.
+      type: object
+      required: [session_id, namespace, client, ttl_minutes, created_at, last_activity, event_count]
+      properties:
+        session_id: { type: string }
+        namespace: { type: string }
+        client: { type: string }
+        ttl_minutes: { type: integer }
+        created_at: { type: string, format: date-time }
+        last_activity: { type: string, format: date-time }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        event_count: { type: integer }
+
+    CreateSessionRequest:
+      type: object
+      required: [session_id]
+      properties:
+        session_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        client:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Workload identifier. Auto-registers on first reference. Omitted attributes to `default`.
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        ttl_minutes:
+          type: integer
+          minimum: 1
+          maximum: 10080
+          description: Inactivity timeout. Clamped to the operator-configured ceiling.
+
+    CascadeCounts:
+      description: Counts of dependent rows removed by a cascading delete (HLD §6).
+      type: object
+      required: [sources, chunks, events, labels]
+      properties:
+        sources: { type: integer }
+        chunks: { type: integer }
+        events: { type: integer }
+        labels: { type: integer }
+
+    DeleteSessionResult:
+      type: object
+      required: [deleted_session_id, cascaded]
+      properties:
+        deleted_session_id: { type: string }
+        cascaded: { $ref: '#/components/schemas/CascadeCounts' }
+
+    SectionPreview:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        preview: { type: string }
+        matches:
+          type: array
+          items: { type: string }
+          description: |
+            When `intents` were provided on ingest, the subset of intents this
+            section matches (by appearance in any intent's top-K). Empty array
+            means matched no intent. Absent when ingest had no intents.
+
+    IngestRequest:
+      type: object
+      required: [session_id, content, source]
+      properties:
+        session_id: { type: string, minLength: 1 }
+        content: { type: string }
+        source:
+          type: string
+          minLength: 1
+          description: Label identifying this content within the session. Re-ingesting with the same source replaces prior content (invariant #6).
+        format:
+          type: string
+          enum: [log, stacktrace, csv, tsv, metrics, json, markdown, text]
+          description: Format hint for chunking. If absent, CALM auto-detects (HLD §4).
+        content_type:
+          type: string
+          description: |
+            Workload-provided default for tokenization branching (HLD DL06). `code`
+            for source-file or build-output content; `prose` for natural-language
+            content (default if omitted). The chunker may override per chunk when
+            format signals demand it — fenced code blocks inside a markdown ingest
+            are classified as `code` regardless of the top-level hint, and stacktrace
+            frames are always `code`. Unknown values persist as-is but are treated
+            as `prose` for tokenization until their strategies are implemented.
+        intents:
+          type: array
+          maxItems: 3
+          items: { type: string, minLength: 1 }
+          description: |
+            Up to 3 intent strings (HLD DL05). When provided and content exceeds
+            the configured size threshold, `summary` is ordered by RRF across
+            per-intent rankings and each section carries a `matches` array.
+
+    IngestResult:
+      type: object
+      required: [sections_indexed, sections_total, summary_truncated, source, summary, distinctive_terms]
+      properties:
+        sections_indexed: { type: integer, description: Number of sections included in the returned `summary`. }
+        sections_total: { type: integer, description: Total sections produced by chunking; may exceed `sections_indexed` if truncated. }
+        summary_truncated: { type: boolean, description: True when `summary` was capped at the 50-entry limit. }
+        source: { type: string, description: Echoes the request `source` for confirmation. }
+        summary:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/SectionPreview' }
+          description: One entry per indexed section, capped at 50.
+        distinctive_terms:
+          type: array
+          maxItems: 40
+          items: { type: string }
+          description: Top terms by IDF in this session, capped at 40. Vocabulary the LLM should use for follow-up search.
+
+    SearchRequest:
+      type: object
+      required: [session_id, queries]
+      properties:
+        session_id: { type: string }
+        queries:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { type: string, minLength: 1 }
+        source:
+          type: string
+          description: Scopes the search to a specific source label.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 5
+
+    SearchHit:
+      type: object
+      required: [title, snippet, source, match_layer]
+      properties:
+        title: { type: string }
+        snippet:
+          type: string
+          description: Exact-text excerpt from the indexed chunk around the matching terms (invariant #5 — never paraphrased).
+        source: { type: string }
+        match_layer:
+          type: string
+          enum: [primary, trigram, fuzzy]
+          description: |
+            Which fallback layer produced this hit. `primary` covers both the
+            prose and code FTS indexes (RRF-fused at layer 1, per HLD §7) —
+            workloads do not see, and do not need to disambiguate, which
+            tokenizer matched. Frequent `fuzzy` hits suggest the indexed
+            vocabulary doesn't match what workloads search for.
+
+    SearchResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: '#/components/schemas/SearchHit' }
+          description: Map of query string → ranked hits.
+
+    EventInput:
+      type: object
+      required: [type, priority, data]
+      properties:
+        type:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Workload-chosen event type. Not validated against a fixed set (HLD DL08).
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 4
+          description: 1=critical (always retained), 2=high, 3=normal, 4=noise. Workload-set per HLD §4.
+        data:
+          type: object
+          additionalProperties: true
+          description: Workload-structured JSON payload. CALM does not interpret content.
+
+    WriteEventsRequest:
+      type: object
+      required: [session_id, events]
+      properties:
+        session_id: { type: string }
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/EventInput' }
+
+    WriteEventsResult:
+      type: object
+      required: [accepted]
+      properties:
+        accepted: { type: integer }
+        rejected:
+          type: array
+          items:
+            type: object
+            required: [index, reason]
+            properties:
+              index: { type: integer }
+              reason: { type: string }
+
+    Event:
+      type: object
+      required: [id, type, priority, data, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        type: { type: string }
+        priority: { type: integer, minimum: 1, maximum: 4 }
+        data:
+          type: object
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+
+    ReadEventsResult:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/Event' }
+
+    SourceSummary:
+      type: object
+      required: [label, chunks, indexed_at]
+      properties:
+        label: { type: string }
+        chunks: { type: integer }
+        indexed_at: { type: string, format: date-time }
+
+    ListSourcesResult:
+      type: object
+      required: [sources]
+      properties:
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/SourceSummary' }
+
+    SnapshotResult:
+      description: |
+        Generic event list ordered by (priority asc, created_at desc) and
+        accumulated until `byte_budget_used` approaches the requested
+        `budget_bytes`. CALM does not synthesize state — workloads do (HLD DL08).
+      type: object
+      required: [session_id, byte_budget_used, budget_exceeded, events]
+      properties:
+        session_id: { type: string }
+        byte_budget_used: { type: integer }
+        budget_exceeded:
+          type: boolean
+          description: |
+            True when high-priority events alone exceeded `budget_bytes` and
+            lower-priority events had to be dropped — or when even the highest
+            priority tier was truncated to fit. Workloads can retry with a
+            larger `budget_bytes` if their context allows (HLD §8).
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/Event' }
+
+    ListManagedSessionsResult:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedSession' }
+
+    DeleteManagedSessionsResult:
+      description: Result of bulk-delete in the manage API. `affected_sessions` is set when `dry_run=true`; `deleted_sessions` + `cascaded` are set otherwise.
+      type: object
+      properties:
+        affected_sessions: { type: integer }
+        deleted_sessions: { type: integer }
+        cascaded: { $ref: '#/components/schemas/CascadeCounts' }
+
+    ClientSummary:
+      type: object
+      required: [name, session_count]
+      properties:
+        name: { type: string }
+        session_count: { type: integer }
+        last_activity:
+          type: string
+          format: date-time
+          description: Absent if the client has never had an active session.
+
+    ListClientsResult:
+      type: object
+      required: [clients]
+      properties:
+        clients:
+          type: array
+          items: { $ref: '#/components/schemas/ClientSummary' }
+
+    DeleteClientResult:
+      description: Result of client delete. `affected_sessions` is set when `dry_run=true`; `deleted_client` + `deleted_sessions` + `cascaded` are set otherwise.
+      type: object
+      properties:
+        affected_sessions: { type: integer }
+        deleted_client: { type: string }
+        deleted_sessions: { type: integer }
+        cascaded: { $ref: '#/components/schemas/CascadeCounts' }
+
+    HealthResult:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+          description: Overall health. `ok` iff every check below passed.
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, failed]
+          description: |
+            Per-dependency status. Keys are check names (e.g., `postgres`,
+            `pg_textsearch`, `pg_trgm`); values are `ok` or `failed`. The
+            specific set of checks is implementation-defined and may grow
+            over time — workloads should not hard-code the key set.
+
+    VersionResult:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+          description: Semantic version of the running binary (e.g., `1.0.0`).
+        commit:
+          type: string
+          description: Git commit SHA of the build. Absent in dev builds.
+        build_time:
+          type: string
+          format: date-time
+          description: UTC timestamp when the binary was built. Absent in dev builds.
