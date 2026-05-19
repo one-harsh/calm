@@ -20,20 +20,13 @@ const (
 )
 
 // Auth resolves the API key to a namespace per HLD §6. The key arrives as
-// `Authorization: Bearer <key>`. In local mode (empty registry) enforcement
-// is skipped and the request is stamped with auth.LocalNamespace.
+// `Authorization: Bearer <key>`. Missing header, wrong scheme, or unknown
+// key returns 401. No bypass path — the registry must contain the key.
 func Auth(registry auth.Registry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-
-			if registry.IsLocalMode() {
-				ctx = logging.Bind(ctx, obs.Namespace(auth.LocalNamespace))
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
-
 			raw := r.Header.Get(authHeader)
+			// Case-sensitive scheme check: RFC 7235 says auth schemes are case-insensitive, but CALM accepts canonical "Bearer " only — loosening here = silent acceptance of client bugs.
 			if !strings.HasPrefix(raw, bearerPrefix) {
 				writeAuthFailure(w)
 				return
@@ -44,7 +37,7 @@ func Auth(registry auth.Registry) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx = logging.Bind(ctx, obs.Namespace(ns))
+			ctx := logging.Bind(r.Context(), obs.Namespace(ns))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

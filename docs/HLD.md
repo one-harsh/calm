@@ -1150,11 +1150,15 @@ Every request validates the session ID against the namespace. Without caching, t
 
 The cache maps session ID → namespace + client + TTL config. LRU with a size cap (e.g., 10,000 entries). Explicitly invalidated when a session is deleted. No time-based TTL — the mapping is correct until the session is closed, so time-based expiry would be arbitrary. Active sessions stay hot naturally because they're accessed on every request. Abandoned sessions drift to the LRU tail and get evicted.
 
-### Search result cache
+### Search result cache (deferred to v2)
 
-Within a session, similar queries can fire multiple times. The agent searches for "connection timeout," reads the results, does something, then searches again with a related query. If no new content was ingested between the two queries, the index hasn't changed and the results are the same.
+A per-session LRU cache of search results — keyed by `(session_id, query, source)`, invalidated on ingest into the session — was specified for v1 but is **deferred to v2 pending a multi-pod topology decision**.
 
-The cache is per-session, keyed by query + source filter. LRU with a per-session size cap. Explicitly invalidated when new content is ingested into that session — because the index changed and cached results are stale. No time-based TTL — staleness is triggered by ingest, not by time. A result cached 5 minutes ago is equally valid as one cached 5 seconds ago if no ingest happened in between.
+The gap: cache invalidation works within a single pod. Under multi-pod deployment with round-robin load balancing, ingest may land on pod A while a subsequent search hits pod B; pod B's cache for that session is stale until LRU eviction, and *serves stale results* in the meantime. Unlike the session-metadata cache, search-result staleness doesn't self-heal (the cached result is returned, not re-validated against the DB).
+
+For v1, cold-search latency targets (50–100 ms) are met without the cache — it was a perf optimization for repeat-query patterns, not a load-bearing budget mechanism. Removing it from v1 is the simplest correct option in any deployment topology.
+
+When the cache returns in v2, the most likely shape is: workloads set `X-Session-ID` on body-carrying endpoints, LB hashes on that header to pin a session to a pod, cache invalidation stays in-process. The header-on-API-contract change is the price for the perf gain — worth paying when measurement justifies it.
 
 ## What the targets assume
 
@@ -1335,6 +1339,15 @@ CALM's traffic pattern is request/response with text-heavy JSON payloads. No str
 **Config-file API keys over IAM integration**
 
 CALM has a handful of workloads per deployment — a slackbot, an eval harness, a few MCP adapters, an internal copilot. New workloads are onboarded occasionally, not continuously. A config file mapping API keys to namespaces covers this. No admin API, no key provisioning endpoint, no token exchange protocol. The operator writes the config and deploys. A key management API is deferred until the workload count justifies it.
+
+**Secret-reference URI dialect.** Each row's secret value is a bracketed reference: `[text:<literal>]`, `[env:<VAR>]`, or `[file:<path>]`. The keys file itself contains no secret material — it's a manifest of where each namespace's credential lives. Operators wire CALM into their platform's existing secret-management tooling (k8s Secrets, Vault Agent, External Secrets Operator, ECS task secrets) by populating env vars or rendering files; CALM consumes via the bracket dialect without linking any provider SDK. Resolution happens at startup; failures are Fatal.
+
+The same dialect is reusable for any future operator-facing secret-bearing config (Postgres DSN, TLS certs, OTel exporter tokens, etc.) via `internal/secrets`.
+
+Rejected dialect entries:
+
+- **`[secret:<provider-key>]` (direct Vault / AWS-SM / GCP-SM / Azure-KV fetch).** Would require linking provider SDKs (~50–100 MB each plus per-provider auth, region, retry plumbing), duplicating what platform tools already do better. The static-standalone-binary property loses meaning. Operators bridge to their secret store via env or file rendering using existing tooling.
+- **Bare literals (no brackets).** Considered for ergonomic concision, rejected for grammar consistency. Bracket-everywhere costs ~4 extra characters per literal in exchange for unambiguous parsing and uniform eye-scanning.
 
 ### DL11
 

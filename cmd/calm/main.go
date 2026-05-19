@@ -42,9 +42,9 @@ func run() error {
 	}
 	defer func() { _ = logger.Sync() }()
 
-	registry := auth.NewMemoryRegistry(nil)
-
 	logger.Background().Info("service starting")
+
+	registry := auth.LoadRegistry(context.Background(), cfg.APIKeysFile, logger)
 
 	openCtx, openCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer openCancel()

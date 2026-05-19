@@ -16,6 +16,12 @@ The full design is in `docs/HLD.md`. **The HLD is canonical.** Code follows the 
 - The HLD is a long-lived spec, not a historical artifact. Edits to it are normal and expected.
 - The HLD stays language-agnostic. Implementation choices (Go, drivers, libraries, Postgres extension wiring) live here in `CLAUDE.md` and in the code, not in the HLD.
 
+### Don't duplicate HLD content in this file
+
+CLAUDE.md is the **development directive** — what disciplines apply when writing code, where things live, what patterns to follow. The HLD is the **spec** — what the system is. When CLAUDE.md restates HLD content as its own bullets (enumerating primitives, listing invariants, copying tables), that content goes stale the moment the HLD evolves and there's no automated check to catch the drift.
+
+Rule: when you'd otherwise paraphrase or enumerate something from the HLD, write a one-line pointer to the HLD section instead. "See HLD §4" beats a six-bullet recap that has to be hand-synced. Reserve CLAUDE.md bullets for code-level guidance the HLD doesn't carry: file layout, mockery rules, comment policy, middleware-chain order, log levels, etc.
+
 ## API contract: OpenAPI is the formal source
 
 - `docs/api/openapi.yaml` is the **canonical formal contract** for the HTTP API. The HLD §6 prose describes intent; this YAML pins the precise wire shape that code is generated from.
@@ -26,43 +32,18 @@ The full design is in `docs/HLD.md`. **The HLD is canonical.** Code follows the 
 - Request validation is enforced by `internal/server/middleware/validation.go` against the embedded spec — required fields, enum values, formats, path/query types. It's the innermost middleware before handlers, so handlers can trust the parsed types.
 - The OpenAPI spec also drives the `calm-adapter`'s HTTP client (generated `ClientWithResponses` in `internal/api/genapi`). Don't write hand-rolled HTTP requests against CALM from the adapter.
 
-## Architecture (summary; HLD is authoritative)
+## Architecture (orientation only; HLD is authoritative)
 
 Single statically-linked binary, REST API with JSON payloads, all state behind a DAL.
 
-### Three Core Primitives
-
-1. **Content Ingestion** (`POST /v1/ingest`) — Chunks raw tool output, indexes it, returns a compact representation (section titles, preview lines, distinctive-term vocabulary). Auto-detects JSON/Markdown/plain-text; format-hinted chunking for log/stacktrace/csv/metrics. Optional `intent` filter; optional `content_type` for tokenization branching (HLD DL06).
-2. **Knowledge Store** (`POST /v1/search`) — BM25-ranked search with 3-layer fallback: primary tokenizer (porter+unicode61 for prose, unicode61 for code, branched by `content_type`) → trigram substring → fuzzy (Levenshtein against per-session vocabulary). Returns exact indexed text with smart snippets, never summaries.
-3. **Session State** (`POST /v1/events`, `GET /v1/sessions/{id}/snapshot`) — Workload-defined events with workload-set priority (P1–P4); snapshot returns events ordered by priority and recency within a byte budget. CALM does not interpret event content (HLD DL08).
-
-### Storage
-
-- **Postgres** is the production backend — requires `pg_search` or `pg_textsearch` for BM25; `pg_trgm` for trigrams.
-- DAL is a Go-level abstraction (mockery port) for testability — `Index()`, `Search()`, `WriteEvent()`, `ReadEvents()`, `DeleteSession()`, plus session lifecycle methods. **Not** for backend portability; there is only one backend.
-
-### Workloads (HLD §3)
-
-Any LLM application reaches CALM through the HTTP API, identified by namespace + (optional) client identifier. Common patterns:
-
-- **Internal LLM applications** — slackbots, internal copilots, debug bots; direct HTTP.
-- **Automated agent pipelines** — factory-style batch workflows, eval harnesses; direct HTTP via middleware.
-- **Coding agents** (Claude Code, Cursor, Codex) — via the MCP adapter binary (`cmd/calm-adapter`).
-
-The three above are illustrative, not architectural categories. The data model and API do not enumerate a fixed workload-type set (HLD DL01).
-
-### Design invariants (HLD §4; do not violate)
-
-1. Never makes things worse — CALM down = raw context fallback.
-2. Workload-agnostic — one API for all LLM applications.
-3. Session-scoped — all data bound to a session; cleaned up on close or TTL.
-4. Never in the LLM request path — sidecar, not proxy.
-5. Content fidelity — only selects which content to return; never alters it.
-6. Idempotent indexing — same source label replaces previous content within a session.
+- **Three core primitives** (ingest, search, session state) — see HLD §4.
+- **Workload patterns** identified by namespace + optional client — see HLD §3 / DL01.
+- **Six design invariants** (never-worse, workload-agnostic, session-scoped, sidecar-not-proxy, content-fidelity, idempotent-indexing) — see HLD §4.
+- **Storage**: Postgres in production, BM25 via `pg_search` or `pg_textsearch`, trigram via `pg_trgm` — see HLD §7 / DL11. The DAL (`internal/db`) is a mockery port for testability, **not** a portability layer; there is only one backend.
 
 ## Session isolation is the load-bearing invariant
 
-Of the six invariants above, **session isolation (#3) is the one that surfaces in every code change**. HLD §7 calls it out in the strongest language in the spec: *"Everything is scoped to a session. There are no cross-session relationships. This is a hard boundary, not a convention."* HLD §13 records it as a separate, named decision (Session-scoped storage, not cross-session memory). HLD §6 makes it observable: cross-namespace mismatch returns **404, not 403** — invisibility, not denial.
+Of the six invariants in HLD §4, **session isolation is the one that surfaces in every code change**. HLD §7 calls it out as a hard boundary, HLD §13 records the named decision, HLD §6 makes it observable (cross-namespace mismatch returns **404, not 403** — invisibility, not denial).
 
 Treat it as a first-class property the codebase enforces, not just a fact. Most bugs that would quietly degrade CALM start as a missed `session_id` filter, a cache that wasn't session-keyed, or a "convenience" cross-session query.
 
@@ -157,7 +138,7 @@ Logs are not optional decoration; they're the runtime record.
 - Pattern: `logger.WithContext(ctx).Info("event_name", fields...)`. Per-request summary via `logger.SummaryWithContext(ctx).Info(...)` at the end of a handler — drives end-of-request observability.
 - Domain-specific field helpers live in `internal/obs` (e.g., `obs.SessionID`, `obs.Source`, `obs.Namespace`, `obs.Client`, `obs.MatchLayer`, `obs.Endpoint`, `obs.EventType`, `obs.FormatHint`). Add new helpers there, not at call sites.
 - **DEBUG**: log liberally. If you're tempted to write a comment describing state or flow, write a DEBUG log instead. Log characters are free; in-prod cost is near-zero with the level disabled.
-- **INFO**: follow the HLD §10 enumerated set (session created/closed, ingest/search completed, namespace failures). Adding a new INFO-level event is an HLD-touching change.
+- **INFO**: follow HLD §10's enumerated set. Adding a new INFO-level event is an HLD-touching change.
 - **WARN**: degraded behavior the operator should know about (CALM-down fallback in adapter, intent fallback to full summary, etc.).
 - **ERROR / FATAL**: actual failures.
 
@@ -199,4 +180,4 @@ Install local dev tools with `task tools:install`.
 ## Misc
 
 - Keep `pkg/` empty. Everything is `internal/` until something is genuinely meant for external import.
-- Bootstrap creates a `default` namespace + `default` client + master API key on first run. Sessions can omit `client` and attribute to `default`; new client names auto-register on first reference (HLD DL01).
+- Default namespace / default client / master-key bootstrap behavior — see HLD §6 + DL01.

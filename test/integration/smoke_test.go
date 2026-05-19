@@ -16,7 +16,11 @@ import (
 func TestHarness_RoutesResolve(t *testing.T) {
 	t.Parallel()
 
-	resp, err := http.Get(env.serverURL + "/v1/sessions/" + uniqueSessionID(t) + "/sources")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sessions/"+uniqueSessionID(t)+"/sources", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testMasterKey)
+
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
@@ -28,7 +32,11 @@ func TestHarness_RoutesResolve(t *testing.T) {
 func TestHarness_RequestIDPropagation(t *testing.T) {
 	t.Parallel()
 
-	resp, err := http.Get(env.serverURL + "/v1/sessions/" + uniqueSessionID(t) + "/sources")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sessions/"+uniqueSessionID(t)+"/sources", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+testMasterKey)
+
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
@@ -45,6 +53,7 @@ func TestHarness_OpenAPIValidationFiresBeforeHandler(t *testing.T) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, env.serverURL+"/v1/sessions", body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testMasterKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)

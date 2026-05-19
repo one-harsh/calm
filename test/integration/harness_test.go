@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -31,6 +32,11 @@ import (
 const (
 	envPGDSN     = "CALM_TEST_PG_DSN"
 	defaultPGDSN = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+
+	// Test bearer credentials. Every in-process integration request
+	// authenticates as the master key for the `default` namespace.
+	testMasterKey = "test-master-key-0123456789abcdef"
+	testNamespace = "default"
 )
 
 type harness struct {
@@ -69,8 +75,11 @@ func bootstrap() (*harness, error) {
 		RequestTimeout:       2 * time.Second,
 		GracefulShutdownWait: 0,
 	}, server.Deps{
-		Logger:   logging.Nop(),
-		Registry: auth.NewMemoryRegistry(nil),
+		Logger: logging.Nop(),
+		Registry: auth.NewMemoryRegistry(
+			map[string]string{testMasterKey: testNamespace},
+			nil,
+		),
 		Handlers: handlers.New(handlers.Deps{Logger: logging.Nop(), Store: store}),
 	})
 	if err != nil {
@@ -81,7 +90,7 @@ func bootstrap() (*harness, error) {
 
 	srv := httptest.NewServer(handler)
 
-	client, err := genapi.NewClientWithResponses(srv.URL)
+	client, err := genapi.NewClientWithResponses(srv.URL, genapi.WithRequestEditorFn(bearerAuth(testMasterKey)))
 	if err != nil {
 		srv.Close()
 		_ = store.Close()
@@ -189,6 +198,15 @@ func randHex(n int) string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(buf)
+}
+
+// bearerAuth returns a genapi request editor that stamps the Authorization
+// header so the test client clears the auth middleware.
+func bearerAuth(key string) genapi.RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		req.Header.Set("Authorization", "Bearer "+key)
+		return nil
+	}
 }
 
 // postgresHint annotates connection failures with the most likely operator
