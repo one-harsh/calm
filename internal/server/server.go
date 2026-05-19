@@ -48,7 +48,7 @@ func NewHandler(cfg Config, deps Deps) (http.Handler, error) {
 
 	r := chi.NewRouter()
 
-	// Middleware order is canonical (CLAUDE.md / HLD §10–§11).
+	// Middleware order is canonical (CLAUDE.md).
 	r.Use(middleware.Recovery(deps.Logger))
 	r.Use(middleware.Context())
 	r.Use(middleware.Logging(deps.Logger))

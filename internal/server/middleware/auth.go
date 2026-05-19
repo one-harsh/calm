@@ -19,7 +19,7 @@ const (
 	bearerPrefix = "Bearer "
 )
 
-// Auth resolves the API key to a namespace per HLD §6. The key arrives as
+// Auth resolves the API key to a namespace. The key arrives as
 // `Authorization: Bearer <key>`. Missing header, wrong scheme, or unknown
 // key returns 401. No bypass path — the registry must contain the key.
 func Auth(registry auth.Registry) func(http.Handler) http.Handler {

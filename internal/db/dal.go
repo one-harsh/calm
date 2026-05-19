@@ -118,7 +118,7 @@ type SourceSummary struct {
 	IndexedAt time.Time
 }
 
-// CascadeCounts mirrors the cascade body shape in HLD §6 delete responses.
+// CascadeCounts mirrors the cascade body shape in delete responses.
 type CascadeCounts struct {
 	Sources int
 	Chunks  int

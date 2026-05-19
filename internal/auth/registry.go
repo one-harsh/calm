@@ -6,9 +6,9 @@ package auth
 // Registry resolves an API key to a namespace and exposes per-namespace
 // rate-limit overrides.
 //
-// HLD §6: namespace is server-resolved from the API key header, never from
-// the request body. HLD §13: registry is config-driven (file), rebuilt on
-// process restart.
+// Namespace is server-resolved from the API key header, never from the
+// request body. The registry is config-driven via DL10 (keys file), rebuilt
+// on process restart.
 type Registry interface {
 	// Resolve maps an API key to a namespace. Returns ("", false) when the
 	// key is unknown.

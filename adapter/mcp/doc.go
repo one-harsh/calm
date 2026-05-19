@@ -3,5 +3,5 @@
 
 // Package mcp implements the stdio MCP protocol used by the calm-adapter
 // binary to bridge coding agents (Claude Code, Cursor, Codex) to the CALM
-// HTTP API per HLD §5.
+// HTTP API.
 package mcp

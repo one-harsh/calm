@@ -9,8 +9,8 @@ import (
 	"net/http"
 )
 
-// BodySizeLimit enforces the HLD §11 1MB ingest cap. Returns 413 when the
-// declared Content-Length exceeds the limit, and wraps the body with
+// BodySizeLimit enforces the 1MB ingest cap. Returns 413 when the declared
+// Content-Length exceeds the limit, and wraps the body with
 // http.MaxBytesReader so streamed reads also fail.
 func BodySizeLimit(maxBytes int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

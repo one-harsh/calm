@@ -16,7 +16,7 @@ import (
 // OpenAPIValidator validates incoming requests against the embedded OpenAPI
 // spec (path, query params, headers, body schema). Slot innermost, after
 // Auth/RateLimit/BodySizeLimit/Timeout — request validation is part of the
-// per-request work budget (HLD §11).
+// per-request work budget.
 //
 // kin-openapi's authentication check is intentionally suppressed here: API
 // key resolution and namespace stamping are owned by middleware.Auth, which

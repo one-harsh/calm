@@ -64,4 +64,4 @@ Concrete contributions of value, in rough order of usefulness:
 
 - A candidate workload (internal LLM app, eval harness, coding-agent integration) willing to integrate and report what works and what doesn't.
 - Visibility into existing token-spend dashboards so the compression claim can be validated against measured data rather than asserted.
-- Review of the API contract at [`api/openapi.yaml`](api/openapi.yaml) and the architectural forks in HLD §13.
+- Review of the API contract at [`api/openapi.yaml`](api/openapi.yaml) and the architectural forks in HLD's Decision Log.

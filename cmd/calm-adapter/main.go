@@ -65,7 +65,7 @@ func run() error {
 	}
 
 	if err := createSession(ctx, client, sessionID, cfg.sessionTTL); err != nil {
-		// HLD §9: never fail because CALM is unavailable. Log and continue.
+		// never-worse invariant: never fail because CALM is unavailable. Log and continue.
 		logger.WithContext(ctx).Warn(
 			"create session failed; continuing without CALM",
 			obs.SessionID(sessionID),

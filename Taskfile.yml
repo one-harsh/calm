@@ -7,9 +7,6 @@ vars:
   TEST_TAGS: "mocks"
   LDFLAGS: "-s -w"
 
-env:
-  CGO_ENABLED: "0"
-
 tasks:
   default:
     desc: Quality gate — fmt, lint, test, build (inner-loop "am I clean?" check)
@@ -124,7 +121,9 @@ tasks:
     deps: [build:calm, build:adapter]
 
   build:calm:
-    desc: Build the CALM service binary
+    desc: Build the CALM service binary (CGO_ENABLED=0 — static-binary invariant)
+    env:
+      CGO_ENABLED: "0"
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - go build -ldflags "{{.LDFLAGS}}" -o {{.CALM_BIN}} ./cmd/calm
@@ -137,7 +136,9 @@ tasks:
       - "{{.CALM_BIN}}"
 
   build:adapter:
-    desc: Build the MCP adapter binary
+    desc: Build the MCP adapter binary (CGO_ENABLED=0 — static-binary invariant)
+    env:
+      CGO_ENABLED: "0"
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - go build -ldflags "{{.LDFLAGS}}" -o {{.ADAPTER_BIN}} ./cmd/calm-adapter

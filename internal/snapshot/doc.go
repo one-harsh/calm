@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package snapshot returns a session's events as a generic event stream per
-// HLD §6 / §8 and DL08.
+// DL08.
 //
 // Reads events for the session, orders by (priority asc, created_at desc),
 // and accumulates into the response until the requested byte budget is
