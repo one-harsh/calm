@@ -81,7 +81,7 @@ func New(cfg Config, deps Deps) (*Server, error) {
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
-		s.deps.Logger.Background().Info(
+		s.deps.Logger.WithContext(ctx).Info(
 			"http listening",
 			logging.StringField("address", s.cfg.Address),
 		)
@@ -96,7 +96,7 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.GracefulShutdownWait)
 		defer cancel()
-		s.deps.Logger.Background().Info("http shutdown initiated")
+		s.deps.Logger.WithContext(ctx).Info("http shutdown initiated")
 		if err := s.srv.Shutdown(shutdownCtx); err != nil {
 			return err
 		}

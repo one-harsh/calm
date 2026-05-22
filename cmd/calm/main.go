@@ -17,6 +17,7 @@ import (
 	"github.com/one-harsh/calm/internal/config"
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/obs"
+	"github.com/one-harsh/calm/internal/secrets"
 	"github.com/one-harsh/calm/internal/server"
 )
 
@@ -28,38 +29,46 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load()
+	cfg, err := config.Load(os.Getenv("CALM_CONFIG_FILE"))
 	if err != nil {
 		return err
 	}
 
 	logger, err := obs.NewLogger(
-		cfg.ServiceName, cfg.Version, cfg.Environment, cfg.Region,
-		cfg.LogLevel, cfg.LogFormat,
+		cfg.Service.ServiceName, cfg.Service.Version, cfg.Service.Environment, cfg.Service.Region,
+		cfg.Service.LogLevel, cfg.Service.LogFormat,
 	)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = logger.Sync() }()
 
-	logger.Background().Info("service starting")
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
-	registry := auth.LoadRegistry(context.Background(), cfg.APIKeysFile, logger)
+	logger.WithContext(ctx).Info("service starting")
 
-	openCtx, openCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	secretReader := secrets.New(logger)
+	registry := auth.BuildRegistry(ctx, cfg.Namespaces, secretReader, logger)
+
+	openCtx, openCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer openCancel()
-	store, err := db.Open(openCtx, cfg.StorageDSN, logger)
+	store, err := db.Open(openCtx, cfg.Storage.DSN, cfg.Storage.MigrateOnStartup, logger)
 	if err != nil {
 		return fmt.Errorf("open storage: %w", err)
 	}
 	defer func() { _ = store.Close() }()
 
+	if err := store.SeedNamespaceClients(openCtx, namespaceNames(cfg.Namespaces)); err != nil {
+		return fmt.Errorf("seed clients: %w", err)
+	}
+
 	srv, err := server.New(server.Config{
-		Address:              cfg.Address,
-		MaxIngestPayloadKB:   cfg.MaxIngestPayloadKB,
-		RateLimitPerSecond:   cfg.RateLimitPerSecond,
-		RequestTimeout:       2 * time.Second,
-		GracefulShutdownWait: 10 * time.Second,
+		Address:              cfg.Server.Address,
+		MaxIngestPayloadKB:   cfg.Server.MaxIngestPayloadKB,
+		RateLimitPerSecond:   cfg.Server.RateLimitPerSecond,
+		RequestTimeout:       cfg.Server.RequestTimeout,
+		GracefulShutdownWait: cfg.Server.GracefulShutdownWait,
 	}, server.Deps{
 		Logger:   logger,
 		Registry: registry,
@@ -69,12 +78,17 @@ func run() error {
 		return err
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
-	logger.Background().Info("service stopped")
+	logger.WithContext(ctx).Info("service stopped")
 	return nil
+}
+
+func namespaceNames(ns []config.NamespaceConfig) []string {
+	out := make([]string, len(ns))
+	for i, n := range ns {
+		out[i] = n.Name
+	}
+	return out
 }

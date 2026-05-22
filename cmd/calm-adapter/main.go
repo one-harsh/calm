@@ -50,14 +50,15 @@ func run() error {
 	defer func() { _ = logger.Sync() }()
 
 	sessionID := uuid.NewString()
-	logger.Background().Info(
-		"adapter starting",
-		obs.SessionID(sessionID),
-		logging.StringField("calm_url", cfg.calmURL),
-	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+	ctx = logging.Bind(ctx, obs.SessionID(sessionID))
+
+	logger.WithContext(ctx).Info(
+		"adapter starting",
+		logging.StringField("calm_url", cfg.calmURL),
+	)
 
 	client, err := genapi.NewClientWithResponses(cfg.calmURL, genapi.WithRequestEditorFn(apiKeyEditor(cfg.apiKey)))
 	if err != nil {
@@ -68,14 +69,13 @@ func run() error {
 		// never-worse invariant: never fail because CALM is unavailable. Log and continue.
 		logger.WithContext(ctx).Warn(
 			"create session failed; continuing without CALM",
-			obs.SessionID(sessionID),
 			logging.ErrorField(err),
 		)
 	}
 
-	logger.Background().Info("adapter ready (mcp loop not implemented yet)", obs.SessionID(sessionID))
+	logger.WithContext(ctx).Info("adapter ready (mcp loop not implemented yet)")
 	<-ctx.Done()
-	logger.Background().Info("adapter shutting down", obs.SessionID(sessionID))
+	logger.WithContext(ctx).Info("adapter shutting down")
 	return nil
 }
 

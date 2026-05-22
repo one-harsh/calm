@@ -1,0 +1,50 @@
+# Annotated example config for operators. Copy, edit, mount at the path you
+# point CALM_CONFIG_FILE at. All `service`, `server`, `sessions`, and
+# `storage` fields shown below are also their defaults — omit any you don't
+# need to change. `namespaces` is required; the service refuses to start
+# with an empty list.
+#
+# Env-var override: any field can be overridden by CALM_<PATH_IN_UPPERCASE>,
+# with `.` and `-` replaced by `_`. Examples:
+#   CALM_SERVER_ADDRESS=":9090"       overrides server.address
+#   CALM_STORAGE_DSN="postgres://..." overrides storage.dsn
+
+service:
+  service_name: calm
+  version: dev
+  environment: production           # local / staging / production
+  region: us-east-1
+  log_level: info                   # debug / info / warn / error
+  log_format: json                  # json / console
+
+server:
+  address: ":8080"
+  request_timeout: 2s
+  graceful_shutdown_wait: 10s
+  max_ingest_payload_kb: 1024       # body-size cap on /v1/ingest (>1MB -> 413)
+  rate_limit_per_second: 100        # global default; per-namespace overrides below win
+
+sessions:
+  default_ttl_minutes: 120          # session inactivity TTL before TTL-scanner reaps
+  snapshot_max_budget_kb: 8         # max bytes returned by GET /v1/sessions/{id}/snapshot
+  ttl_scanner_interval_ms: 60000    # background scanner cadence
+
+storage:
+  dsn: postgres://calm:CHANGE_ME@postgres:5432/calm?sslmode=require
+  migrate_on_startup: true          # set false for multi-replica deploys; run migrations as a job
+
+# Identity. Each namespace owns its own sessions, clients, and rate budget.
+# api_key is a bracketed secret reference resolved at startup:
+#   [text:<literal>]   — inline (avoid in committed config)
+#   [env:<VAR>]        — value comes from the named env var
+#   [file:<path>]      — value is the file's trimmed contents (e.g., a mounted Secret)
+#
+# rate_per_second is optional; omitted means "use server.rate_limit_per_second".
+namespaces:
+  - name: default
+    api_key: "[file:/run/secrets/calm-default-key]"
+    rate_per_second: 100
+
+  - name: tenant-a
+    api_key: "[file:/run/secrets/tenant-a]"
+    rate_per_second: 500

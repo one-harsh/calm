@@ -138,7 +138,7 @@ func openTestStore() (db.DAL, func(), error) {
 		}
 	}
 
-	store, err := db.Open(context.Background(), suiteDSN, logging.Nop())
+	store, err := db.Open(context.Background(), suiteDSN, true, logging.Nop())
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("open store: %w", err)

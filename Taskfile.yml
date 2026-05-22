@@ -208,12 +208,20 @@ tasks:
     desc: Run the CALM service locally against the dev Postgres
     summary: |
       Builds and runs the CALM binary against the local dev Postgres started
-      by `task dev:up` (default DSN
-      `postgres://postgres:postgres@localhost:5432/calm?sslmode=disable`).
+      by `task dev:up`.
 
-      Override config via env: CALM_ADDR, CALM_STORAGE_DSN, CALM_LOG_LEVEL,
-      etc. (see internal/config/config.go).
+      Reads config from cmd/calm/config/dev.yaml. The dev config references
+      `[env:CALM_DEFAULT_KEY]` for the default-namespace bearer; export it
+      before invoking:
+        export CALM_DEFAULT_KEY=$(openssl rand -hex 32)
+
+      Any field in the YAML can be overridden via env: prefix `CALM_`, with
+      `.` and `-` replaced by `_`. Examples:
+        CALM_SERVER_ADDRESS=":9090"     overrides server.address
+        CALM_STORAGE_DSN="postgres://..." overrides storage.dsn
     deps: [build:calm]
+    env:
+      CALM_CONFIG_FILE: "{{.ROOT_DIR}}/cmd/calm/config/dev.yaml"
     cmds:
       - "{{.CALM_BIN}}"
 

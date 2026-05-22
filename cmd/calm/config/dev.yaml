@@ -1,0 +1,33 @@
+# Dev config for `task run:local`.
+# Operator must export CALM_DEFAULT_KEY before starting the service:
+#   export CALM_DEFAULT_KEY=$(openssl rand -hex 32)
+# The bracketed reference below resolves that env var at startup. No secrets
+# are committed to the repo.
+
+service:
+  service_name: calm
+  version: dev
+  environment: local
+  region: local
+  log_level: debug
+  log_format: json
+
+server:
+  address: ":8080"
+  request_timeout: 2s
+  graceful_shutdown_wait: 10s
+  max_ingest_payload_kb: 1024
+  rate_limit_per_second: 100
+
+sessions:
+  default_ttl_minutes: 120
+  snapshot_max_budget_kb: 8
+  ttl_scanner_interval_ms: 60000
+
+storage:
+  dsn: postgres://postgres:postgres@localhost:5432/calm?sslmode=disable
+  migrate_on_startup: true
+
+namespaces:
+  - name: default
+    api_key: "[env:CALM_DEFAULT_KEY]"

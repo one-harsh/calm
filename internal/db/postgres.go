@@ -15,13 +15,15 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" driver
 	logging "github.com/one-harsh/context-logging"
+
+	"github.com/one-harsh/calm/internal/obs"
 )
 
 type Store struct {
 	db *sql.DB
 }
 
-func Open(ctx context.Context, dsn string, logger *logging.Logger) (*Store, error) {
+func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *logging.Logger) (*Store, error) {
 	conn, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres open: %w", err)
@@ -37,9 +39,13 @@ func Open(ctx context.Context, dsn string, logger *logging.Logger) (*Store, erro
 		return nil, err
 	}
 
-	if err := migrateUp(conn, logger); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("postgres migrate: %w", err)
+	if migrateOnStartup {
+		if err := migrateUp(ctx, conn, logger); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("postgres migrate: %w", err)
+		}
+	} else {
+		logger.WithContext(ctx).Info("storage ready (migrate_on_startup=false; assuming migrations applied out-of-band)")
 	}
 
 	return &Store{db: conn}, nil
@@ -47,7 +53,7 @@ func Open(ctx context.Context, dsn string, logger *logging.Logger) (*Store, erro
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func migrateUp(conn *sql.DB, logger *logging.Logger) error {
+func migrateUp(ctx context.Context, conn *sql.DB, logger *logging.Logger) error {
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("open migrations source: %w", err)
@@ -77,7 +83,7 @@ func migrateUp(conn *sql.DB, logger *logging.Logger) error {
 		return fmt.Errorf("read migration version: %w", verr)
 	}
 
-	logger.Background().Info(
+	logger.WithContext(ctx).Info(
 		"storage ready",
 		logging.IntField("migration_version", int(version)),
 		logging.BoolField("migration_dirty", dirty),
@@ -87,6 +93,24 @@ func migrateUp(conn *sql.DB, logger *logging.Logger) error {
 }
 
 // ---------- Clients ----------
+
+// SeedNamespaceClients inserts a (namespace, DefaultClient) row for each
+// configured namespace. Idempotent via ON CONFLICT; tolerates concurrent
+// startup on peer replicas. Sessions that omit `client` at creation
+// attribute to DefaultClient (DL01), so this row is FK-required before
+// any session insert succeeds.
+func (s *Store) SeedNamespaceClients(ctx context.Context, namespaces []string) error {
+	for _, ns := range namespaces {
+		nsCtx := logging.Bind(ctx, obs.Namespace(ns))
+		if _, err := s.db.ExecContext(nsCtx,
+			`INSERT INTO clients (namespace, name) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			ns, DefaultClient,
+		); err != nil {
+			return fmt.Errorf("seed default client for namespace %q: %w", ns, err)
+		}
+	}
+	return nil
+}
 
 func (s *Store) RegisterClient(ctx context.Context, namespace, name string) error {
 	return ErrNotImplemented

@@ -26,7 +26,6 @@ func Auth(registry auth.Registry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := r.Header.Get(authHeader)
-			// Case-sensitive scheme check: RFC 7235 says auth schemes are case-insensitive, but CALM accepts canonical "Bearer " only — loosening here = silent acceptance of client bugs.
 			if !strings.HasPrefix(raw, bearerPrefix) {
 				writeAuthFailure(w)
 				return
