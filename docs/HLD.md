@@ -1365,7 +1365,7 @@ The DAL interface exists for unit-test mocking via mockery, not for portability 
 
 Rejected alternatives:
 
-- **SQLite** — limited FTS5 (no real BM25/IDF), single-writer, no `pg_trgm` equivalent for trigram indexing, no `fuzzystrmatch` for Levenshtein. Wiped during v1 cleanup.
+- **SQLite** — limited FTS5 (no real BM25/IDF), single-writer, no `pg_trgm` equivalent for trigram indexing, no `fuzzystrmatch` for Levenshtein.
 - **MySQL / MariaDB** — InnoDB FTS isn't BM25 and isn't configurable. No trigram-index equivalent of `pg_trgm`. No native Levenshtein. No partial indexes (which CALM uses to route prose vs. code chunks into separate FTS indexes per [DL06](#dl06)). JSON support is less mature than JSONB. Delivering the three-layer search architecture would require bolting Elasticsearch or Tantivy on the side, breaking the "single store, no external search system" property.
 - **Portable DAL with multiple backend impls** — false flexibility. Doubles maintenance surface (every DAL method needs N implementations + parity tests) for a portability story with no concrete demand.
 - **Embedded KV (BoltDB / BadgerDB)** — no full-text search, no relational queries for the management API, no way to express FTS partial indexes.

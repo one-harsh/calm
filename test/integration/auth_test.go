@@ -14,8 +14,8 @@ import (
 )
 
 // TestBearerAuthSucceeds proves the harness's master key clears the auth
-// middleware. CreateSession is still a 501 stub at WI-01 time, so asserting
-// exactly 501 means this test fails loudly when WI-07 wires the real handler
+// middleware. CreateSession is still a 501 stub, so asserting
+// exactly 501 means this test fails loudly when later work wires the real handler
 // — that failure is a useful prompt to reframe this assertion (e.g., switch
 // to expecting 201) rather than letting the test pass coincidentally.
 func TestBearerAuthSucceeds(t *testing.T) {

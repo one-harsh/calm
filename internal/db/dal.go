@@ -9,17 +9,33 @@ import (
 	"time"
 )
 
+// Every error returned by the DAL must wrap one of these sentinels (directly
+// for validation/domain errors, via multi-%w with ErrStorageBackend for
+// driver/tx failures) so callers can classify via errors.Is without string
+// matching.
 var (
-	ErrNotImplemented    = errors.New("db: not implemented")
-	ErrSessionNotFound   = errors.New("db: session not found")
-	ErrSessionExists     = errors.New("db: session already exists")
-	ErrNamespaceRequired = errors.New("db: namespace is required")
-	ErrEmptyChunks       = errors.New("db: index input has no chunks")
-	ErrEmptyQuery        = errors.New("db: search query is empty")
-	ErrInvalidLimit      = errors.New("db: search limit must be positive")
-	ErrInvalidPriority   = errors.New("db: event priority must be 1..4")
-	ErrClientNotFound    = errors.New("db: client not found")
-	ErrClientProtected   = errors.New("db: cannot delete the default client")
+	ErrNotImplemented = errors.New("db: not implemented")
+
+	// Validation — required input was missing or invalid.
+	ErrNamespaceRequired  = errors.New("db: namespace is required")
+	ErrClientNameRequired = errors.New("db: client name is required")
+	ErrSessionIDRequired  = errors.New("db: session_id is required")
+	ErrSourceRequired     = errors.New("db: source label is required")
+	ErrChunksRequired     = errors.New("db: index input has no chunks")
+	ErrQueryRequired      = errors.New("db: search query is empty")
+	ErrInvalidLimit       = errors.New("db: search limit must be positive")
+	ErrInvalidPriority    = errors.New("db: event priority must be 1..4")
+
+	// Domain — business-meaningful states.
+	ErrSessionNotFound = errors.New("db: session not found")
+	ErrSessionExists   = errors.New("db: session already exists")
+	ErrClientNotFound  = errors.New("db: client not found")
+	ErrClientProtected = errors.New("db: cannot delete the default client")
+
+	// Storage — umbrella for driver/tx failures. Always wrapped via
+	// fmt.Errorf("...: %w: %w", ErrStorageBackend, underlying) so callers
+	// can errors.Is(err, ErrStorageBackend) and errors.As(err, &pgErr).
+	ErrStorageBackend = errors.New("db: storage backend failure")
 )
 
 // DefaultClient is the bootstrap client name assigned to sessions that omit

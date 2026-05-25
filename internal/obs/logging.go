@@ -29,6 +29,7 @@ func NewLogger(serviceName, version, environment, region, level, format string) 
 const (
 	KeySessionID  = "session_id"
 	KeyNamespace  = "namespace"
+	KeyClient     = "client"
 	KeySource     = "source"
 	KeyMatchLayer = "match_layer"
 	KeyEndpoint   = "endpoint"
@@ -42,6 +43,10 @@ func SessionID(value string) logging.LoggingField {
 
 func Namespace(value string) logging.LoggingField {
 	return logging.StringField(KeyNamespace, value)
+}
+
+func Client(value string) logging.LoggingField {
+	return logging.StringField(KeyClient, value)
 }
 
 func Source(value string) logging.LoggingField {

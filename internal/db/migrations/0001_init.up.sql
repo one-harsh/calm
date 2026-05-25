@@ -1,14 +1,10 @@
--- Initial schema. Matches HLD §7 logical data model.
+-- Initial schema.
 --
 -- Preflight (NOT in this migration):
 --   * pg_textsearch must be in shared_preload_libraries (postgresql.conf,
 --     server restart). The service-level preflight check verifies the
 --     extension is loadable before serving traffic.
 --   * pg_trgm is a standard contrib extension that ships with Postgres.
---
--- Tokenizer mapping (HLD DL06; HLD §7 uses SQLite-tokenizer terminology):
---   HLD "porter + unicode61" → pg_textsearch text_config = 'english'
---   HLD "unicode61 only"     → pg_textsearch text_config = 'simple'
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS pg_textsearch;
@@ -62,7 +58,7 @@ CREATE INDEX chunks_source_idx ON chunks(source_id);
 -- Layer-1 BM25 indexes, partitioned by tokenization class. Chunks with
 -- content_type = 'code' get tokenized by 'simple' (preserves identifiers);
 -- everything else by 'english' (porter stemming). Layer-1 fusion at query
--- time runs against both indexes and combines via RRF (HLD §7).
+-- time runs against both indexes and combines via RRF.
 -- pg_textsearch's bm25 access method does not support multi-column indexes,
 -- so each (tokenizer-class × field) gets its own index — 4 total.
 CREATE INDEX chunks_bm25_prose_title_idx   ON chunks USING bm25 (title)
