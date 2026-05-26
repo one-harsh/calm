@@ -17,11 +17,14 @@ import (
 )
 
 type sessionRepo struct {
-	store *Store
+	queryer queryer
+	logger  *logging.Logger
 }
 
-// Create idempotently upserts the client (DL01 auto-attribution) + inserts the
-// session + inserts any declared labels — all atomically in one tx.
+// Create inserts the session row + any declared labels atomically. Caller is
+// responsible for ensuring the (namespace, client) row in clients exists —
+// without it, the session insert fails FK. session.Service.Create wraps
+// Register + Create inside Store.WithTx so the whole composition is atomic.
 func (r *sessionRepo) Create(ctx context.Context, sess Session) error {
 	if sess.Namespace == "" {
 		return ErrNamespaceRequired
@@ -36,49 +39,34 @@ func (r *sessionRepo) Create(ctx context.Context, sess Session) error {
 		sess.Client = DefaultClient
 	}
 
-	tx, err := r.store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("%w: begin create session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO clients (namespace, name) VALUES ($1, $2) ON CONFLICT (namespace, name) DO NOTHING`,
-		sess.Namespace, sess.Client,
-	); err != nil {
-		return fmt.Errorf("%w: auto-register client %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.Client, err)
-	}
-
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO sessions (session_id, namespace, client, ttl_minutes) VALUES ($1, $2, $3, $4)`,
-		sess.ID, sess.Namespace, sess.Client, sess.TTLMinutes,
-	); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return ErrSessionExists
+	return inTx(ctx, r.queryer, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO sessions (session_id, namespace, client, ttl_minutes) VALUES ($1, $2, $3, $4)`,
+			sess.ID, sess.Namespace, sess.Client, sess.TTLMinutes,
+		); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return ErrSessionExists
+			}
+			return fmt.Errorf("%w: insert session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
 		}
-		return fmt.Errorf("%w: insert session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
-	}
 
-	if len(sess.Labels) > 0 {
-		placeholders := make([]string, 0, len(sess.Labels))
-		args := make([]any, 0, len(sess.Labels)*4)
-		i := 1
-		for k, v := range sess.Labels {
-			placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d)", i, i+1, i+2, i+3))
-			args = append(args, sess.Namespace, sess.ID, k, v)
-			i += 4
+		if len(sess.Labels) > 0 {
+			placeholders := make([]string, 0, len(sess.Labels))
+			args := make([]any, 0, len(sess.Labels)*4)
+			i := 1
+			for k, v := range sess.Labels {
+				placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d)", i, i+1, i+2, i+3))
+				args = append(args, sess.Namespace, sess.ID, k, v)
+				i += 4
+			}
+			query := `INSERT INTO session_labels (namespace, session_id, key, value) VALUES ` + strings.Join(placeholders, ", ") //nolint:gosec
+			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+				return fmt.Errorf("%w: insert labels for session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
+			}
 		}
-		query := `INSERT INTO session_labels (namespace, session_id, key, value) VALUES ` + strings.Join(placeholders, ", ") //nolint:gosec
-		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-			return fmt.Errorf("%w: insert labels for session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("%w: commit create session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
-	}
-	return nil
+		return nil
+	})
 }
 
 func (r *sessionRepo) Get(ctx context.Context, namespace, id string) (Session, error) {
@@ -91,7 +79,7 @@ func (r *sessionRepo) Get(ctx context.Context, namespace, id string) (Session, e
 
 	var sess Session
 	var labelsJSON []byte
-	err := r.store.db.QueryRowContext(ctx, `
+	err := r.queryer.QueryRowContext(ctx, `
 		SELECT
 			s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.ttl_minutes,
 			COALESCE(
@@ -135,7 +123,7 @@ func (r *sessionRepo) Touch(ctx context.Context, namespace, id string, lastActiv
 		return ErrSessionIDRequired
 	}
 
-	result, err := r.store.db.ExecContext(ctx,
+	result, err := r.queryer.ExecContext(ctx,
 		`UPDATE sessions SET last_activity = GREATEST(last_activity, $3) WHERE namespace = $1 AND session_id = $2`,
 		namespace, id, lastActivity,
 	)
@@ -176,7 +164,7 @@ func (r *sessionRepo) List(ctx context.Context, filter ListSessionsFilter) ([]Ma
 		ORDER BY s.last_activity DESC`
 	query := queryHead + whereClause + queryTail //nolint:gosec
 
-	rows, err := r.store.db.QueryContext(ctx, query, args...)
+	rows, err := r.queryer.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: list sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
 	}
@@ -217,7 +205,7 @@ func (r *sessionRepo) Count(ctx context.Context, filter ListSessionsFilter) (int
 	whereClause, args := buildSessionFilterWhere(filter, "s")
 	query := `SELECT COUNT(*) FROM sessions s WHERE ` + whereClause //nolint:gosec
 	var count int
-	if err := r.store.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+	if err := r.queryer.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("%w: count sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
 	}
 	return count, nil
@@ -231,64 +219,60 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace, id string) (DeleteS
 		return DeleteSessionResult{}, ErrSessionIDRequired
 	}
 
-	tx, err := r.store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return DeleteSessionResult{}, fmt.Errorf("%w: begin delete session %q/%q: %w", ErrStorageBackend, namespace, id, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// FOR UPDATE conflicts with FOR KEY SHARE that FK enforcement takes on
-	// concurrent INSERT INTO children — those inserts block until our COMMIT
-	// and then fail FK. Count and cascade see the same row set.
-	var one int
-	err = tx.QueryRowContext(ctx,
-		`SELECT 1 FROM sessions WHERE namespace = $1 AND session_id = $2 FOR UPDATE`,
-		namespace, id,
-	).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return DeleteSessionResult{}, ErrSessionNotFound
-	}
-	if err != nil {
-		return DeleteSessionResult{}, fmt.Errorf("%w: lock session %q/%q: %w", ErrStorageBackend, namespace, id, err)
-	}
-	r.store.logger.WithContext(ctx).Debug("delete session: lock acquired")
-
 	result := DeleteSessionResult{SessionID: id}
-	err = tx.QueryRowContext(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM sources        WHERE namespace = $1 AND session_id = $2),
-			(SELECT COUNT(*) FROM chunks         WHERE source_id IN
-				(SELECT id FROM sources WHERE namespace = $1 AND session_id = $2)),
-			(SELECT COUNT(*) FROM session_events WHERE namespace = $1 AND session_id = $2),
-			(SELECT COUNT(*) FROM session_labels WHERE namespace = $1 AND session_id = $2)`,
-		namespace, id,
-	).Scan(
-		&result.Cascaded.Sources,
-		&result.Cascaded.Chunks,
-		&result.Cascaded.Events,
-		&result.Cascaded.Labels,
-	)
+	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
+		// FOR UPDATE conflicts with FOR KEY SHARE that FK enforcement takes
+		// on concurrent INSERT INTO children — those inserts block until our
+		// COMMIT and then fail FK. Count and cascade see the same row set.
+		var one int
+		err := tx.QueryRowContext(ctx,
+			`SELECT 1 FROM sessions WHERE namespace = $1 AND session_id = $2 FOR UPDATE`,
+			namespace, id,
+		).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSessionNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("%w: lock session %q/%q: %w", ErrStorageBackend, namespace, id, err)
+		}
+		r.logger.WithContext(ctx).Debug("delete session: lock acquired")
+
+		err = tx.QueryRowContext(ctx, `
+			SELECT
+				(SELECT COUNT(*) FROM sources        WHERE namespace = $1 AND session_id = $2),
+				(SELECT COUNT(*) FROM chunks         WHERE source_id IN
+					(SELECT id FROM sources WHERE namespace = $1 AND session_id = $2)),
+				(SELECT COUNT(*) FROM session_events WHERE namespace = $1 AND session_id = $2),
+				(SELECT COUNT(*) FROM session_labels WHERE namespace = $1 AND session_id = $2)`,
+			namespace, id,
+		).Scan(
+			&result.Cascaded.Sources,
+			&result.Cascaded.Chunks,
+			&result.Cascaded.Events,
+			&result.Cascaded.Labels,
+		)
+		if err != nil {
+			return fmt.Errorf("%w: count cascade for %q/%q: %w", ErrStorageBackend, namespace, id, err)
+		}
+		r.logger.WithContext(ctx).Debug("delete session: cascade computed",
+			logging.IntField("sources", result.Cascaded.Sources),
+			logging.IntField("chunks", result.Cascaded.Chunks),
+			logging.IntField("events", result.Cascaded.Events),
+			logging.IntField("labels", result.Cascaded.Labels),
+		)
+
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM sessions WHERE namespace = $1 AND session_id = $2`,
+			namespace, id,
+		); err != nil {
+			return fmt.Errorf("%w: delete session %q/%q: %w", ErrStorageBackend, namespace, id, err)
+		}
+		r.logger.WithContext(ctx).Debug("delete session: committed")
+		return nil
+	})
 	if err != nil {
-		return DeleteSessionResult{}, fmt.Errorf("%w: count cascade for %q/%q: %w", ErrStorageBackend, namespace, id, err)
+		return DeleteSessionResult{}, err
 	}
-	r.store.logger.WithContext(ctx).Debug("delete session: cascade computed",
-		logging.IntField("sources", result.Cascaded.Sources),
-		logging.IntField("chunks", result.Cascaded.Chunks),
-		logging.IntField("events", result.Cascaded.Events),
-		logging.IntField("labels", result.Cascaded.Labels),
-	)
-
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM sessions WHERE namespace = $1 AND session_id = $2`,
-		namespace, id,
-	); err != nil {
-		return DeleteSessionResult{}, fmt.Errorf("%w: delete session %q/%q: %w", ErrStorageBackend, namespace, id, err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return DeleteSessionResult{}, fmt.Errorf("%w: commit delete session %q/%q: %w", ErrStorageBackend, namespace, id, err)
-	}
-	r.store.logger.WithContext(ctx).Debug("delete session: committed")
 	return result, nil
 }
 
@@ -299,81 +283,75 @@ func (r *sessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) 
 
 	whereClause, args := buildSessionFilterWhere(filter, "")
 
-	tx, err := r.store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return DeleteSessionsResult{}, fmt.Errorf("%w: begin delete sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	lockQuery := `SELECT session_id FROM sessions WHERE ` + whereClause + ` FOR UPDATE` //nolint:gosec
-	rows, err := tx.QueryContext(ctx, lockQuery, args...)
-	if err != nil {
-		return DeleteSessionsResult{}, fmt.Errorf("%w: lock sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
-	}
-	ids := make([]string, 0)
-	for rows.Next() {
-		var sid string
-		if err := rows.Scan(&sid); err != nil {
+	var result DeleteSessionsResult
+	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
+		lockQuery := `SELECT session_id FROM sessions WHERE ` + whereClause + ` FOR UPDATE` //nolint:gosec
+		rows, err := tx.QueryContext(ctx, lockQuery, args...)
+		if err != nil {
+			return fmt.Errorf("%w: lock sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
+		}
+		ids := make([]string, 0)
+		for rows.Next() {
+			var sid string
+			if err := rows.Scan(&sid); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("%w: scan locked session row in %q: %w", ErrStorageBackend, filter.Namespace, err)
+			}
+			ids = append(ids, sid)
+		}
+		if err := rows.Err(); err != nil {
 			_ = rows.Close()
-			return DeleteSessionsResult{}, fmt.Errorf("%w: scan locked session row in %q: %w", ErrStorageBackend, filter.Namespace, err)
+			return fmt.Errorf("%w: iterate locked session rows in %q: %w", ErrStorageBackend, filter.Namespace, err)
 		}
-		ids = append(ids, sid)
-	}
-	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return DeleteSessionsResult{}, fmt.Errorf("%w: iterate locked session rows in %q: %w", ErrStorageBackend, filter.Namespace, err)
-	}
-	_ = rows.Close()
-	r.store.logger.WithContext(ctx).Debug("delete sessions: locked rows", logging.IntField("count", len(ids)))
+		r.logger.WithContext(ctx).Debug("delete sessions: locked rows", logging.IntField("count", len(ids)))
 
-	if len(ids) == 0 {
-		if err := tx.Commit(); err != nil {
-			return DeleteSessionsResult{}, fmt.Errorf("%w: commit empty delete sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
+		if len(ids) == 0 {
+			return nil
 		}
-		return DeleteSessionsResult{}, nil
-	}
 
-	result := DeleteSessionsResult{DeletedSessions: len(ids)}
-	err = tx.QueryRowContext(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM sources        WHERE namespace = $1 AND session_id = ANY($2)),
-			(SELECT COUNT(*) FROM chunks         WHERE source_id IN
-				(SELECT id FROM sources WHERE namespace = $1 AND session_id = ANY($2))),
-			(SELECT COUNT(*) FROM session_events WHERE namespace = $1 AND session_id = ANY($2)),
-			(SELECT COUNT(*) FROM session_labels WHERE namespace = $1 AND session_id = ANY($2))`,
-		filter.Namespace, ids,
-	).Scan(
-		&result.Cascaded.Sources,
-		&result.Cascaded.Chunks,
-		&result.Cascaded.Events,
-		&result.Cascaded.Labels,
-	)
+		result.DeletedSessions = len(ids)
+		err = tx.QueryRowContext(ctx, `
+			SELECT
+				(SELECT COUNT(*) FROM sources        WHERE namespace = $1 AND session_id = ANY($2)),
+				(SELECT COUNT(*) FROM chunks         WHERE source_id IN
+					(SELECT id FROM sources WHERE namespace = $1 AND session_id = ANY($2))),
+				(SELECT COUNT(*) FROM session_events WHERE namespace = $1 AND session_id = ANY($2)),
+				(SELECT COUNT(*) FROM session_labels WHERE namespace = $1 AND session_id = ANY($2))`,
+			filter.Namespace, ids,
+		).Scan(
+			&result.Cascaded.Sources,
+			&result.Cascaded.Chunks,
+			&result.Cascaded.Events,
+			&result.Cascaded.Labels,
+		)
+		if err != nil {
+			return fmt.Errorf("%w: count cascade for sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
+		}
+		r.logger.WithContext(ctx).Debug("delete sessions: cascade computed",
+			logging.IntField("sources", result.Cascaded.Sources),
+			logging.IntField("chunks", result.Cascaded.Chunks),
+			logging.IntField("events", result.Cascaded.Events),
+			logging.IntField("labels", result.Cascaded.Labels),
+		)
+
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM sessions WHERE namespace = $1 AND session_id = ANY($2)`,
+			filter.Namespace, ids,
+		); err != nil {
+			return fmt.Errorf("%w: delete sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
+		}
+		r.logger.WithContext(ctx).Debug("delete sessions: committed")
+		return nil
+	})
 	if err != nil {
-		return DeleteSessionsResult{}, fmt.Errorf("%w: count cascade for sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
+		return DeleteSessionsResult{}, err
 	}
-	r.store.logger.WithContext(ctx).Debug("delete sessions: cascade computed",
-		logging.IntField("sources", result.Cascaded.Sources),
-		logging.IntField("chunks", result.Cascaded.Chunks),
-		logging.IntField("events", result.Cascaded.Events),
-		logging.IntField("labels", result.Cascaded.Labels),
-	)
-
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM sessions WHERE namespace = $1 AND session_id = ANY($2)`,
-		filter.Namespace, ids,
-	); err != nil {
-		return DeleteSessionsResult{}, fmt.Errorf("%w: delete sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return DeleteSessionsResult{}, fmt.Errorf("%w: commit delete sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
-	}
-	r.store.logger.WithContext(ctx).Debug("delete sessions: committed")
 	return result, nil
 }
 
 func (r *sessionRepo) ScanExpired(ctx context.Context, now time.Time) ([]SessionRef, error) {
-	rows, err := r.store.db.QueryContext(ctx, `
+	rows, err := r.queryer.QueryContext(ctx, `
 		SELECT session_id, namespace
 		FROM sessions
 		WHERE last_activity + (ttl_minutes || ' minutes')::interval < $1

@@ -18,10 +18,9 @@ import (
 
 // Store is the Postgres DAL root. Per-entity repositories are reached via
 // Store.Clients() / Store.Sessions() — each repo method is atomically self-
-// contained. Callers MUST NOT compose multiple repo methods expecting
-// atomicity; cross-repository workflows that need to share a transaction
-// (no consumer today) will get a WithTx(ctx, fn) primitive when the first
-// such workflow appears.
+// contained. Cross-repository workflows that need to share a transaction
+// (e.g. register client + create session) go through Store.WithTx; do NOT
+// compose multiple Store.Clients()/Store.Sessions() calls expecting atomicity.
 type Store struct {
 	db       *sql.DB
 	logger   *logging.Logger
@@ -58,8 +57,8 @@ func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *loggin
 	}
 
 	s := &Store{db: conn, logger: logger}
-	s.clients = &clientRepo{store: s}
-	s.sessions = &sessionRepo{store: s}
+	s.clients = &clientRepo{queryer: conn, logger: logger}
+	s.sessions = &sessionRepo{queryer: conn, logger: logger}
 	return s, nil
 }
 

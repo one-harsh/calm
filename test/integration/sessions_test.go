@@ -11,14 +11,20 @@ import (
 	"time"
 
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/session"
 )
 
 // ---------- CreateSession ----------
+
+// Repo-level Create tests pre-seed the (namespace, default-client) row because
+// the repo no longer auto-registers — that orchestration lives in
+// session.Service.Create. Service-level auto-register coverage is below.
 
 func TestCreateSession_HappyMinimal(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	if err := store.Sessions().Create(context.Background(), db.Session{
 		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
 	}); err != nil {
@@ -37,6 +43,7 @@ func TestCreateSession_HappyWithLabels(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	labels := map[string]string{"env": "prod", "team": "ml"}
 	if err := store.Sessions().Create(context.Background(), db.Session{
 		ID: "s1", Namespace: "ns-a", TTLMinutes: 60, Labels: labels,
@@ -52,22 +59,47 @@ func TestCreateSession_HappyWithLabels(t *testing.T) {
 	}
 }
 
-// DL01 auto-attribution: CreateSession registers the client if it doesn't
-// already exist, then inserts the session — all atomically in one tx.
-func TestCreateSession_AutoRegistersNewClient(t *testing.T) {
+// session.Service.Create is the DL01 auto-attribution boundary; this test
+// covers the service-layer orchestration that the repo no longer owns.
+func TestSessionService_Create_AutoRegistersNewClient(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	if err := store.Sessions().Create(context.Background(), db.Session{
+	svc := session.New(store)
+	if err := svc.Create(context.Background(), db.Session{
 		ID: "s1", Namespace: "ns-a", Client: "alice", TTLMinutes: 60,
 	}); err != nil {
-		t.Fatalf("CreateSession: %v", err)
+		t.Fatalf("service Create: %v", err)
 	}
 	if n := countRows(t, sqlDB,
 		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`,
 		"ns-a", "alice",
 	); n != 1 {
 		t.Errorf("want 1 client row, got %d", n)
+	}
+	if n := countRows(t, sqlDB,
+		`SELECT COUNT(*) FROM sessions WHERE namespace = $1 AND session_id = $2`,
+		"ns-a", "s1",
+	); n != 1 {
+		t.Errorf("want 1 session row, got %d", n)
+	}
+}
+
+func TestSessionService_Create_DefaultsEmptyClient(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store)
+	if err := svc.Create(context.Background(), db.Session{
+		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
+	}); err != nil {
+		t.Fatalf("service Create: %v", err)
+	}
+	if n := countRows(t, sqlDB,
+		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`,
+		"ns-a", db.DefaultClient,
+	); n != 1 {
+		t.Errorf("want default-client row, got %d", n)
 	}
 }
 
@@ -90,9 +122,10 @@ func TestCreateSession_ExistingClientIdempotent(t *testing.T) {
 }
 
 func TestCreateSession_DuplicateIDSameNamespaceRejected(t *testing.T) {
-	store, _, teardown := openConcreteStore(t)
+	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := db.Session{ID: "s1", Namespace: "ns-a", TTLMinutes: 60}
 	if err := store.Sessions().Create(context.Background(), sess); err != nil {
 		t.Fatalf("first CreateSession: %v", err)
@@ -107,6 +140,8 @@ func TestCreateSession_DuplicateIDAcrossNamespacesAllowed(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	seedClient(t, sqlDB, "ns-b", db.DefaultClient)
 	if err := store.Sessions().Create(context.Background(), db.Session{
 		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
 	}); err != nil {

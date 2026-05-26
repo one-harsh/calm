@@ -61,8 +61,8 @@ func run() error {
 	}
 	defer func() { _ = store.Close() }()
 
-	clientSvc := client.New(store.Clients())
-	sessionSvc := session.New(store.Sessions())
+	clientSvc := client.New(store)
+	sessionSvc := session.New(store)
 	if err := clientSvc.SeedDefaults(openCtx, namespaceNames(cfg.Namespaces)); err != nil {
 		return fmt.Errorf("seed clients: %w", err)
 	}
