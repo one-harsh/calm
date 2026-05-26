@@ -290,9 +290,9 @@ func (_c *MockDAL_DeleteClient_Call) RunAndReturn(run func(context.Context, stri
 	return _c
 }
 
-// DeleteSession provides a mock function with given fields: ctx, id
-func (_m *MockDAL) DeleteSession(ctx context.Context, id string) (DeleteSessionResult, error) {
-	ret := _m.Called(ctx, id)
+// DeleteSession provides a mock function with given fields: ctx, namespace, id
+func (_m *MockDAL) DeleteSession(ctx context.Context, namespace string, id string) (DeleteSessionResult, error) {
+	ret := _m.Called(ctx, namespace, id)
 
 	if len(ret) == 0 {
 		panic("no return value specified for DeleteSession")
@@ -300,17 +300,17 @@ func (_m *MockDAL) DeleteSession(ctx context.Context, id string) (DeleteSessionR
 
 	var r0 DeleteSessionResult
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string) (DeleteSessionResult, error)); ok {
-		return rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) (DeleteSessionResult, error)); ok {
+		return rf(ctx, namespace, id)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string) DeleteSessionResult); ok {
-		r0 = rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) DeleteSessionResult); ok {
+		r0 = rf(ctx, namespace, id)
 	} else {
 		r0 = ret.Get(0).(DeleteSessionResult)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
-		r1 = rf(ctx, id)
+	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = rf(ctx, namespace, id)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -325,14 +325,15 @@ type MockDAL_DeleteSession_Call struct {
 
 // DeleteSession is a helper method to define mock.On call
 //   - ctx context.Context
+//   - namespace string
 //   - id string
-func (_e *MockDAL_Expecter) DeleteSession(ctx interface{}, id interface{}) *MockDAL_DeleteSession_Call {
-	return &MockDAL_DeleteSession_Call{Call: _e.mock.On("DeleteSession", ctx, id)}
+func (_e *MockDAL_Expecter) DeleteSession(ctx interface{}, namespace interface{}, id interface{}) *MockDAL_DeleteSession_Call {
+	return &MockDAL_DeleteSession_Call{Call: _e.mock.On("DeleteSession", ctx, namespace, id)}
 }
 
-func (_c *MockDAL_DeleteSession_Call) Run(run func(ctx context.Context, id string)) *MockDAL_DeleteSession_Call {
+func (_c *MockDAL_DeleteSession_Call) Run(run func(ctx context.Context, namespace string, id string)) *MockDAL_DeleteSession_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string))
 	})
 	return _c
 }
@@ -342,7 +343,7 @@ func (_c *MockDAL_DeleteSession_Call) Return(_a0 DeleteSessionResult, _a1 error)
 	return _c
 }
 
-func (_c *MockDAL_DeleteSession_Call) RunAndReturn(run func(context.Context, string) (DeleteSessionResult, error)) *MockDAL_DeleteSession_Call {
+func (_c *MockDAL_DeleteSession_Call) RunAndReturn(run func(context.Context, string, string) (DeleteSessionResult, error)) *MockDAL_DeleteSession_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -404,9 +405,9 @@ func (_c *MockDAL_DeleteSessions_Call) RunAndReturn(run func(context.Context, Li
 	return _c
 }
 
-// GetSession provides a mock function with given fields: ctx, id
-func (_m *MockDAL) GetSession(ctx context.Context, id string) (Session, error) {
-	ret := _m.Called(ctx, id)
+// GetSession provides a mock function with given fields: ctx, namespace, id
+func (_m *MockDAL) GetSession(ctx context.Context, namespace string, id string) (Session, error) {
+	ret := _m.Called(ctx, namespace, id)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetSession")
@@ -414,17 +415,17 @@ func (_m *MockDAL) GetSession(ctx context.Context, id string) (Session, error) {
 
 	var r0 Session
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string) (Session, error)); ok {
-		return rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) (Session, error)); ok {
+		return rf(ctx, namespace, id)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string) Session); ok {
-		r0 = rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) Session); ok {
+		r0 = rf(ctx, namespace, id)
 	} else {
 		r0 = ret.Get(0).(Session)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
-		r1 = rf(ctx, id)
+	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = rf(ctx, namespace, id)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -439,14 +440,15 @@ type MockDAL_GetSession_Call struct {
 
 // GetSession is a helper method to define mock.On call
 //   - ctx context.Context
+//   - namespace string
 //   - id string
-func (_e *MockDAL_Expecter) GetSession(ctx interface{}, id interface{}) *MockDAL_GetSession_Call {
-	return &MockDAL_GetSession_Call{Call: _e.mock.On("GetSession", ctx, id)}
+func (_e *MockDAL_Expecter) GetSession(ctx interface{}, namespace interface{}, id interface{}) *MockDAL_GetSession_Call {
+	return &MockDAL_GetSession_Call{Call: _e.mock.On("GetSession", ctx, namespace, id)}
 }
 
-func (_c *MockDAL_GetSession_Call) Run(run func(ctx context.Context, id string)) *MockDAL_GetSession_Call {
+func (_c *MockDAL_GetSession_Call) Run(run func(ctx context.Context, namespace string, id string)) *MockDAL_GetSession_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(string))
 	})
 	return _c
 }
@@ -456,7 +458,7 @@ func (_c *MockDAL_GetSession_Call) Return(_a0 Session, _a1 error) *MockDAL_GetSe
 	return _c
 }
 
-func (_c *MockDAL_GetSession_Call) RunAndReturn(run func(context.Context, string) (Session, error)) *MockDAL_GetSession_Call {
+func (_c *MockDAL_GetSession_Call) RunAndReturn(run func(context.Context, string, string) (Session, error)) *MockDAL_GetSession_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -794,23 +796,23 @@ func (_c *MockDAL_RegisterClient_Call) RunAndReturn(run func(context.Context, st
 }
 
 // ScanExpiredSessions provides a mock function with given fields: ctx, now
-func (_m *MockDAL) ScanExpiredSessions(ctx context.Context, now time.Time) ([]string, error) {
+func (_m *MockDAL) ScanExpiredSessions(ctx context.Context, now time.Time) ([]SessionRef, error) {
 	ret := _m.Called(ctx, now)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ScanExpiredSessions")
 	}
 
-	var r0 []string
+	var r0 []SessionRef
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, time.Time) ([]string, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, time.Time) ([]SessionRef, error)); ok {
 		return rf(ctx, now)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, time.Time) []string); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, time.Time) []SessionRef); ok {
 		r0 = rf(ctx, now)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]string)
+			r0 = ret.Get(0).([]SessionRef)
 		}
 	}
 
@@ -842,12 +844,12 @@ func (_c *MockDAL_ScanExpiredSessions_Call) Run(run func(ctx context.Context, no
 	return _c
 }
 
-func (_c *MockDAL_ScanExpiredSessions_Call) Return(_a0 []string, _a1 error) *MockDAL_ScanExpiredSessions_Call {
+func (_c *MockDAL_ScanExpiredSessions_Call) Return(_a0 []SessionRef, _a1 error) *MockDAL_ScanExpiredSessions_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockDAL_ScanExpiredSessions_Call) RunAndReturn(run func(context.Context, time.Time) ([]string, error)) *MockDAL_ScanExpiredSessions_Call {
+func (_c *MockDAL_ScanExpiredSessions_Call) RunAndReturn(run func(context.Context, time.Time) ([]SessionRef, error)) *MockDAL_ScanExpiredSessions_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -911,17 +913,17 @@ func (_c *MockDAL_Search_Call) RunAndReturn(run func(context.Context, SearchInpu
 	return _c
 }
 
-// TouchSession provides a mock function with given fields: ctx, id, lastActivity
-func (_m *MockDAL) TouchSession(ctx context.Context, id string, lastActivity time.Time) error {
-	ret := _m.Called(ctx, id, lastActivity)
+// TouchSession provides a mock function with given fields: ctx, namespace, id, lastActivity
+func (_m *MockDAL) TouchSession(ctx context.Context, namespace string, id string, lastActivity time.Time) error {
+	ret := _m.Called(ctx, namespace, id, lastActivity)
 
 	if len(ret) == 0 {
 		panic("no return value specified for TouchSession")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, time.Time) error); ok {
-		r0 = rf(ctx, id, lastActivity)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, time.Time) error); ok {
+		r0 = rf(ctx, namespace, id, lastActivity)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -936,15 +938,16 @@ type MockDAL_TouchSession_Call struct {
 
 // TouchSession is a helper method to define mock.On call
 //   - ctx context.Context
+//   - namespace string
 //   - id string
 //   - lastActivity time.Time
-func (_e *MockDAL_Expecter) TouchSession(ctx interface{}, id interface{}, lastActivity interface{}) *MockDAL_TouchSession_Call {
-	return &MockDAL_TouchSession_Call{Call: _e.mock.On("TouchSession", ctx, id, lastActivity)}
+func (_e *MockDAL_Expecter) TouchSession(ctx interface{}, namespace interface{}, id interface{}, lastActivity interface{}) *MockDAL_TouchSession_Call {
+	return &MockDAL_TouchSession_Call{Call: _e.mock.On("TouchSession", ctx, namespace, id, lastActivity)}
 }
 
-func (_c *MockDAL_TouchSession_Call) Run(run func(ctx context.Context, id string, lastActivity time.Time)) *MockDAL_TouchSession_Call {
+func (_c *MockDAL_TouchSession_Call) Run(run func(ctx context.Context, namespace string, id string, lastActivity time.Time)) *MockDAL_TouchSession_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(time.Time))
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(time.Time))
 	})
 	return _c
 }
@@ -954,7 +957,7 @@ func (_c *MockDAL_TouchSession_Call) Return(_a0 error) *MockDAL_TouchSession_Cal
 	return _c
 }
 
-func (_c *MockDAL_TouchSession_Call) RunAndReturn(run func(context.Context, string, time.Time) error) *MockDAL_TouchSession_Call {
+func (_c *MockDAL_TouchSession_Call) RunAndReturn(run func(context.Context, string, string, time.Time) error) *MockDAL_TouchSession_Call {
 	_c.Call.Return(run)
 	return _c
 }

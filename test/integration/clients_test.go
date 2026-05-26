@@ -6,6 +6,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -331,19 +332,19 @@ func TestDeleteClient_HappyPathFullCascade(t *testing.T) {
 	// Two sessions, each with 2 labels, 2 sources × 3 chunks, 4 events, vocab entries.
 	for _, sid := range []string{"s1", "s2"} {
 		seedSession(t, sqlDB, "ns-a", "alice", sid, 60)
-		seedSessionLabel(t, sqlDB, sid, "env", "prod")
-		seedSessionLabel(t, sqlDB, sid, "team", "ml")
+		seedSessionLabel(t, sqlDB, "ns-a", sid, "env", "prod")
+		seedSessionLabel(t, sqlDB, "ns-a", sid, "team", "ml")
 		for _, src := range []string{"src-a", "src-b"} {
-			sourceID := seedSource(t, sqlDB, sid, src)
+			sourceID := seedSource(t, sqlDB, "ns-a", sid, src)
 			for j := 0; j < 3; j++ {
 				seedChunk(t, sqlDB, sourceID, "title", "content", "prose")
 			}
 		}
 		for j := 0; j < 4; j++ {
-			seedEvent(t, sqlDB, sid, "tool_invocation"+string(rune('0'+j)), 3, []byte(`{}`))
+			seedEvent(t, sqlDB, "ns-a", sid, "tool_invocation"+string(rune('0'+j)), 3, []byte(`{}`))
 		}
-		seedVocab(t, sqlDB, sid, "alpha", 1)
-		seedVocab(t, sqlDB, sid, "beta", 2)
+		seedVocab(t, sqlDB, "ns-a", sid, "alpha", 1)
+		seedVocab(t, sqlDB, "ns-a", sid, "beta", 2)
 	}
 
 	res, err := store.DeleteClient(context.Background(), "ns-a", "alice")
@@ -388,7 +389,7 @@ func TestDeleteClient_NegativeIsolation(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", "bob")
 	seedSession(t, sqlDB, "ns-a", "alice", "alice-1", 60)
 	seedSession(t, sqlDB, "ns-a", "bob", "bob-1", 60)
-	bobSource := seedSource(t, sqlDB, "bob-1", "bob-src")
+	bobSource := seedSource(t, sqlDB, "ns-a", "bob-1", "bob-src")
 	seedChunk(t, sqlDB, bobSource, "bob", "content", "prose")
 
 	if _, err := store.DeleteClient(context.Background(), "ns-a", "alice"); err != nil {
@@ -426,6 +427,65 @@ func TestDeleteClient_CrossNamespaceIsolation(t *testing.T) {
 	}
 	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sessions WHERE session_id = 'b-s1'`); n != 1 {
 		t.Errorf("ns-b session: want 1, got %d", n)
+	}
+}
+
+// Regression: child subqueries must scope by namespace. A session_id that
+// collides with one in another namespace must not pull foreign-namespace
+// children into the cascade counts.
+func TestDeleteClient_CascadeCountsScopedByNamespace(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", "alice")
+	seedClient(t, sqlDB, "ns-b", "alice")
+	seedSession(t, sqlDB, "ns-a", "alice", "shared", 60)
+	seedSession(t, sqlDB, "ns-b", "alice", "shared", 60)
+
+	// ns-a alice/shared: small footprint.
+	seedSessionLabel(t, sqlDB, "ns-a", "shared", "side", "a")
+	srcA := seedSource(t, sqlDB, "ns-a", "shared", "src")
+	seedChunk(t, sqlDB, srcA, "t", "c", "prose")
+	seedEvent(t, sqlDB, "ns-a", "shared", "evt", 3, []byte(`{}`))
+
+	// ns-b alice/shared: larger footprint with the same session_id.
+	for _, k := range []string{"side", "env", "team", "region", "tier"} {
+		seedSessionLabel(t, sqlDB, "ns-b", "shared", k, "v")
+	}
+	for i := 0; i < 5; i++ {
+		srcB := seedSource(t, sqlDB, "ns-b", "shared", fmt.Sprintf("src-%d", i))
+		for j := 0; j < 5; j++ {
+			seedChunk(t, sqlDB, srcB, "t", "c", "prose")
+		}
+	}
+	for i := 0; i < 5; i++ {
+		seedEvent(t, sqlDB, "ns-b", "shared", fmt.Sprintf("evt-%d", i), 3, []byte(`{}`))
+	}
+
+	res, err := store.DeleteClient(context.Background(), "ns-a", "alice")
+	if err != nil {
+		t.Fatalf("DeleteClient ns-a alice: %v", err)
+	}
+	want := db.DeleteClientResult{
+		Client:          "alice",
+		DeletedSessions: 1,
+		Cascaded:        db.CascadeCounts{Sources: 1, Chunks: 1, Events: 1, Labels: 1},
+	}
+	if res != want {
+		t.Errorf("ns-a cascade counts leaked from ns-b: got %+v; want %+v", res, want)
+	}
+
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sessions WHERE namespace = 'ns-b' AND session_id = 'shared'`); n != 1 {
+		t.Errorf("ns-b session lost: want 1, got %d", n)
+	}
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sources WHERE namespace = 'ns-b' AND session_id = 'shared'`); n != 5 {
+		t.Errorf("ns-b sources lost: want 5, got %d", n)
+	}
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM session_events WHERE namespace = 'ns-b' AND session_id = 'shared'`); n != 5 {
+		t.Errorf("ns-b events lost: want 5, got %d", n)
+	}
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM session_labels WHERE namespace = 'ns-b' AND session_id = 'shared'`); n != 5 {
+		t.Errorf("ns-b labels lost: want 5, got %d", n)
 	}
 }
 

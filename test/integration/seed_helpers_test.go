@@ -5,14 +5,14 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"testing"
 	"time"
 )
 
 // Fixture helpers. Each takes the sibling *sql.DB (not the under-test *db.Store)
-// so tests bypass the surface they're verifying. Reused by WI-04+ as DAL
-// coverage expands.
+// so tests bypass the surface they're verifying.
 
 func seedClient(t *testing.T, sqlDB *sql.DB, namespace, name string) {
 	t.Helper()
@@ -34,8 +34,6 @@ func seedSession(t *testing.T, sqlDB *sql.DB, namespace, client, sessionID strin
 	}
 }
 
-// seedSessionWithActivity inserts a session with a controlled last_activity
-// timestamp — useful for testing ListClients' MAX(last_activity) aggregation.
 func seedSessionWithActivity(t *testing.T, sqlDB *sql.DB, namespace, client, sessionID string, ttlMinutes int, lastActivity time.Time) {
 	t.Helper()
 	if _, err := sqlDB.ExecContext(context.Background(),
@@ -46,24 +44,24 @@ func seedSessionWithActivity(t *testing.T, sqlDB *sql.DB, namespace, client, ses
 	}
 }
 
-func seedSessionLabel(t *testing.T, sqlDB *sql.DB, sessionID, key, value string) {
+func seedSessionLabel(t *testing.T, sqlDB *sql.DB, namespace, sessionID, key, value string) {
 	t.Helper()
 	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO session_labels (session_id, key, value) VALUES ($1, $2, $3)`,
-		sessionID, key, value,
+		`INSERT INTO session_labels (namespace, session_id, key, value) VALUES ($1, $2, $3, $4)`,
+		namespace, sessionID, key, value,
 	); err != nil {
-		t.Fatalf("seedSessionLabel(%q[%q]=%q): %v", sessionID, key, value, err)
+		t.Fatalf("seedSessionLabel(%q/%q[%q]=%q): %v", namespace, sessionID, key, value, err)
 	}
 }
 
-func seedSource(t *testing.T, sqlDB *sql.DB, sessionID, label string) int64 {
+func seedSource(t *testing.T, sqlDB *sql.DB, namespace, sessionID, label string) int64 {
 	t.Helper()
 	var id int64
 	if err := sqlDB.QueryRowContext(context.Background(),
-		`INSERT INTO sources (session_id, label) VALUES ($1, $2) RETURNING id`,
-		sessionID, label,
+		`INSERT INTO sources (namespace, session_id, label) VALUES ($1, $2, $3) RETURNING id`,
+		namespace, sessionID, label,
 	).Scan(&id); err != nil {
-		t.Fatalf("seedSource(%q in %q): %v", label, sessionID, err)
+		t.Fatalf("seedSource(%q in %q/%q): %v", label, namespace, sessionID, err)
 	}
 	return id
 }
@@ -78,23 +76,24 @@ func seedChunk(t *testing.T, sqlDB *sql.DB, sourceID int64, title, content, cont
 	}
 }
 
-func seedEvent(t *testing.T, sqlDB *sql.DB, sessionID, eventType string, priority int, data []byte) {
+func seedEvent(t *testing.T, sqlDB *sql.DB, namespace, sessionID, eventType string, priority int, data []byte) {
 	t.Helper()
+	h := sha256.Sum256(append([]byte(eventType), data...))
 	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO session_events (session_id, type, priority, data, data_hash) VALUES ($1, $2, $3, $4, $5)`,
-		sessionID, eventType, priority, data, "test-hash-"+eventType,
+		`INSERT INTO session_events (namespace, session_id, type, priority, data, data_hash) VALUES ($1, $2, $3, $4, $5, $6)`,
+		namespace, sessionID, eventType, priority, data, h[:],
 	); err != nil {
-		t.Fatalf("seedEvent(%q type=%q): %v", sessionID, eventType, err)
+		t.Fatalf("seedEvent(%q/%q type=%q): %v", namespace, sessionID, eventType, err)
 	}
 }
 
-func seedVocab(t *testing.T, sqlDB *sql.DB, sessionID, word string, docFreq int) {
+func seedVocab(t *testing.T, sqlDB *sql.DB, namespace, sessionID, word string, docFreq int) {
 	t.Helper()
 	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO vocabulary (session_id, word, doc_freq) VALUES ($1, $2, $3)`,
-		sessionID, word, docFreq,
+		`INSERT INTO vocabulary (namespace, session_id, word, doc_freq) VALUES ($1, $2, $3, $4)`,
+		namespace, sessionID, word, docFreq,
 	); err != nil {
-		t.Fatalf("seedVocab(%q word=%q): %v", sessionID, word, err)
+		t.Fatalf("seedVocab(%q/%q word=%q): %v", namespace, sessionID, word, err)
 	}
 }
 

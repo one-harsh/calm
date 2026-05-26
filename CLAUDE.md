@@ -26,7 +26,7 @@ Rule: when you'd otherwise paraphrase or enumerate something from the HLD, write
 
 HLD section numbers (`§3`, `§6`, `§11`) are positional — the moment the HLD is reorganized, every `HLD §11` reference in code or docs rots silently and nothing catches the drift. The fix is to cite by stable name:
 
-- **Invariants** — use the name (`never-worse`, `session-isolation`, `content-fidelity`, `idempotent-indexing`, `workload-agnostic`, `sidecar-not-proxy`), not "HLD §4 invariant N".
+- **Invariants** — use the name (`never-worse`, `workload-agnostic`, `namespace-isolation`, `session-isolation`, `sidecar-not-proxy`, `content-fidelity`, `idempotent-indexing`), not "HLD §4 invariant N". `namespace-isolation` and `session-isolation` are the two halves of the one isolation invariant; cite whichever half applies to the discussion.
 - **Topical sections** — name the topic ("HLD's storage section", "HLD's API contract section"), not "HLD §7".
 - **Decision Log entries** (`DL01`, `DL08`, …) — cite directly. DL IDs are append-only and stable.
 
@@ -48,26 +48,31 @@ Single statically-linked binary, REST API with JSON payloads, all state behind a
 
 - **Three core primitives** (ingest, search, session state) — see HLD's primitives section.
 - **Workload patterns** identified by namespace + optional client — see DL01.
-- **Six design invariants** (`never-worse`, `workload-agnostic`, `session-isolation`, `sidecar-not-proxy`, `content-fidelity`, `idempotent-indexing`) — see HLD's design-invariants section.
+- **Six design invariants** — `never-worse`, `workload-agnostic`, the two-layer isolation invariant (`namespace-isolation` for the security/trust boundary + `session-isolation` for the content/scope boundary), `sidecar-not-proxy`, `content-fidelity`, `idempotent-indexing`. See HLD's design-invariants section.
 - **Storage**: Postgres in production, BM25 via `pg_search` or `pg_textsearch`, trigram via `pg_trgm` — see DL11. The DAL (`internal/db`) is a mockery port for testability, **not** a portability layer; there is only one backend.
 
-## Session isolation is the load-bearing invariant
+## Isolation is two boundaries, not one — namespace is security, session is content
 
-Of the six design invariants, **`session-isolation` is the one that surfaces in every code change**. HLD's storage section calls it out as a hard boundary, the Decision Log records the named decision, and the API contract makes it observable (cross-namespace mismatch returns **404, not 403** — invisibility, not denial).
+CALM has two distinct isolation primitives, both load-bearing, that enforce different boundaries at different layers. Code reviews and PR design should treat them as two separate disciplines that fail in different ways.
 
-Treat it as a first-class property the codebase enforces, not just a fact. Most bugs that would quietly degrade CALM start as a missed `session_id` filter, a cache that wasn't session-keyed, or a "convenience" cross-session query.
+**Namespace-isolation enforces the security/trust boundary.** Cross-namespace queries are forbidden; mismatch returns 404 (invisibility-not-denial); every per-request log line carries `namespace`. The wall between cooperating-but-distinct workload patterns (the eval harness, the slackbot, the coding agents). **Bugs here are confidentiality breaches** — data crosses trust units.
 
-Concrete disciplines that fall out of it:
+**Session-isolation enforces the content/scope boundary.** Per-session data (chunks, sources, events, labels, vocabulary) is bound to a session and invisible to other sessions in the same namespace; caches are session-keyed; search returns only this session's content; snapshots return only this session's events. The wall between workload-units inside a namespace. **Bugs here are workload-contract violations** — the LLM context window gets contaminated; CALM's value proposition fails. Session is *not* a cleanup primitive or observability artifact; it's the content boundary that defines what each workload-unit sees of its own data.
 
-- **Every DAL method takes a `session_id`** (or an input struct that carries one). See `internal/db/dal.go` — no exceptions. Even the management API (`/v1/manage/*`) is namespace-scoped, not session-scoped, and never returns another namespace's sessions.
-- **Every domain function that touches per-session data takes `sessionID string` explicitly** — never pulled from ambient context. Makes the dependency visible at the call site and forces every caller to think about which session they mean.
-- **Caches are session-keyed.** The search-result cache keys by `session_id + query + source` and is invalidated on ingest into that session. Adding a cache without session-scoping is a bug, not a feature.
-- **New tables FK to `sessions(session_id)` with `ON DELETE CASCADE`.** Cleanup-by-session (explicit close or TTL) is the only cleanup path; orphans are forbidden.
-- **Cross-namespace mismatch returns 404.** Invisibility, not "you don't have access." The latter leaks existence of resources you can't see. The OpenAPI spec already encodes this.
-- **Integration tests assert isolation explicitly.** Standard pattern: write to session A, read from session B, expect empty / 404. This is the durable proof of the invariant in CI.
-- **Logging carries `session_id`** in every per-request log line. Use `obs.SessionID(...)`. Cross-session log entries (e.g., the TTL scanner) are explicitly logged without `session_id` so the absence is intentional, not a leak.
+Most bugs that quietly degrade CALM start as a missed `namespace` or `session_id` filter, a cache that wasn't session-keyed, or a "convenience" cross-{namespace,session} query.
 
-If you find yourself wanting a query that intentionally crosses session boundaries, stop. Either it belongs in `/v1/manage/*` (the only legitimate cross-session surface, still namespace-scoped), or it's a design gap that requires HLD discussion before code lands.
+Concrete disciplines that fall out of both:
+
+- **Every DAL method that touches per-session data takes both `namespace` and `sessionID` explicitly** (or an input struct that carries them). See `internal/db/dal.go` — no exceptions. Even the management API (`/v1/manage/*`) is namespace-scoped, never returning another namespace's sessions. The TTL scanner is the one legitimate cross-namespace consumer; it returns `(session_id, namespace)` pairs and feeds them back into the namespace-scoped delete path — one delete path, one set of cascade semantics.
+- **Every domain function that touches per-session data takes `namespace` and `sessionID` explicitly** — never pulled from ambient context. Makes both dependencies visible at the call site.
+- **Caches are keyed by `(namespace, session_id)` jointly.** The search-result cache keys by `namespace + session_id + query + source` and is invalidated on ingest into that session. Adding a cache without joint scoping is a bug, not a feature.
+- **Tables that hold per-session data carry a `namespace` column with a composite FK to `sessions(namespace, session_id) ON DELETE CASCADE`.** Cleanup-by-session is the only cleanup path; orphans are forbidden. Globally-unique `session_id` was rejected as a leaky abstraction (schema would say sessions are top-level entities while the model says they're subordinate to namespace).
+- **Hot-path composite indexes lead with `namespace`** for cache locality and partition pruning. Filter-by-label queries always include the namespace predicate so the planner gets first-cut selectivity.
+- **Cross-namespace mismatch returns 404.** Invisibility, not "you don't have access." The OpenAPI spec encodes this.
+- **Integration tests assert both isolations explicitly.** Standard patterns: write to namespace A, read from namespace B → 404 (security); write to session-A in namespace X, read from session-B in namespace X → empty (content). Both are durable proofs in CI.
+- **Logging carries both `namespace` and `session_id`** in every per-request log line. Use `obs.Namespace(...)` and `obs.SessionID(...)`. Cross-session log entries (e.g., the TTL scanner) are explicitly logged without `session_id` so the absence is intentional, not a leak.
+
+If you find yourself wanting a query that intentionally crosses session boundaries within a namespace, stop. Either it belongs in `/v1/manage/*` (the only legitimate cross-session surface, still namespace-scoped), or it's a design gap that requires HLD discussion before code lands. Cross-namespace queries should never appear in code at all outside the TTL scanner.
 
 The other two invariants that generate code-level discipline (worth knowing, less code-pervasive than isolation): **never makes things worse** (#1 — adapter and workload middleware must catch CALM failures and fall through to raw content; the LLM call always works) and **content fidelity** (#5 — search snippets and ingest chunks return *exact* indexed text, never paraphrased or truncated). The remaining invariants are architectural and rarely surface as PR-review questions.
 

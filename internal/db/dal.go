@@ -13,10 +13,20 @@ import (
 // for validation/domain errors, via multi-%w with ErrStorageBackend for
 // driver/tx failures) so callers can classify via errors.Is without string
 // matching.
+//
+// Sentinel-first wrap form: the sentinel %w goes at the front of fmt.Errorf
+// so the final error string starts with "db: ...". 1-glance log/grep scans
+// can identify a DAL error from the prefix without parsing.
+//
+//	fmt.Errorf("%w: register client %q/%q: %w", ErrStorageBackend, ns, name, err)
+//	// → "db: storage backend failure: register client \"ns-a\"/\"alice\": <underlying>"
+//
+// Every sentinel below starts with "db: " for the same reason.
 var (
 	ErrNotImplemented = errors.New("db: not implemented")
 
 	// Validation — required input was missing or invalid.
+
 	ErrNamespaceRequired  = errors.New("db: namespace is required")
 	ErrClientNameRequired = errors.New("db: client name is required")
 	ErrSessionIDRequired  = errors.New("db: session_id is required")
@@ -25,33 +35,31 @@ var (
 	ErrQueryRequired      = errors.New("db: search query is empty")
 	ErrInvalidLimit       = errors.New("db: search limit must be positive")
 	ErrInvalidPriority    = errors.New("db: event priority must be 1..4")
+	ErrInvalidTTL         = errors.New("db: ttl_minutes must be positive")
 
 	// Domain — business-meaningful states.
+
 	ErrSessionNotFound = errors.New("db: session not found")
 	ErrSessionExists   = errors.New("db: session already exists")
 	ErrClientNotFound  = errors.New("db: client not found")
 	ErrClientProtected = errors.New("db: cannot delete the default client")
 
 	// Storage — umbrella for driver/tx failures. Always wrapped via
-	// fmt.Errorf("...: %w: %w", ErrStorageBackend, underlying) so callers
+	// fmt.Errorf("%w: ...: %w", ErrStorageBackend, ..., underlying) so callers
 	// can errors.Is(err, ErrStorageBackend) and errors.As(err, &pgErr).
 	ErrStorageBackend = errors.New("db: storage backend failure")
 )
 
-// DefaultClient is the bootstrap client name assigned to sessions that omit
-// the `client` field at creation (HLD DL01).
+// DefaultClient is the DL01 bootstrap client name; sessions that omit `client`
+// at creation attribute to it.
 const DefaultClient = "default"
 
-// ClientSummary is the per-client aggregate returned by ListClients
-// (powers GET /v1/manage/clients).
 type ClientSummary struct {
 	Name         string
 	SessionCount int
 	LastActivity *time.Time
 }
 
-// Session is the row shape used by CreateSession / GetSession / TouchSession.
-// Labels are populated for GetSession; CreateSession reads them from the input.
 type Session struct {
 	ID           string
 	Namespace    string
@@ -62,8 +70,6 @@ type Session struct {
 	Labels       map[string]string
 }
 
-// ManagedSession is the richer shape returned by the management API list
-// endpoint — includes labels and aggregated event count.
 type ManagedSession struct {
 	ID           string
 	Namespace    string
@@ -73,6 +79,13 @@ type ManagedSession struct {
 	TTLMinutes   int
 	Labels       map[string]string
 	EventCount   int
+}
+
+// SessionRef pairs (session_id, namespace) so the TTL scanner can call the
+// namespace-scoped DeleteSession with the namespace it learned from the row.
+type SessionRef struct {
+	SessionID string
+	Namespace string
 }
 
 type Chunk struct {
@@ -134,7 +147,6 @@ type SourceSummary struct {
 	IndexedAt time.Time
 }
 
-// CascadeCounts mirrors the cascade body shape in delete responses.
 type CascadeCounts struct {
 	Sources int
 	Chunks  int
@@ -159,8 +171,8 @@ type DeleteClientResult struct {
 }
 
 // DAL is the storage port. Mockery generates an in-package mock against this
-// interface (mock_dal.go, build-tag "mocks"). Single backend (Postgres);
-// the abstraction exists for testability, not portability.
+// interface (mock_dal.go, build-tag "mocks"). Single backend (Postgres); the
+// abstraction exists for testability, not portability.
 type DAL interface {
 	RegisterClient(ctx context.Context, namespace, name string) error
 	ListClients(ctx context.Context, namespace string) ([]ClientSummary, error)
@@ -168,13 +180,13 @@ type DAL interface {
 	DeleteClient(ctx context.Context, namespace, name string) (DeleteClientResult, error)
 
 	CreateSession(ctx context.Context, s Session) error
-	GetSession(ctx context.Context, id string) (Session, error)
-	TouchSession(ctx context.Context, id string, lastActivity time.Time) error
+	GetSession(ctx context.Context, namespace, id string) (Session, error)
+	TouchSession(ctx context.Context, namespace, id string, lastActivity time.Time) error
 	ListManagedSessions(ctx context.Context, filter ListSessionsFilter) ([]ManagedSession, error)
 	CountSessions(ctx context.Context, filter ListSessionsFilter) (int, error)
-	DeleteSession(ctx context.Context, id string) (DeleteSessionResult, error)
+	DeleteSession(ctx context.Context, namespace, id string) (DeleteSessionResult, error)
 	DeleteSessions(ctx context.Context, filter ListSessionsFilter) (DeleteSessionsResult, error)
-	ScanExpiredSessions(ctx context.Context, now time.Time) ([]string, error)
+	ScanExpiredSessions(ctx context.Context, now time.Time) ([]SessionRef, error)
 
 	Index(ctx context.Context, in IndexInput) error
 	Search(ctx context.Context, in SearchInput) ([]SearchResult, error)

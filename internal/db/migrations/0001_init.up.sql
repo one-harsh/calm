@@ -17,34 +17,41 @@ CREATE TABLE clients (
   PRIMARY KEY (namespace, name)
 );
 
+-- session_id is namespace-scoped (composite PK with namespace): the schema
+-- treats sessions as subordinate to namespace, matching the conceptual model.
 CREATE TABLE sessions (
-  session_id    TEXT PRIMARY KEY CHECK (length(session_id) BETWEEN 1 AND 256),
+  session_id    TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 256),
   namespace     TEXT NOT NULL,
   client        TEXT NOT NULL DEFAULT 'default',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_activity TIMESTAMPTZ NOT NULL DEFAULT now(),
   ttl_minutes   INTEGER NOT NULL,
+  PRIMARY KEY (namespace, session_id),
   FOREIGN KEY (namespace, client) REFERENCES clients(namespace, name) ON DELETE CASCADE
 );
 CREATE INDEX sessions_namespace_client_idx ON sessions(namespace, client);
 CREATE INDEX sessions_last_activity_idx    ON sessions(last_activity);
 
 CREATE TABLE session_labels (
-  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  namespace  TEXT NOT NULL,
+  session_id TEXT NOT NULL,
   key        TEXT NOT NULL,
   value      TEXT NOT NULL,
-  PRIMARY KEY (session_id, key)
+  PRIMARY KEY (namespace, session_id, key),
+  FOREIGN KEY (namespace, session_id) REFERENCES sessions(namespace, session_id) ON DELETE CASCADE
 );
-CREATE INDEX session_labels_key_value_idx ON session_labels(key, value);
+CREATE INDEX session_labels_key_value_idx ON session_labels(namespace, key, value);
 
 CREATE TABLE sources (
   id         BIGSERIAL PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  namespace  TEXT NOT NULL,
+  session_id TEXT NOT NULL,
   label      TEXT NOT NULL,
   indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (session_id, label)
+  UNIQUE (namespace, session_id, label),
+  FOREIGN KEY (namespace, session_id) REFERENCES sessions(namespace, session_id) ON DELETE CASCADE
 );
-CREATE INDEX sources_session_idx ON sources(session_id);
+CREATE INDEX sources_session_idx ON sources(namespace, session_id);
 
 CREATE TABLE chunks (
   id           BIGSERIAL PRIMARY KEY,
@@ -75,20 +82,27 @@ CREATE INDEX chunks_title_trgm_idx   ON chunks USING gin (title   gin_trgm_ops);
 CREATE INDEX chunks_content_trgm_idx ON chunks USING gin (content gin_trgm_ops);
 
 CREATE TABLE vocabulary (
-  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  namespace  TEXT NOT NULL,
+  session_id TEXT NOT NULL,
   word       TEXT NOT NULL,
   doc_freq   INTEGER NOT NULL,
-  PRIMARY KEY (session_id, word)
+  PRIMARY KEY (namespace, session_id, word),
+  FOREIGN KEY (namespace, session_id) REFERENCES sessions(namespace, session_id) ON DELETE CASCADE
 );
 
+-- data_hash is BYTEA (raw SHA-256, 32 bytes) rather than hex TEXT (64 chars):
+-- value is system-only (never returned to clients), and BYTEA halves storage
+-- and index size on a hot table.
 CREATE TABLE session_events (
   id         BIGSERIAL PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  namespace  TEXT NOT NULL,
+  session_id TEXT NOT NULL,
   type       TEXT NOT NULL,
   priority   INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 4),
   data       JSONB NOT NULL,
-  data_hash  TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  data_hash  BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  FOREIGN KEY (namespace, session_id) REFERENCES sessions(namespace, session_id) ON DELETE CASCADE
 );
-CREATE INDEX session_events_priority_idx ON session_events(session_id, priority, created_at DESC);
-CREATE INDEX session_events_dedup_idx    ON session_events(session_id, data_hash);
+CREATE INDEX session_events_priority_idx ON session_events(namespace, session_id, priority, created_at DESC);
+CREATE INDEX session_events_dedup_idx    ON session_events(namespace, session_id, data_hash);
