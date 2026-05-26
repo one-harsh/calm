@@ -4,8 +4,11 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,8 +17,9 @@ import (
 )
 
 // Tests target the unexported `resolve` because the public ReadSecret Fatals
-// on error (by design), and Fatal kills the test process. resolve is the
-// testable core; ReadSecret is a thin Fatal-wrapping shim around it.
+// on error (by design). The Fatal paths of ReadSecret itself are exercised by
+// re-executing the test binary as a subprocess (see runReadSecretFatalSubprocess
+// + TestReadSecretFatalHelper at the bottom of this file).
 
 func TestResolve_Text(t *testing.T) {
 	cases := []struct {
@@ -230,4 +234,93 @@ func TestSecret_String(t *testing.T) {
 	if s.String() != "[text:hello]" {
 		t.Errorf("Secret.String() = %q; want [text:hello]", s.String())
 	}
+}
+
+// ---------- ReadSecret Fatal-path coverage (subprocess) ----------
+
+// Pattern: each Fatal-path test re-executes this test binary with
+// FATAL_SECRET=<reference>, hits TestReadSecretFatalHelper, which calls
+// ReadSecret on the bad reference and exits non-zero via logger.Fatal. The
+// parent process captures stderr and asserts that the JSON log line carries
+// `"level":"fatal"` and the expected substring (proves both that Fatal fired
+// and that it logged the right context).
+
+func TestReadSecret_FatalOnMalformedReference(t *testing.T) {
+	out := runReadSecretFatalSubprocess(t, "not-a-bracketed-reference")
+	requireFatalContains(t, out, "malformed secret reference")
+}
+
+func TestReadSecret_FatalOnUnsetEnvVar(t *testing.T) {
+	out := runReadSecretFatalSubprocess(t, "[env:CALM_TEST_DEFINITELY_UNSET_xyz]")
+	requireFatalContains(t, out, "not set")
+}
+
+func TestReadSecret_FatalOnMissingFile(t *testing.T) {
+	out := runReadSecretFatalSubprocess(t, "[file:/nonexistent/path/key.txt]")
+	requireFatalContains(t, out, "read file")
+}
+
+func TestReadSecret_FatalOnEmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.txt")
+	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := runReadSecretFatalSubprocess(t, "[file:"+path+"]")
+	requireFatalContains(t, out, "is empty")
+}
+
+// runReadSecretFatalSubprocess re-execs the test binary with the
+// CALM_FATAL_SECRET env var set; the matching helper test (below) reads it
+// and calls ReadSecret, which Fatals. Returns captured combined stderr+stdout.
+func runReadSecretFatalSubprocess(t *testing.T, ref string) string {
+	t.Helper()
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	cmd := exec.Command(testBinary, "-test.run=^TestReadSecretFatalHelper$", "-test.v")
+	cmd.Env = append(os.Environ(), "CALM_FATAL_SECRET="+ref)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+
+	// Fatal -> exit code 1 expected.
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("subprocess: want non-zero exit, got err=%v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+	combined := stderr.String() + stdout.String()
+	return combined
+}
+
+func requireFatalContains(t *testing.T, output, want string) {
+	t.Helper()
+	if !strings.Contains(output, `"level":"fatal"`) {
+		t.Fatalf("output missing `\"level\":\"fatal\"` (Fatal did not fire?):\n%s", output)
+	}
+	if !strings.Contains(output, want) {
+		t.Fatalf("output missing %q:\n%s", want, output)
+	}
+}
+
+// TestReadSecretFatalHelper is a no-op unless invoked by the parent test
+// (CALM_FATAL_SECRET set). In that case it constructs a real JSON logger,
+// calls ReadSecret, and exits via logger.Fatal — parent captures the output.
+func TestReadSecretFatalHelper(t *testing.T) {
+	ref, ok := os.LookupEnv("CALM_FATAL_SECRET")
+	if !ok {
+		t.Skip("not a subprocess invocation")
+	}
+	logger, err := logging.New(logging.Config{Level: "info", Format: "json", Output: os.Stderr})
+	if err != nil {
+		t.Fatalf("init logger: %v", err)
+	}
+	reader := New(logger)
+	_ = reader.ReadSecret(context.Background(), Secret(ref))
+	// Unreachable: ReadSecret Fatals on error and the well-formed cases above
+	// aren't tested via this helper.
+	t.Fatal("ReadSecret returned without Fataling — bad test fixture?")
 }

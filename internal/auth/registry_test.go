@@ -4,7 +4,11 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -168,4 +172,86 @@ func TestBuildRegistry_EmptyNamespaceList(t *testing.T) {
 	if _, ok := reg.Resolve(""); ok {
 		t.Error("empty registry should not resolve the empty string")
 	}
+}
+
+// ---------- BuildRegistry Fatal-path coverage (subprocess) ----------
+
+// Same subprocess pattern as internal/secrets — re-exec the test binary,
+// land in TestBuildRegistryFatalHelper, which invokes BuildRegistry on
+// inputs designed to Fatal so the parent can capture the log line.
+
+func TestBuildRegistry_FatalOnEmptyResolvedKey(t *testing.T) {
+	out := runBuildRegistryFatalSubprocess(t, "empty_resolved")
+	requireAuthFatalContains(t, out, "empty value")
+}
+
+func TestBuildRegistry_FatalOnDuplicateResolvedKey(t *testing.T) {
+	out := runBuildRegistryFatalSubprocess(t, "duplicate_resolved")
+	requireAuthFatalContains(t, out, "same value")
+}
+
+func runBuildRegistryFatalSubprocess(t *testing.T, scenario string) string {
+	t.Helper()
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	cmd := exec.Command(testBinary, "-test.run=^TestBuildRegistryFatalHelper$", "-test.v")
+	cmd.Env = append(os.Environ(), "CALM_FATAL_BUILD_REGISTRY="+scenario)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("subprocess: want non-zero exit, got err=%v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+	return stderr.String() + stdout.String()
+}
+
+func requireAuthFatalContains(t *testing.T, output, want string) {
+	t.Helper()
+	if !strings.Contains(output, `"level":"fatal"`) {
+		t.Fatalf("output missing `\"level\":\"fatal\"` (Fatal did not fire?):\n%s", output)
+	}
+	if !strings.Contains(output, want) {
+		t.Fatalf("output missing %q:\n%s", want, output)
+	}
+}
+
+// TestBuildRegistryFatalHelper is the subprocess entry point — no-op unless
+// CALM_FATAL_BUILD_REGISTRY is set. Uses a real SecretReader against text/env
+// references (mocks can't be re-registered across processes).
+func TestBuildRegistryFatalHelper(t *testing.T) {
+	scenario, ok := os.LookupEnv("CALM_FATAL_BUILD_REGISTRY")
+	if !ok {
+		t.Skip("not a subprocess invocation")
+	}
+	logger, err := logging.New(logging.Config{Level: "info", Format: "json", Output: os.Stderr})
+	if err != nil {
+		t.Fatalf("init logger: %v", err)
+	}
+	reader := secrets.New(logger)
+	ctx := context.Background()
+
+	switch scenario {
+	case "empty_resolved":
+		// Env-var reader allows empty values by design; BuildRegistry catches
+		// the "would authenticate Bearer-with-empty-key" hazard.
+		t.Setenv("CALM_FATAL_EMPTY", "")
+		_ = BuildRegistry(ctx, []config.NamespaceConfig{
+			{Name: "default", APIKey: "[env:CALM_FATAL_EMPTY]"},
+		}, reader, logger)
+	case "duplicate_resolved":
+		_ = BuildRegistry(ctx, []config.NamespaceConfig{
+			{Name: "tenant-a", APIKey: "[text:shared-value]"},
+			{Name: "tenant-b", APIKey: "[text:shared-value]"},
+		}, reader, logger)
+	default:
+		t.Fatalf("unknown scenario: %q", scenario)
+	}
+	t.Fatal("BuildRegistry returned without Fataling — bad test fixture?")
 }

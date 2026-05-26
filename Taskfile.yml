@@ -164,6 +164,37 @@ tasks:
         PKGS=$(go list ./... | grep -v 'test/integration')
         go test -tags={{.TEST_TAGS}} -race -count=1 $PKGS
 
+  test:cover:
+    desc: |
+      Unit-test coverage with by-design-untested code stripped, gated at
+      MIN_COVERAGE. Exclusions (see EXCLUDE_RE below) are intentional and
+      shrink as the codebase matures — when a handler WI lands and brings
+      tests, remove that path from the regex.
+    vars:
+      MIN_COVERAGE: "90"
+      # Each line documents why it's excluded. Keep in sync with CLAUDE.md /
+      # AGENTS.md "what's not unit-tested" rules.
+      #   /mock_*.go        — mockery-generated stubs
+      #   *.gen.go          — oapi-codegen output
+      #   cmd/              — process entry points; smoke-tested via build
+      #   internal/api/     — handlers are 501 stubs; each handler WI brings tests
+      #   internal/db/      — DAL is integration-only by CLAUDE.md policy
+      #   internal/obs/     — log-field constructors; trivially correct
+      #   internal/server/server.go — HTTP lifecycle; covered by integration
+      EXCLUDE_RE: '/mock_[^/]+\.go:|\.gen\.go:|/cmd/|/internal/api/|/internal/db/|/internal/obs/|/internal/server/server\.go:'
+    cmds:
+      - |
+        PKGS=$(go list ./... | grep -v 'test/integration')
+        go test -tags={{.TEST_TAGS}} -race -count=1 -coverprofile=coverage.out -covermode=atomic $PKGS
+        grep -Ev '{{.EXCLUDE_RE}}' coverage.out > coverage.filtered.out
+        echo
+        echo "=== Per-function coverage (production code in scope) ==="
+        go tool cover -func=coverage.filtered.out | awk '/^total:/ {next} {print}'
+        TOTAL=$(go tool cover -func=coverage.filtered.out | awk '/^total:/ {gsub("%",""); print $NF}')
+        echo
+        printf "Total: %s%% (gate: %s%%)\n" "$TOTAL" "{{.MIN_COVERAGE}}"
+        awk -v t="$TOTAL" -v m="{{.MIN_COVERAGE}}" 'BEGIN { if (t+0 < m+0) { print "FAIL: coverage below gate"; exit 1 } print "OK"; exit 0 }'
+
   test:integration:
     desc: Run integration tests against the dev Postgres (requires `task dev:up`)
     summary: |
@@ -191,17 +222,24 @@ tasks:
       - go test -tags={{.TEST_TAGS}} -bench=. -benchmem -run=^$ ./internal/...
 
   ci:
-    desc: CI gate - codegen drift check, lint, test, build
+    desc: CI gate - codegen drift check, lint, test, coverage, build
     summary: |
-      Full pre-merge gate: gen:check (codegen drift) → lint → test → build.
+      Full pre-merge gate: gen:check → lint → test → test:cover → build.
+
+      test:cover runs the unit suite a second time with a coverage profile,
+      strips by-design-untested code, and fails if the in-scope total drops
+      below MIN_COVERAGE. The duplicate test run is intentional — keeping
+      the race-checked test:unit pass independent of the coverage gate makes
+      flake triage clearer.
 
       Safe to run anywhere with the toolchain installed. CI calls this; humans
       can run it before pushing. For inner-loop "am I clean?" without the
-      drift check, use bare `task` (the default target) which skips gen:check.
+      drift + coverage checks, use bare `task` (the default target).
     cmds:
       - task: gen:check
       - task: lint
       - task: test
+      - task: test:cover
       - task: build
 
   run:local:

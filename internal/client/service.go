@@ -14,13 +14,13 @@ import (
 )
 
 // Service owns client-entity orchestration. Handlers call Service, never
-// *db.Store's ClientRepo directly — this is where cache invalidation,
+// db.DAL's ClientRepo directly — this is where cache invalidation,
 // metrics, and audit hooks land as they come online.
 type Service struct {
-	store *db.Store
+	store db.DAL
 }
 
-func New(store *db.Store) *Service {
+func New(store db.DAL) *Service {
 	return &Service{store: store}
 }
 

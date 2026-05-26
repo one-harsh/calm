@@ -48,6 +48,17 @@ jobs:
       - name: Run CI gate
         run: task ci
 
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.filtered.out
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Stop Postgres
         if: always()
         run: task dev:down
