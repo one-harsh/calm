@@ -12,23 +12,32 @@ is the operator-facing landing page.
 
 ## Status
 
-Pre-implementation. The scaffolding, configuration, auth, storage, and
-migration layers are in place; the three core primitives (ingest, search,
-session state) are stubbed and return `501 Not Implemented` while the
-WI sequence in [`docs/milestones/v1.md`](docs/milestones/v1.md) lands the
-real handlers. Concretely working today:
+Foundation in place; HTTP routes still return `501 Not Implemented`.
+Concretely working today:
 
 - YAML-config loader with env-var override and bracketed secret references
 - Namespace registry built from operator config; bearer-auth middleware
 - Postgres storage open + embedded migrations + per-namespace client seed
 - Server lifecycle (graceful shutdown, OpenAPI request validation,
   per-namespace rate limiting wired through the middleware chain)
+- **Clients DAL** (register, list, count-sessions, cascade-counted delete)
+- **Sessions DAL** (create with atomic client auto-registration via
+  `Store.WithTx`, get, monotonic touch, cascade-counted delete + bulk
+  delete, TTL scan); namespace-scoped composite `(namespace, session_id)`
+  PK; per-entity sub-repos via `Store.Clients()` / `Store.Sessions()`
+- **Service layer** (`internal/client`, `internal/session`) — handlers
+  and the future TTL scanner go through these; cache invalidation,
+  metrics, and audit hooks land here as they come online
+- **Session-metadata LRU cache** (process-local; per-pod) so the
+  per-request session-existence check stays off the DB hot path
 - MCP adapter binary skeleton (`cmd/calm-adapter`) that creates a session
   and falls through to raw output on any CALM failure (the `never-worse`
   invariant)
 
-Routes that return real data don't exist yet. Treat the binary as a
-chassis, not a service you can put behind a workload today.
+Still stubbed: content/events DAL methods (`Index`, `Search`, `ListSources`,
+`WriteEvents`, `ReadEvents`) and every HTTP handler — Phase B/C/D WIs
+fill these in. The binary boots, authenticates, and migrates the schema;
+end-to-end ingest/search/snapshot flows aren't routed yet.
 
 ## What problem this addresses
 
@@ -56,9 +65,11 @@ state behind a DAL backed by Postgres.
   primitives section.
 - **Workload patterns** identified by `namespace` (server-resolved from
   the bearer API key) and an optional `client` identifier — see DL01.
-- **Six design invariants** (`never-worse`, `workload-agnostic`,
-  `session-isolation`, `sidecar-not-proxy`, `content-fidelity`,
-  `idempotent-indexing`) — see the HLD's design-invariants section.
+- **Six design invariants** — `never-worse`, `workload-agnostic`, the
+  two-layer isolation invariant (`namespace-isolation` for the
+  security/trust boundary + `session-isolation` for the content/scope
+  boundary), `sidecar-not-proxy`, `content-fidelity`, `idempotent-indexing`.
+  See the HLD's design-invariants section.
 - **Storage**: Postgres in production, BM25 via `pg_search` or
   `pg_textsearch`, trigram via `pg_trgm` — see DL11.
 
@@ -116,8 +127,10 @@ file; operators provision secrets via their platform's existing tooling.
 
 Any scalar field can also be overridden by an environment variable:
 `CALM_<PATH_IN_UPPERCASE>` with `.` and `-` replaced by `_`. Examples:
-`CALM_SERVER_ADDRESS=":9090"`, `CALM_STORAGE_DSN="postgres://..."`.
-Slice fields under `namespaces` are not env-overridable.
+`CALM_SERVER_ADDRESS=":9090"`, `CALM_STORAGE_DSN="postgres://..."`,
+`CALM_SESSIONS_CACHE_SIZE=20000` (per-pod LRU cap for the session-metadata
+cache; default 10,000; `0` disables). Slice fields under `namespaces` are
+not env-overridable.
 
 ## API
 
@@ -174,16 +187,19 @@ cmd/
 internal/
   api/              generated handler interface + thin handlers + DTOs
   auth/             API-key registry, namespace resolver
+  client/           client-entity orchestration service
   config/           YAML config loader (Viper + struct binding)
-  db/               Postgres DAL, embedded migrations
+  db/               Postgres DAL — per-entity files (pg_clients.go,
+                    pg_sessions.go, ...), errors, models, tx primitive,
+                    embedded migrations
   obs/              context-bound logging + field helpers
   secrets/          [scheme:payload] secret-reference resolver
   server/           HTTP lifecycle + middleware chain
+  session/          session-lifecycle orchestration service + LRU cache
 adapter/            MCP-only packages (consumed by cmd/calm-adapter)
 docs/
   HLD.md            canonical design document
   api/openapi.yaml  formal API contract
-  milestones/v1.md  work-item sequence for the v1 implementation
 test/integration/   real-Postgres end-to-end scenarios
 ```
 

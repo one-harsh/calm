@@ -14,6 +14,7 @@ packages:
     interfaces:
       ClientRepo:
       SessionRepo:
+      DAL:
   github.com/one-harsh/calm/internal/secrets:
     interfaces:
       SecretReader:

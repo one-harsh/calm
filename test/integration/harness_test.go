@@ -85,7 +85,7 @@ func bootstrap() (*harness, error) {
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
 			Clients:  client.New(store),
-			Sessions: session.New(store),
+			Sessions: session.New(store, 10_000),
 		}),
 	})
 	if err != nil {

@@ -25,7 +25,7 @@ type sessionRepo struct {
 // responsible for ensuring the (namespace, client) row in clients exists —
 // without it, the session insert fails FK. session.Service.Create wraps
 // Register + Create inside Store.WithTx so the whole composition is atomic.
-func (r *sessionRepo) Create(ctx context.Context, sess Session) error {
+func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 	if sess.Namespace == "" {
 		return ErrNamespaceRequired
 	}
@@ -40,10 +40,12 @@ func (r *sessionRepo) Create(ctx context.Context, sess Session) error {
 	}
 
 	return inTx(ctx, r.queryer, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO sessions (session_id, namespace, client, ttl_minutes) VALUES ($1, $2, $3, $4)`,
+		if err := tx.QueryRowContext(ctx,
+			`INSERT INTO sessions (session_id, namespace, client, ttl_minutes)
+			 VALUES ($1, $2, $3, $4)
+			 RETURNING created_at, last_activity`,
 			sess.ID, sess.Namespace, sess.Client, sess.TTLMinutes,
-		); err != nil {
+		).Scan(&sess.CreatedAt, &sess.LastActivity); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 				return ErrSessionExists

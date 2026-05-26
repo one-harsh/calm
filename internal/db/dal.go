@@ -22,7 +22,7 @@ type ClientRepo interface {
 // *Store via Store.Sessions(). Mockery generates MockSessionRepo
 // (mock_session_repo.go, build-tag "mocks") for unit tests that need a fake.
 type SessionRepo interface {
-	Create(ctx context.Context, sess Session) error
+	Create(ctx context.Context, sess *Session) error
 	Get(ctx context.Context, namespace, id string) (Session, error)
 	Touch(ctx context.Context, namespace, id string, lastActivity time.Time) error
 	Delete(ctx context.Context, namespace, id string) (DeleteSessionResult, error)
@@ -32,7 +32,18 @@ type SessionRepo interface {
 	ScanExpired(ctx context.Context, now time.Time) ([]SessionRef, error)
 }
 
+// DAL is the narrow contract Service-layer packages (internal/session,
+// internal/client) depend on — the root entry to per-entity repos plus the
+// cross-repo tx primitive. *Store satisfies it; mockery generates MockDAL
+// (mock_dal.go, build-tag "mocks") for unit tests.
+type DAL interface {
+	Clients() ClientRepo
+	Sessions() SessionRepo
+	WithTx(ctx context.Context, fn func(Repos) error) error
+}
+
 var (
 	_ ClientRepo  = (*clientRepo)(nil)
 	_ SessionRepo = (*sessionRepo)(nil)
+	_ DAL         = (*Store)(nil)
 )

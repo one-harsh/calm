@@ -83,7 +83,7 @@ func (_c *MockSessionRepo_Count_Call) RunAndReturn(run func(context.Context, Lis
 }
 
 // Create provides a mock function with given fields: ctx, sess
-func (_m *MockSessionRepo) Create(ctx context.Context, sess Session) error {
+func (_m *MockSessionRepo) Create(ctx context.Context, sess *Session) error {
 	ret := _m.Called(ctx, sess)
 
 	if len(ret) == 0 {
@@ -91,7 +91,7 @@ func (_m *MockSessionRepo) Create(ctx context.Context, sess Session) error {
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, Session) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, *Session) error); ok {
 		r0 = rf(ctx, sess)
 	} else {
 		r0 = ret.Error(0)
@@ -107,14 +107,14 @@ type MockSessionRepo_Create_Call struct {
 
 // Create is a helper method to define mock.On call
 //   - ctx context.Context
-//   - sess Session
+//   - sess *Session
 func (_e *MockSessionRepo_Expecter) Create(ctx interface{}, sess interface{}) *MockSessionRepo_Create_Call {
 	return &MockSessionRepo_Create_Call{Call: _e.mock.On("Create", ctx, sess)}
 }
 
-func (_c *MockSessionRepo_Create_Call) Run(run func(ctx context.Context, sess Session)) *MockSessionRepo_Create_Call {
+func (_c *MockSessionRepo_Create_Call) Run(run func(ctx context.Context, sess *Session)) *MockSessionRepo_Create_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(Session))
+		run(args[0].(context.Context), args[1].(*Session))
 	})
 	return _c
 }
@@ -124,7 +124,7 @@ func (_c *MockSessionRepo_Create_Call) Return(_a0 error) *MockSessionRepo_Create
 	return _c
 }
 
-func (_c *MockSessionRepo_Create_Call) RunAndReturn(run func(context.Context, Session) error) *MockSessionRepo_Create_Call {
+func (_c *MockSessionRepo_Create_Call) RunAndReturn(run func(context.Context, *Session) error) *MockSessionRepo_Create_Call {
 	_c.Call.Return(run)
 	return _c
 }

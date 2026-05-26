@@ -5,6 +5,7 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"testing"
@@ -25,7 +26,7 @@ func TestCreateSession_HappyMinimal(t *testing.T) {
 	defer teardown()
 
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
-	if err := store.Sessions().Create(context.Background(), db.Session{
+	if err := store.Sessions().Create(context.Background(), &db.Session{
 		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
 	}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -45,7 +46,7 @@ func TestCreateSession_HappyWithLabels(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	labels := map[string]string{"env": "prod", "team": "ml"}
-	if err := store.Sessions().Create(context.Background(), db.Session{
+	if err := store.Sessions().Create(context.Background(), &db.Session{
 		ID: "s1", Namespace: "ns-a", TTLMinutes: 60, Labels: labels,
 	}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -65,8 +66,8 @@ func TestSessionService_Create_AutoRegistersNewClient(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	svc := session.New(store)
-	if err := svc.Create(context.Background(), db.Session{
+	svc := session.New(store, 10_000)
+	if err := svc.Create(context.Background(), &db.Session{
 		ID: "s1", Namespace: "ns-a", Client: "alice", TTLMinutes: 60,
 	}); err != nil {
 		t.Fatalf("service Create: %v", err)
@@ -89,8 +90,8 @@ func TestSessionService_Create_DefaultsEmptyClient(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	svc := session.New(store)
-	if err := svc.Create(context.Background(), db.Session{
+	svc := session.New(store, 10_000)
+	if err := svc.Create(context.Background(), &db.Session{
 		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
 	}); err != nil {
 		t.Fatalf("service Create: %v", err)
@@ -108,7 +109,7 @@ func TestCreateSession_ExistingClientIdempotent(t *testing.T) {
 	defer teardown()
 
 	seedClient(t, sqlDB, "ns-a", "alice")
-	if err := store.Sessions().Create(context.Background(), db.Session{
+	if err := store.Sessions().Create(context.Background(), &db.Session{
 		ID: "s1", Namespace: "ns-a", Client: "alice", TTLMinutes: 60,
 	}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -127,10 +128,10 @@ func TestCreateSession_DuplicateIDSameNamespaceRejected(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := db.Session{ID: "s1", Namespace: "ns-a", TTLMinutes: 60}
-	if err := store.Sessions().Create(context.Background(), sess); err != nil {
+	if err := store.Sessions().Create(context.Background(), &sess); err != nil {
 		t.Fatalf("first CreateSession: %v", err)
 	}
-	err := store.Sessions().Create(context.Background(), sess)
+	err := store.Sessions().Create(context.Background(), &sess)
 	if !errors.Is(err, db.ErrSessionExists) {
 		t.Errorf("second CreateSession: want ErrSessionExists, got %v", err)
 	}
@@ -142,12 +143,12 @@ func TestCreateSession_DuplicateIDAcrossNamespacesAllowed(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	seedClient(t, sqlDB, "ns-b", db.DefaultClient)
-	if err := store.Sessions().Create(context.Background(), db.Session{
+	if err := store.Sessions().Create(context.Background(), &db.Session{
 		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
 	}); err != nil {
 		t.Fatalf("CreateSession ns-a: %v", err)
 	}
-	if err := store.Sessions().Create(context.Background(), db.Session{
+	if err := store.Sessions().Create(context.Background(), &db.Session{
 		ID: "s1", Namespace: "ns-b", TTLMinutes: 60,
 	}); err != nil {
 		t.Errorf("CreateSession ns-b (same id, different namespace): want nil, got %v", err)
@@ -160,7 +161,7 @@ func TestCreateSession_DuplicateIDAcrossNamespacesAllowed(t *testing.T) {
 func TestCreateSession_EmptySessionID(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
-	err := store.Sessions().Create(context.Background(), db.Session{Namespace: "ns-a", TTLMinutes: 60})
+	err := store.Sessions().Create(context.Background(), &db.Session{Namespace: "ns-a", TTLMinutes: 60})
 	if !errors.Is(err, db.ErrSessionIDRequired) {
 		t.Errorf("want ErrSessionIDRequired, got %v", err)
 	}
@@ -169,7 +170,7 @@ func TestCreateSession_EmptySessionID(t *testing.T) {
 func TestCreateSession_EmptyNamespace(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
-	err := store.Sessions().Create(context.Background(), db.Session{ID: "s1", TTLMinutes: 60})
+	err := store.Sessions().Create(context.Background(), &db.Session{ID: "s1", TTLMinutes: 60})
 	if !errors.Is(err, db.ErrNamespaceRequired) {
 		t.Errorf("want ErrNamespaceRequired, got %v", err)
 	}
@@ -986,5 +987,205 @@ func TestScanExpiredSessions_CrossNamespace(t *testing.T) {
 	}
 	if seen["a-exp"] != "ns-a" || seen["b-exp"] != "ns-b" {
 		t.Errorf("namespace mapping: got %+v", seen)
+	}
+}
+
+// ---------- session.Service + cache ----------
+//
+// Cache-hit proofs use raw-SQL DELETE between two Lookups: if the second
+// Lookup returns metadata after the row is gone, it came from cache, not DB.
+
+func deleteSessionRow(t *testing.T, sqlDB *sql.DB, namespace, id string) {
+	t.Helper()
+	if _, err := sqlDB.ExecContext(context.Background(),
+		`DELETE FROM sessions WHERE namespace = $1 AND session_id = $2`,
+		namespace, id,
+	); err != nil {
+		t.Fatalf("raw delete %q/%q: %v", namespace, id, err)
+	}
+}
+
+func TestSessionService_Create_PrimesCache(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 10_000)
+	if err := svc.Create(context.Background(), &db.Session{
+		ID: "s1", Namespace: "ns-a", Client: "alice", TTLMinutes: 60,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	deleteSessionRow(t, sqlDB, "ns-a", "s1")
+
+	md, err := svc.Lookup(context.Background(), "ns-a", "s1")
+	if err != nil {
+		t.Fatalf("Lookup after Create + raw-DELETE: want cached hit, got %v", err)
+	}
+	if md.Client != "alice" || md.TTLMinutes != 60 {
+		t.Errorf("cached metadata: got %+v", md)
+	}
+	// Regression: input Session.CreatedAt is zero (column is DB-assigned via
+	// DEFAULT now()); cache prime must use the DB-returned value, not the
+	// input. Without the DAL's RETURNING flow this asserts as zero time.
+	if md.CreatedAt.IsZero() {
+		t.Error("cached CreatedAt is zero — Create did not propagate the DB-assigned timestamp into the cache")
+	}
+}
+
+func TestSessionService_Lookup_MissPopulatesCache(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	seedSession(t, sqlDB, "ns-a", db.DefaultClient, "s1", 60)
+
+	svc := session.New(store, 10_000)
+	if _, err := svc.Lookup(context.Background(), "ns-a", "s1"); err != nil {
+		t.Fatalf("first Lookup (populate): %v", err)
+	}
+	deleteSessionRow(t, sqlDB, "ns-a", "s1")
+
+	md, err := svc.Lookup(context.Background(), "ns-a", "s1")
+	if err != nil {
+		t.Fatalf("Lookup after populate + raw-DELETE: want cached hit, got %v", err)
+	}
+	if md.Client != db.DefaultClient || md.TTLMinutes != 60 {
+		t.Errorf("cached metadata: got %+v", md)
+	}
+}
+
+func TestSessionService_Lookup_NotFoundNotCached(t *testing.T) {
+	store, _, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 10_000)
+	if _, err := svc.Lookup(context.Background(), "ns-a", "missing"); !errors.Is(err, db.ErrSessionNotFound) {
+		t.Fatalf("first Lookup: want ErrSessionNotFound, got %v", err)
+	}
+	// Second call must also hit DB — negative caching is intentionally absent.
+	if _, err := svc.Lookup(context.Background(), "ns-a", "missing"); !errors.Is(err, db.ErrSessionNotFound) {
+		t.Fatalf("second Lookup: want ErrSessionNotFound, got %v", err)
+	}
+}
+
+func TestSessionService_Delete_InvalidatesCache(t *testing.T) {
+	store, _, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 10_000)
+	if err := svc.Create(context.Background(), &db.Session{
+		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Delete(context.Background(), "ns-a", "s1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := svc.Lookup(context.Background(), "ns-a", "s1"); !errors.Is(err, db.ErrSessionNotFound) {
+		t.Errorf("Lookup after Delete: want ErrSessionNotFound, got %v", err)
+	}
+}
+
+func TestSessionService_DeleteAll_InvalidatesOnlyTargetNamespace(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 10_000)
+	for _, sid := range []string{"a1", "a2"} {
+		if err := svc.Create(context.Background(), &db.Session{
+			ID: sid, Namespace: "ns-a", TTLMinutes: 60,
+		}); err != nil {
+			t.Fatalf("Create ns-a/%s: %v", sid, err)
+		}
+	}
+	if err := svc.Create(context.Background(), &db.Session{
+		ID: "b1", Namespace: "ns-b", TTLMinutes: 60,
+	}); err != nil {
+		t.Fatalf("Create ns-b/b1: %v", err)
+	}
+
+	if _, err := svc.DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"}); err != nil {
+		t.Fatalf("DeleteAll: %v", err)
+	}
+
+	// ns-a entries: gone from cache + gone from DB.
+	for _, sid := range []string{"a1", "a2"} {
+		if _, err := svc.Lookup(context.Background(), "ns-a", sid); !errors.Is(err, db.ErrSessionNotFound) {
+			t.Errorf("Lookup ns-a/%s after DeleteAll: want ErrSessionNotFound, got %v", sid, err)
+		}
+	}
+	// ns-b entry: untouched; raw-DELETE proves it's served from cache.
+	deleteSessionRow(t, sqlDB, "ns-b", "b1")
+	if _, err := svc.Lookup(context.Background(), "ns-b", "b1"); err != nil {
+		t.Errorf("Lookup ns-b/b1: cache should still hold it; got %v", err)
+	}
+}
+
+func TestSessionService_Touch_OnStaleEntrySelfHeals(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 10_000)
+	if err := svc.Create(context.Background(), &db.Session{
+		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	deleteSessionRow(t, sqlDB, "ns-a", "s1")
+
+	// Touch goes to DB, gets ErrSessionNotFound, evicts the stale cache entry.
+	if err := svc.Touch(context.Background(), "ns-a", "s1", time.Now()); !errors.Is(err, db.ErrSessionNotFound) {
+		t.Fatalf("Touch on stale: want ErrSessionNotFound, got %v", err)
+	}
+	// Lookup must now miss + go to DB + return ErrSessionNotFound.
+	if _, err := svc.Lookup(context.Background(), "ns-a", "s1"); !errors.Is(err, db.ErrSessionNotFound) {
+		t.Errorf("Lookup after Touch self-heal: want ErrSessionNotFound, got %v", err)
+	}
+}
+
+func TestSessionService_SameIDDifferentNamespacesIndependent(t *testing.T) {
+	store, _, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 10_000)
+	if err := svc.Create(context.Background(), &db.Session{
+		ID: "shared", Namespace: "ns-a", Client: "alice", TTLMinutes: 60,
+	}); err != nil {
+		t.Fatalf("Create ns-a: %v", err)
+	}
+	if err := svc.Create(context.Background(), &db.Session{
+		ID: "shared", Namespace: "ns-b", Client: "bob", TTLMinutes: 90,
+	}); err != nil {
+		t.Fatalf("Create ns-b: %v", err)
+	}
+	mdA, err := svc.Lookup(context.Background(), "ns-a", "shared")
+	if err != nil {
+		t.Fatalf("Lookup ns-a: %v", err)
+	}
+	mdB, err := svc.Lookup(context.Background(), "ns-b", "shared")
+	if err != nil {
+		t.Fatalf("Lookup ns-b: %v", err)
+	}
+	if mdA.Client != "alice" || mdA.TTLMinutes != 60 {
+		t.Errorf("ns-a cache: got %+v", mdA)
+	}
+	if mdB.Client != "bob" || mdB.TTLMinutes != 90 {
+		t.Errorf("ns-b cache: got %+v", mdB)
+	}
+}
+
+func TestSessionService_CacheDisabled_AlwaysHitsDB(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 0) // disabled
+	if err := svc.Create(context.Background(), &db.Session{
+		ID: "s1", Namespace: "ns-a", TTLMinutes: 60,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	deleteSessionRow(t, sqlDB, "ns-a", "s1")
+	if _, err := svc.Lookup(context.Background(), "ns-a", "s1"); !errors.Is(err, db.ErrSessionNotFound) {
+		t.Errorf("Lookup with cache disabled: want DB miss → ErrSessionNotFound, got %v", err)
 	}
 }

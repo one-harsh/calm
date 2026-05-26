@@ -87,8 +87,48 @@ namespaces:
 	if cfg.Sessions.DefaultTTLMinutes != 120 {
 		t.Errorf("defaults not applied to sessions: %+v", cfg.Sessions)
 	}
+	if cfg.Sessions.CacheSize != 10_000 {
+		t.Errorf("sessions.cache_size default: want 10000, got %d", cfg.Sessions.CacheSize)
+	}
 	if !cfg.Storage.MigrateOnStartup {
 		t.Errorf("storage.migrate_on_startup default should be true")
+	}
+}
+
+func TestLoad_SessionsCacheSizeOverride(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	t.Setenv("CALM_SESSIONS_CACHE_SIZE", "500")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sessions.CacheSize != 500 {
+		t.Errorf("env override: want 500, got %d", cfg.Sessions.CacheSize)
+	}
+}
+
+func TestLoad_SessionsCacheSizeNegativeRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  cache_size: -1
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load with negative cache_size: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "sessions.cache_size") {
+		t.Errorf("error should mention sessions.cache_size; got %v", err)
 	}
 }
 
