@@ -19,7 +19,7 @@ func TestRegisterClient_NewRowInserted(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	if err := store.RegisterClient(context.Background(), "ns-a", "alice"); err != nil {
+	if err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
 		t.Fatalf("RegisterClient: %v", err)
 	}
 	got := countRows(t, sqlDB, `SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`, "ns-a", "alice")
@@ -33,7 +33,7 @@ func TestRegisterClient_IdempotentOnRepeat(t *testing.T) {
 	defer teardown()
 
 	for i := 0; i < 3; i++ {
-		if err := store.RegisterClient(context.Background(), "ns-a", "alice"); err != nil {
+		if err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
 			t.Fatalf("RegisterClient (call %d): %v", i, err)
 		}
 	}
@@ -47,10 +47,10 @@ func TestRegisterClient_CrossNamespaceIndependent(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	if err := store.RegisterClient(context.Background(), "ns-a", "alice"); err != nil {
+	if err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
 		t.Fatalf("RegisterClient ns-a: %v", err)
 	}
-	if err := store.RegisterClient(context.Background(), "ns-b", "alice"); err != nil {
+	if err := store.Clients().Register(context.Background(), "ns-b", "alice"); err != nil {
 		t.Fatalf("RegisterClient ns-b: %v", err)
 	}
 	total := countRows(t, sqlDB, `SELECT COUNT(*) FROM clients WHERE name = $1`, "alice")
@@ -63,7 +63,7 @@ func TestRegisterClient_EmptyNamespace(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	err := store.RegisterClient(context.Background(), "", "alice")
+	err := store.Clients().Register(context.Background(), "", "alice")
 	if !errors.Is(err, db.ErrNamespaceRequired) {
 		t.Fatalf("want ErrNamespaceRequired, got %v", err)
 	}
@@ -76,7 +76,7 @@ func TestRegisterClient_EmptyName(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	err := store.RegisterClient(context.Background(), "ns-a", "")
+	err := store.Clients().Register(context.Background(), "ns-a", "")
 	if !errors.Is(err, db.ErrClientNameRequired) {
 		t.Fatalf("want ErrClientNameRequired, got %v", err)
 	}
@@ -91,7 +91,7 @@ func TestListClients_EmptyNamespaceArg(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	_, err := store.ListClients(context.Background(), "")
+	_, err := store.Clients().List(context.Background(), "")
 	if !errors.Is(err, db.ErrNamespaceRequired) {
 		t.Fatalf("want ErrNamespaceRequired, got %v", err)
 	}
@@ -101,7 +101,7 @@ func TestListClients_NoClients(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	got, err := store.ListClients(context.Background(), "ns-empty")
+	got, err := store.Clients().List(context.Background(), "ns-empty")
 	if err != nil {
 		t.Fatalf("ListClients: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestListClients_ClientNoSessions(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", "alice")
 
-	got, err := store.ListClients(context.Background(), "ns-a")
+	got, err := store.Clients().List(context.Background(), "ns-a")
 	if err != nil {
 		t.Fatalf("ListClients: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestListClients_ClientWithSessions(t *testing.T) {
 	seedSessionWithActivity(t, sqlDB, "ns-a", "alice", "s2", 60, newest.Add(-time.Hour))
 	seedSessionWithActivity(t, sqlDB, "ns-a", "alice", "s3", 60, newest)
 
-	got, err := store.ListClients(context.Background(), "ns-a")
+	got, err := store.Clients().List(context.Background(), "ns-a")
 	if err != nil {
 		t.Fatalf("ListClients: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestListClients_MultipleClientsSortedByName(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", "alice")
 	seedClient(t, sqlDB, "ns-a", "bob")
 
-	got, err := store.ListClients(context.Background(), "ns-a")
+	got, err := store.Clients().List(context.Background(), "ns-a")
 	if err != nil {
 		t.Fatalf("ListClients: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestListClients_CrossNamespaceIsolation(t *testing.T) {
 	seedClient(t, sqlDB, "ns-b", "alice")
 	// no sessions in ns-b
 
-	gotB, err := store.ListClients(context.Background(), "ns-b")
+	gotB, err := store.Clients().List(context.Background(), "ns-b")
 	if err != nil {
 		t.Fatalf("ListClients ns-b: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestListClients_CrossNamespaceIsolation(t *testing.T) {
 		t.Errorf("ns-b alice should be sessionless; got %+v", gotB)
 	}
 
-	gotA, err := store.ListClients(context.Background(), "ns-a")
+	gotA, err := store.Clients().List(context.Background(), "ns-a")
 	if err != nil {
 		t.Fatalf("ListClients ns-a: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestCountClientSessions_Zero(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", "alice")
 
-	n, err := store.CountClientSessions(context.Background(), "ns-a", "alice")
+	n, err := store.Clients().CountSessions(context.Background(), "ns-a", "alice")
 	if err != nil {
 		t.Fatalf("CountClientSessions: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestCountClientSessions_Multiple(t *testing.T) {
 		seedSession(t, sqlDB, "ns-a", "alice", randHex(8), 60)
 	}
 
-	n, err := store.CountClientSessions(context.Background(), "ns-a", "alice")
+	n, err := store.Clients().CountSessions(context.Background(), "ns-a", "alice")
 	if err != nil {
 		t.Fatalf("CountClientSessions: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestCountClientSessions_UnknownClient(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	n, err := store.CountClientSessions(context.Background(), "ns-a", "ghost")
+	n, err := store.Clients().CountSessions(context.Background(), "ns-a", "ghost")
 	if !errors.Is(err, db.ErrClientNotFound) {
 		t.Fatalf("want ErrClientNotFound, got %v", err)
 	}
@@ -266,7 +266,7 @@ func TestCountClientSessions_CrossNamespaceUnknown(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", "alice")
 
-	_, err := store.CountClientSessions(context.Background(), "ns-b", "alice")
+	_, err := store.Clients().CountSessions(context.Background(), "ns-b", "alice")
 	if !errors.Is(err, db.ErrClientNotFound) {
 		t.Fatalf("ns-b should not see ns-a's alice; got %v", err)
 	}
@@ -276,7 +276,7 @@ func TestCountClientSessions_EmptyNamespace(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	_, err := store.CountClientSessions(context.Background(), "", "alice")
+	_, err := store.Clients().CountSessions(context.Background(), "", "alice")
 	if !errors.Is(err, db.ErrNamespaceRequired) {
 		t.Fatalf("want ErrNamespaceRequired, got %v", err)
 	}
@@ -286,7 +286,7 @@ func TestCountClientSessions_EmptyName(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	_, err := store.CountClientSessions(context.Background(), "ns-a", "")
+	_, err := store.Clients().CountSessions(context.Background(), "ns-a", "")
 	if !errors.Is(err, db.ErrClientNameRequired) {
 		t.Fatalf("want ErrClientNameRequired, got %v", err)
 	}
@@ -301,7 +301,7 @@ func TestDeleteClient_DefaultProtected(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	before := countRows(t, sqlDB, `SELECT COUNT(*) FROM clients`)
 
-	_, err := store.DeleteClient(context.Background(), "ns-a", db.DefaultClient)
+	_, err := store.Clients().Delete(context.Background(), "ns-a", db.DefaultClient)
 	if !errors.Is(err, db.ErrClientProtected) {
 		t.Fatalf("want ErrClientProtected, got %v", err)
 	}
@@ -314,7 +314,7 @@ func TestDeleteClient_UnknownClient(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	res, err := store.DeleteClient(context.Background(), "ns-a", "ghost")
+	res, err := store.Clients().Delete(context.Background(), "ns-a", "ghost")
 	if !errors.Is(err, db.ErrClientNotFound) {
 		t.Fatalf("want ErrClientNotFound, got %v", err)
 	}
@@ -347,7 +347,7 @@ func TestDeleteClient_HappyPathFullCascade(t *testing.T) {
 		seedVocab(t, sqlDB, "ns-a", sid, "beta", 2)
 	}
 
-	res, err := store.DeleteClient(context.Background(), "ns-a", "alice")
+	res, err := store.Clients().Delete(context.Background(), "ns-a", "alice")
 	if err != nil {
 		t.Fatalf("DeleteClient: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestDeleteClient_NegativeIsolation(t *testing.T) {
 	bobSource := seedSource(t, sqlDB, "ns-a", "bob-1", "bob-src")
 	seedChunk(t, sqlDB, bobSource, "bob", "content", "prose")
 
-	if _, err := store.DeleteClient(context.Background(), "ns-a", "alice"); err != nil {
+	if _, err := store.Clients().Delete(context.Background(), "ns-a", "alice"); err != nil {
 		t.Fatalf("DeleteClient alice: %v", err)
 	}
 
@@ -417,7 +417,7 @@ func TestDeleteClient_CrossNamespaceIsolation(t *testing.T) {
 	seedClient(t, sqlDB, "ns-b", "alice")
 	seedSession(t, sqlDB, "ns-b", "alice", "b-s1", 60)
 
-	if _, err := store.DeleteClient(context.Background(), "ns-a", "alice"); err != nil {
+	if _, err := store.Clients().Delete(context.Background(), "ns-a", "alice"); err != nil {
 		t.Fatalf("DeleteClient ns-a alice: %v", err)
 	}
 
@@ -462,7 +462,7 @@ func TestDeleteClient_CascadeCountsScopedByNamespace(t *testing.T) {
 		seedEvent(t, sqlDB, "ns-b", "shared", fmt.Sprintf("evt-%d", i), 3, []byte(`{}`))
 	}
 
-	res, err := store.DeleteClient(context.Background(), "ns-a", "alice")
+	res, err := store.Clients().Delete(context.Background(), "ns-a", "alice")
 	if err != nil {
 		t.Fatalf("DeleteClient ns-a alice: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestDeleteClient_NoSessionsCleanDelete(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", "alice")
 
-	res, err := store.DeleteClient(context.Background(), "ns-a", "alice")
+	res, err := store.Clients().Delete(context.Background(), "ns-a", "alice")
 	if err != nil {
 		t.Fatalf("DeleteClient: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestDeleteClient_EmptyNamespace(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	_, err := store.DeleteClient(context.Background(), "", "alice")
+	_, err := store.Clients().Delete(context.Background(), "", "alice")
 	if !errors.Is(err, db.ErrNamespaceRequired) {
 		t.Fatalf("want ErrNamespaceRequired, got %v", err)
 	}
@@ -522,7 +522,7 @@ func TestDeleteClient_EmptyName(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	_, err := store.DeleteClient(context.Background(), "ns-a", "")
+	_, err := store.Clients().Delete(context.Background(), "ns-a", "")
 	if !errors.Is(err, db.ErrClientNameRequired) {
 		t.Fatalf("want ErrClientNameRequired, got %v", err)
 	}

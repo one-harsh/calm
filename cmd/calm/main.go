@@ -14,11 +14,13 @@ import (
 
 	"github.com/one-harsh/calm/internal/api/handlers"
 	"github.com/one-harsh/calm/internal/auth"
+	"github.com/one-harsh/calm/internal/client"
 	"github.com/one-harsh/calm/internal/config"
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/obs"
 	"github.com/one-harsh/calm/internal/secrets"
 	"github.com/one-harsh/calm/internal/server"
+	"github.com/one-harsh/calm/internal/session"
 )
 
 func main() {
@@ -59,7 +61,9 @@ func run() error {
 	}
 	defer func() { _ = store.Close() }()
 
-	if err := store.SeedNamespaceClients(openCtx, namespaceNames(cfg.Namespaces)); err != nil {
+	clientSvc := client.New(store.Clients())
+	sessionSvc := session.New(store.Sessions())
+	if err := clientSvc.SeedDefaults(openCtx, namespaceNames(cfg.Namespaces)); err != nil {
 		return fmt.Errorf("seed clients: %w", err)
 	}
 
@@ -72,7 +76,7 @@ func run() error {
 	}, server.Deps{
 		Logger:   logger,
 		Registry: registry,
-		Handlers: handlers.New(handlers.Deps{Logger: logger, Store: store}),
+		Handlers: handlers.New(handlers.Deps{Logger: logger, Clients: clientSvc, Sessions: sessionSvc}),
 	})
 	if err != nil {
 		return err

@@ -25,8 +25,10 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 	"github.com/one-harsh/calm/internal/api/handlers"
 	"github.com/one-harsh/calm/internal/auth"
+	"github.com/one-harsh/calm/internal/client"
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/server"
+	"github.com/one-harsh/calm/internal/session"
 )
 
 const (
@@ -42,7 +44,7 @@ const (
 type harness struct {
 	client    *genapi.ClientWithResponses
 	serverURL string
-	store     db.DAL
+	store     *db.Store
 	teardown  func()
 }
 
@@ -80,7 +82,11 @@ func bootstrap() (*harness, error) {
 			map[string]string{testMasterKey: testNamespace},
 			nil,
 		),
-		Handlers: handlers.New(handlers.Deps{Logger: logging.Nop(), Store: store}),
+		Handlers: handlers.New(handlers.Deps{
+			Logger:   logging.Nop(),
+			Clients:  client.New(store.Clients()),
+			Sessions: session.New(store.Sessions()),
+		}),
 	})
 	if err != nil {
 		_ = store.Close()
@@ -114,7 +120,7 @@ func bootstrap() (*harness, error) {
 // (started by `task dev:up`), opens a Store against it, and returns a
 // teardown that drops the database. Each suite run gets its own isolated DB
 // under the long-lived Postgres sidecar.
-func openTestStore() (db.DAL, func(), error) {
+func openTestStore() (*db.Store, func(), error) {
 	adminDSN := os.Getenv(envPGDSN)
 	if adminDSN == "" {
 		adminDSN = defaultPGDSN

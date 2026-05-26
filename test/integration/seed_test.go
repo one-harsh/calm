@@ -11,6 +11,7 @@ import (
 
 	logging "github.com/one-harsh/context-logging"
 
+	"github.com/one-harsh/calm/internal/client"
 	"github.com/one-harsh/calm/internal/db"
 )
 
@@ -21,13 +22,14 @@ func TestSeedNamespaceClients_HappyAndIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	svc := client.New(store.Clients())
 	namespaces := []string{"default", "tenant-a", "tenant-b"}
-	if err := store.SeedNamespaceClients(ctx, namespaces); err != nil {
+	if err := svc.SeedDefaults(ctx, namespaces); err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
 	assertClientRowCount(ctx, t, sqlDB, namespaces, 1)
 
-	if err := store.SeedNamespaceClients(ctx, namespaces); err != nil {
+	if err := svc.SeedDefaults(ctx, namespaces); err != nil {
 		t.Fatalf("second seed (idempotency check): %v", err)
 	}
 	assertClientRowCount(ctx, t, sqlDB, namespaces, 1)

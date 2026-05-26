@@ -5,13 +5,15 @@ filename: "mock_{{.InterfaceNameSnake}}.go"
 mockname: "Mock{{.InterfaceName}}"
 boilerplate-file: ".mockery-header.txt"
 
-# Port interfaces are registered here as they are defined.
-# Mocks are generated in the same package as the interface,
-# behind //go:build mocks (added by boilerplate-file above).
+# Port interfaces listed explicitly. New ports added to a package require
+# adding the interface here — small maintenance cost, and the explicit list
+# keeps internal-helper interfaces (like the unexported `queryer` in db)
+# from being mocked just because they exist.
 packages:
   github.com/one-harsh/calm/internal/db:
     interfaces:
-      DAL:
+      ClientRepo:
+      SessionRepo:
   github.com/one-harsh/calm/internal/secrets:
     interfaces:
       SecretReader:
