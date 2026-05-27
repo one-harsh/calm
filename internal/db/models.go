@@ -21,8 +21,10 @@ type Session struct {
 	Client       string
 	CreatedAt    time.Time
 	LastActivity time.Time
-	TTLMinutes   int
-	Labels       map[string]string
+	// ExpiresAt is maintained by the sessions_set_expires_at trigger; never set from Go.
+	ExpiresAt  time.Time
+	TTLMinutes int
+	Labels     map[string]string
 }
 
 type ManagedSession struct {
@@ -31,6 +33,7 @@ type ManagedSession struct {
 	Client       string
 	CreatedAt    time.Time
 	LastActivity time.Time
+	ExpiresAt    time.Time
 	TTLMinutes   int
 	Labels       map[string]string
 	EventCount   int

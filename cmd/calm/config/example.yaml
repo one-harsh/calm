@@ -27,7 +27,8 @@ server:
 sessions:
   default_ttl_minutes: 120          # session inactivity TTL before TTL-scanner reaps
   snapshot_max_budget_kb: 8         # max bytes returned by GET /v1/sessions/{id}/snapshot
-  ttl_scanner_interval_ms: 60000    # background scanner cadence
+  ttl_scanner_interval_ms: 60000    # background scanner cadence; 0 disables the scanner entirely
+  ttl_scanner_jitter_ms: 10000      # ± window applied per tick to avoid cross-replica thundering herd; must be < interval
 
 storage:
   dsn: postgres://calm:CHANGE_ME@postgres:5432/calm?sslmode=require

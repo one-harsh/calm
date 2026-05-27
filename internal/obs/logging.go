@@ -27,14 +27,24 @@ func NewLogger(serviceName, version, environment, region, level, format string) 
 }
 
 const (
-	KeySessionID  = "session_id"
-	KeyNamespace  = "namespace"
-	KeyClient     = "client"
-	KeySource     = "source"
-	KeyMatchLayer = "match_layer"
-	KeyEndpoint   = "endpoint"
-	KeyEventType  = "event_type"
-	KeyFormatHint = "format_hint"
+	KeySessionID   = "session_id"
+	KeyNamespace   = "namespace"
+	KeyClient      = "client"
+	KeySource      = "source"
+	KeyMatchLayer  = "match_layer"
+	KeyEndpoint    = "endpoint"
+	KeyEventType   = "event_type"
+	KeyFormatHint  = "format_hint"
+	KeyCloseReason = "close_reason"
+)
+
+var (
+	MatchLayerPrimary = logging.StringField(KeyMatchLayer, "primary")
+	MatchLayerTrigram = logging.StringField(KeyMatchLayer, "trigram")
+	MatchLayerFuzzy   = logging.StringField(KeyMatchLayer, "fuzzy")
+
+	CloseReasonTTLExpired = logging.StringField(KeyCloseReason, "ttl_expired")
+	CloseReasonExplicit   = logging.StringField(KeyCloseReason, "explicit")
 )
 
 func SessionID(value string) logging.LoggingField {
@@ -51,10 +61,6 @@ func Client(value string) logging.LoggingField {
 
 func Source(value string) logging.LoggingField {
 	return logging.StringField(KeySource, value)
-}
-
-func MatchLayer(value string) logging.LoggingField {
-	return logging.StringField(KeyMatchLayer, value)
 }
 
 func Endpoint(value string) logging.LoggingField {

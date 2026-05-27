@@ -132,6 +132,112 @@ namespaces:
 	}
 }
 
+func TestLoad_TTLScannerJitterDefault(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sessions.TTLScannerJitterMS != 10_000 {
+		t.Errorf("ttl_scanner_jitter_ms default: want 10000, got %d", cfg.Sessions.TTLScannerJitterMS)
+	}
+}
+
+func TestLoad_TTLScannerJitterOverride(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	t.Setenv("CALM_SESSIONS_TTL_SCANNER_JITTER_MS", "2000")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sessions.TTLScannerJitterMS != 2000 {
+		t.Errorf("env override: want 2000, got %d", cfg.Sessions.TTLScannerJitterMS)
+	}
+}
+
+func TestLoad_TTLScannerJitterNegativeRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  ttl_scanner_jitter_ms: -1
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "ttl_scanner_jitter_ms") {
+		t.Errorf("want negative-jitter error mentioning ttl_scanner_jitter_ms; got %v", err)
+	}
+}
+
+func TestLoad_TTLScannerIntervalNegativeRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  ttl_scanner_interval_ms: -1
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "ttl_scanner_interval_ms") {
+		t.Errorf("want negative-interval error mentioning ttl_scanner_interval_ms; got %v", err)
+	}
+}
+
+func TestLoad_TTLScannerJitterEqualToIntervalRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  ttl_scanner_interval_ms: 5000
+  ttl_scanner_jitter_ms: 5000
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "must be <") {
+		t.Errorf("want jitter>=interval error; got %v", err)
+	}
+}
+
+func TestLoad_TTLScannerIntervalZeroSkipsJitterValidation(t *testing.T) {
+	// Interval=0 disables the scanner; jitter is irrelevant in that case
+	// and must not cause validation to fail.
+	path := writeConfig(t, `
+sessions:
+  ttl_scanner_interval_ms: 0
+  ttl_scanner_jitter_ms: 999999
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load with interval=0 + large jitter: want pass, got %v", err)
+	}
+	if cfg.Sessions.TTLScannerIntervalMS != 0 {
+		t.Errorf("interval: want 0, got %d", cfg.Sessions.TTLScannerIntervalMS)
+	}
+}
+
 func TestLoad_EnvOverride(t *testing.T) {
 	path := writeConfig(t, `
 storage:

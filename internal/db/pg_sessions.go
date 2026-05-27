@@ -43,9 +43,9 @@ func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 		if err := tx.QueryRowContext(ctx,
 			`INSERT INTO sessions (session_id, namespace, client, ttl_minutes)
 			 VALUES ($1, $2, $3, $4)
-			 RETURNING created_at, last_activity`,
+			 RETURNING created_at, last_activity, expires_at`,
 			sess.ID, sess.Namespace, sess.Client, sess.TTLMinutes,
-		).Scan(&sess.CreatedAt, &sess.LastActivity); err != nil {
+		).Scan(&sess.CreatedAt, &sess.LastActivity, &sess.ExpiresAt); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 				return ErrSessionExists
@@ -83,7 +83,7 @@ func (r *sessionRepo) Get(ctx context.Context, namespace, id string) (Session, e
 	var labelsJSON []byte
 	err := r.queryer.QueryRowContext(ctx, `
 		SELECT
-			s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.ttl_minutes,
+			s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes,
 			COALESCE(
 				jsonb_object_agg(sl.key, sl.value) FILTER (WHERE sl.key IS NOT NULL),
 				'{}'::jsonb
@@ -92,11 +92,11 @@ func (r *sessionRepo) Get(ctx context.Context, namespace, id string) (Session, e
 		LEFT JOIN session_labels sl
 			ON sl.namespace = s.namespace AND sl.session_id = s.session_id
 		WHERE s.namespace = $1 AND s.session_id = $2
-		GROUP BY s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.ttl_minutes`,
+		GROUP BY s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes`,
 		namespace, id,
 	).Scan(
 		&sess.ID, &sess.Namespace, &sess.Client,
-		&sess.CreatedAt, &sess.LastActivity, &sess.TTLMinutes,
+		&sess.CreatedAt, &sess.LastActivity, &sess.ExpiresAt, &sess.TTLMinutes,
 		&labelsJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -150,7 +150,7 @@ func (r *sessionRepo) List(ctx context.Context, filter ListSessionsFilter) ([]Ma
 	whereClause, args := buildSessionFilterWhere(filter, "s")
 	queryHead := `
 		SELECT
-			s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.ttl_minutes,
+			s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes,
 			COALESCE(
 				jsonb_object_agg(sl.key, sl.value) FILTER (WHERE sl.key IS NOT NULL),
 				'{}'::jsonb
@@ -162,7 +162,7 @@ func (r *sessionRepo) List(ctx context.Context, filter ListSessionsFilter) ([]Ma
 			ON sl.namespace = s.namespace AND sl.session_id = s.session_id
 		WHERE `
 	queryTail := `
-		GROUP BY s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.ttl_minutes
+		GROUP BY s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes
 		ORDER BY s.last_activity DESC`
 	query := queryHead + whereClause + queryTail //nolint:gosec
 
@@ -178,7 +178,7 @@ func (r *sessionRepo) List(ctx context.Context, filter ListSessionsFilter) ([]Ma
 		var labelsJSON []byte
 		if err := rows.Scan(
 			&ms.ID, &ms.Namespace, &ms.Client,
-			&ms.CreatedAt, &ms.LastActivity, &ms.TTLMinutes,
+			&ms.CreatedAt, &ms.LastActivity, &ms.ExpiresAt, &ms.TTLMinutes,
 			&labelsJSON, &ms.EventCount,
 		); err != nil {
 			return nil, fmt.Errorf("%w: scan session row in %q: %w", ErrStorageBackend, filter.Namespace, err)
@@ -356,8 +356,8 @@ func (r *sessionRepo) ScanExpired(ctx context.Context, now time.Time) ([]Session
 	rows, err := r.queryer.QueryContext(ctx, `
 		SELECT session_id, namespace
 		FROM sessions
-		WHERE last_activity + (ttl_minutes || ' minutes')::interval < $1
-		ORDER BY last_activity ASC`,
+		WHERE expires_at < $1
+		ORDER BY expires_at ASC`,
 		now,
 	)
 	if err != nil {

@@ -18,3 +18,6 @@ packages:
   github.com/one-harsh/calm/internal/secrets:
     interfaces:
       SecretReader:
+  github.com/one-harsh/calm/internal/session:
+    interfaces:
+      expirySource:

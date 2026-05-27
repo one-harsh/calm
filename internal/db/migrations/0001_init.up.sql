@@ -26,11 +26,33 @@ CREATE TABLE sessions (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_activity TIMESTAMPTZ NOT NULL DEFAULT now(),
   ttl_minutes   INTEGER NOT NULL,
+  -- Maintained by the sessions_set_expires_at trigger below; never written
+  -- by app code. The TTL scanner's WHERE expires_at < $1 hits sessions_expires_at_idx
+  -- instead of recomputing the predicate per-row. A GENERATED ALWAYS column would
+  -- be cleaner, but TIMESTAMPTZ + INTERVAL is only STABLE (DST math depends on
+  -- session timezone), and generated columns require IMMUTABLE expressions.
+  -- Trigger functions run in execution context where STABLE is fine.
+  expires_at    TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (namespace, session_id),
   FOREIGN KEY (namespace, client) REFERENCES clients(namespace, name) ON DELETE CASCADE
 );
 CREATE INDEX sessions_namespace_client_idx ON sessions(namespace, client);
 CREATE INDEX sessions_last_activity_idx    ON sessions(last_activity);
+CREATE INDEX sessions_expires_at_idx       ON sessions(expires_at);
+
+CREATE FUNCTION sessions_set_expires_at() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.expires_at := NEW.last_activity + (NEW.ttl_minutes * INTERVAL '1 minute');
+  RETURN NEW;
+END;
+$$;
+
+-- Fires on every INSERT and on UPDATEs that touch last_activity or ttl_minutes
+-- (Touch hits this; pure no-op UPDATEs do not).
+CREATE TRIGGER sessions_set_expires_at_trg
+BEFORE INSERT OR UPDATE OF last_activity, ttl_minutes ON sessions
+FOR EACH ROW EXECUTE FUNCTION sessions_set_expires_at();
 
 CREATE TABLE session_labels (
   namespace  TEXT NOT NULL,

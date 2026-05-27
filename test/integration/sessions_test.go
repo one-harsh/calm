@@ -7,9 +7,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/session"
@@ -1187,5 +1191,239 @@ func TestSessionService_CacheDisabled_AlwaysHitsDB(t *testing.T) {
 	deleteSessionRow(t, sqlDB, "ns-a", "s1")
 	if _, err := svc.Lookup(context.Background(), "ns-a", "s1"); !errors.Is(err, db.ErrSessionNotFound) {
 		t.Errorf("Lookup with cache disabled: want DB miss → ErrSessionNotFound, got %v", err)
+	}
+}
+
+// ---------- expires_at column wiring (WI-06) ----------
+
+// expires_at is maintained by a BEFORE trigger on the sessions table. These
+// tests assert the column is populated end-to-end through the DAL — Create
+// surfaces it via RETURNING; Get re-reads it; Touch causes the trigger to
+// recompute it.
+
+func TestSession_ExpiresAtPopulatedOnCreate(t *testing.T) {
+	store, _, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 0)
+	sess := &db.Session{ID: "s1", Namespace: "ns-a", TTLMinutes: 60}
+	if err := svc.Create(context.Background(), sess); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	want := sess.LastActivity.Add(60 * time.Minute)
+	if d := sess.ExpiresAt.Sub(want).Abs(); d > 100*time.Millisecond {
+		t.Errorf("ExpiresAt = %v; want ~%v (last_activity + 60m); diff = %v",
+			sess.ExpiresAt, want, d)
+	}
+}
+
+func TestSession_ExpiresAtPopulatedOnGet(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	seedSession(t, sqlDB, "ns-a", db.DefaultClient, "s1", 30)
+
+	svc := session.New(store, 0)
+	got, err := svc.Get(context.Background(), "ns-a", "s1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ExpiresAt.IsZero() {
+		t.Error("ExpiresAt is zero — Get's SELECT/Scan must populate it")
+	}
+	want := got.LastActivity.Add(30 * time.Minute)
+	if d := got.ExpiresAt.Sub(want).Abs(); d > 100*time.Millisecond {
+		t.Errorf("ExpiresAt = %v; want ~%v (last_activity + 30m)", got.ExpiresAt, want)
+	}
+}
+
+func TestSession_ExpiresAtRecomputesOnTouch(t *testing.T) {
+	store, _, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 0)
+	sess := &db.Session{ID: "s1", Namespace: "ns-a", TTLMinutes: 30}
+	if err := svc.Create(context.Background(), sess); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	initial := sess.ExpiresAt
+
+	// Touch with a later timestamp; the trigger must recompute expires_at.
+	later := sess.LastActivity.Add(5 * time.Minute)
+	if err := svc.Touch(context.Background(), "ns-a", "s1", later); err != nil {
+		t.Fatalf("Touch: %v", err)
+	}
+	got, err := svc.Get(context.Background(), "ns-a", "s1")
+	if err != nil {
+		t.Fatalf("Get post-Touch: %v", err)
+	}
+	if !got.ExpiresAt.After(initial) {
+		t.Errorf("ExpiresAt did not advance: initial=%v, post-touch=%v", initial, got.ExpiresAt)
+	}
+}
+
+// ---------- TTL scanner (WI-06) ----------
+
+// These tests spin up a real session.Scanner against the real DAL with a
+// short interval (20 ms) so the scan happens before the test budget runs out.
+// The scanner exits on context cancel; tests cancel + wait on a done channel.
+
+func TestTTLScanner_ReapsExpiredSessionWithinOneTick(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	// ttl_minutes=0 → expires_at == last_activity → immediately expired.
+	seedSession(t, sqlDB, "ns-a", db.DefaultClient, "expired-1", 0)
+
+	svc := session.New(store, 0)
+	scanner := session.NewScanner(svc, session.ScannerConfig{
+		Interval: 20 * time.Millisecond,
+	}, logging.Nop())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = scanner.Run(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if countRows(t, sqlDB,
+			`SELECT COUNT(*) FROM sessions WHERE namespace = $1 AND session_id = $2`,
+			"ns-a", "expired-1",
+		) == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("scanner did not delete expired session within 500ms")
+}
+
+func TestTTLScanner_CrossNamespaceExpiry(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	seedClient(t, sqlDB, "ns-b", db.DefaultClient)
+	seedSession(t, sqlDB, "ns-a", db.DefaultClient, "expired-a", 0)
+	seedSession(t, sqlDB, "ns-b", db.DefaultClient, "expired-b", 0)
+	// Fresh sessions (60m TTL) must survive.
+	seedSession(t, sqlDB, "ns-a", db.DefaultClient, "fresh-a", 60)
+	seedSession(t, sqlDB, "ns-b", db.DefaultClient, "fresh-b", 60)
+
+	svc := session.New(store, 0)
+	scanner := session.NewScanner(svc, session.ScannerConfig{
+		Interval: 20 * time.Millisecond,
+	}, logging.Nop())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = scanner.Run(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	expiredGone := func() bool {
+		return countRows(t, sqlDB,
+			`SELECT COUNT(*) FROM sessions WHERE session_id IN ('expired-a', 'expired-b')`,
+		) == 0
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if expiredGone() {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !expiredGone() {
+		t.Fatal("expired sessions not reaped from both namespaces within 500ms")
+	}
+	if n := countRows(t, sqlDB,
+		`SELECT COUNT(*) FROM sessions WHERE session_id IN ('fresh-a', 'fresh-b')`,
+	); n != 2 {
+		t.Errorf("fresh sessions count = %d; want 2 (scanner must not touch unexpired rows)", n)
+	}
+}
+
+func TestTTLScanner_ContextCancelStopsCleanly(t *testing.T) {
+	store, _, teardown := openConcreteStore(t)
+	defer teardown()
+
+	svc := session.New(store, 0)
+	scanner := session.NewScanner(svc, session.ScannerConfig{
+		Interval: time.Second, // long enough that we cancel before any tick
+	}, logging.Nop())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = scanner.Run(ctx)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("scanner did not exit within 200ms of context cancel")
+	}
+}
+
+func TestTTLScanner_QueryUsesIndex(t *testing.T) {
+	// Guard against future regressions where someone alters the schema or
+	// the query in a way that drops index usage. Forces enable_seqscan=off
+	// for the EXPLAIN — at integration-test row counts the planner would
+	// reasonably pick a seq scan; this test asserts the index is *available*,
+	// not that it's chosen at small scale.
+	_, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	for i := 0; i < 50; i++ {
+		seedSession(t, sqlDB, "ns-a", db.DefaultClient, fmt.Sprintf("s%d", i), 60)
+	}
+	if _, err := sqlDB.Exec(`ANALYZE sessions`); err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+
+	conn, err := sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("acquire conn: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	// SET (without LOCAL) persists for the lifetime of this conn — fine
+	// because we Close() it at function end.
+	if _, err := conn.ExecContext(context.Background(), `SET enable_seqscan = off`); err != nil {
+		t.Fatalf("disable seqscan: %v", err)
+	}
+
+	rows, err := conn.QueryContext(context.Background(),
+		`EXPLAIN SELECT session_id, namespace FROM sessions WHERE expires_at < $1`, time.Now())
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatalf("scan plan row: %v", err)
+		}
+		plan.WriteString(line)
+		plan.WriteString("\n")
+	}
+	if !strings.Contains(plan.String(), "sessions_expires_at_idx") {
+		t.Errorf("EXPLAIN plan does not reference sessions_expires_at_idx — index missing or query rewritten so the planner can't use it:\n%s", plan.String())
 	}
 }

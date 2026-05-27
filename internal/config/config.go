@@ -58,6 +58,7 @@ type SessionsConfig struct {
 	DefaultTTLMinutes    int `mapstructure:"default_ttl_minutes"`
 	SnapshotMaxBudgetKB  int `mapstructure:"snapshot_max_budget_kb"`
 	TTLScannerIntervalMS int `mapstructure:"ttl_scanner_interval_ms"`
+	TTLScannerJitterMS   int `mapstructure:"ttl_scanner_jitter_ms"`
 	CacheSize            int `mapstructure:"cache_size"`
 }
 
@@ -127,6 +128,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sessions.default_ttl_minutes", 120)
 	v.SetDefault("sessions.snapshot_max_budget_kb", 8)
 	v.SetDefault("sessions.ttl_scanner_interval_ms", 60_000)
+	v.SetDefault("sessions.ttl_scanner_jitter_ms", 10_000)
 	v.SetDefault("sessions.cache_size", 10_000)
 
 	v.SetDefault("storage.migrate_on_startup", true)
@@ -141,6 +143,18 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Sessions.CacheSize < 0 {
 		return fmt.Errorf("sessions.cache_size must be >= 0 (0 disables cache); got %d", cfg.Sessions.CacheSize)
+	}
+	if cfg.Sessions.TTLScannerIntervalMS < 0 {
+		return fmt.Errorf("sessions.ttl_scanner_interval_ms must be >= 0 (0 disables scanner); got %d", cfg.Sessions.TTLScannerIntervalMS)
+	}
+	if cfg.Sessions.TTLScannerJitterMS < 0 {
+		return fmt.Errorf("sessions.ttl_scanner_jitter_ms must be >= 0; got %d", cfg.Sessions.TTLScannerJitterMS)
+	}
+	// Jitter must be strictly less than interval; otherwise a tick could
+	// compute a delay <= 0 → busy loop. Only enforce when scanner is enabled.
+	if cfg.Sessions.TTLScannerIntervalMS > 0 && cfg.Sessions.TTLScannerJitterMS >= cfg.Sessions.TTLScannerIntervalMS {
+		return fmt.Errorf("sessions.ttl_scanner_jitter_ms (%d) must be < sessions.ttl_scanner_interval_ms (%d)",
+			cfg.Sessions.TTLScannerJitterMS, cfg.Sessions.TTLScannerIntervalMS)
 	}
 
 	seenNames := map[string]int{}

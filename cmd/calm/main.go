@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
+
+	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/api/handlers"
 	"github.com/one-harsh/calm/internal/auth"
@@ -82,8 +85,26 @@ func run() error {
 		return err
 	}
 
-	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		return err
+	scanner := session.NewScanner(sessionSvc, session.ScannerConfig{
+		Interval: time.Duration(cfg.Sessions.TTLScannerIntervalMS) * time.Millisecond,
+		Jitter:   time.Duration(cfg.Sessions.TTLScannerJitterMS) * time.Millisecond,
+	}, logger)
+
+	srvCtx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		if err := scanner.Run(srvCtx); err != nil {
+			logger.WithContext(ctx).Error("ttl scanner exited with error",
+				logging.ErrorField(err))
+		}
+	})
+
+	srvErr := srv.Run(srvCtx)
+	cancel()
+	wg.Wait() // drain in-flight scanner iteration before returning
+
+	if srvErr != nil && !errors.Is(srvErr, context.Canceled) {
+		return srvErr
 	}
 	logger.WithContext(ctx).Info("service stopped")
 	return nil
