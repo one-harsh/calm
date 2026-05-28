@@ -435,7 +435,7 @@ Creates a session. The workload provides the session ID — CALM treats it as an
 
 - `client` — optional. Identifies which workload is creating the session. Auto-registers on first reference if not already known. If omitted, the session attributes to the `default` client.
 - `labels` — arbitrary key/value metadata; queryable via the management API.
-- `ttl_minutes` — inactivity timeout. CALM clamps to the operator-configured maximum if the workload requests longer.
+- `ttl_minutes` — inactivity timeout. CALM clamps to the operator-configured maximum if the workload requests longer (rather than rejecting with 4xx). The clamp choice is deliberate: CALM's consumers are LLM-orchestration glue layers — coding-agent harnesses, pipeline runners, MCP adapters — that typically fall back to no-CALM mode when they see a 4xx on session create. For a context-management service, *absent CALM* is a worse outcome than *degraded CALM* (shorter session than requested). Clamping keeps CALM useful for the work unit; the response echoes the committed value so workloads that do check can detect the clamp. Server emits a WARN per clamp event so operators can see when workloads consistently hit the ceiling and decide whether to raise it.
 
 **Response (201):**
 
@@ -1074,6 +1074,7 @@ These are the numbers that answer "is CALM paying for itself."
 - `calm_session_events_count` — events captured per session
 - `calm_session_cleanup_explicit` — sessions closed by the workload
 - `calm_session_cleanup_ttl` — sessions cleaned up by TTL scanner. A high ratio of TTL-to-explicit cleanups suggests workloads are crashing or not closing sessions properly.
+- `calm_session_create_ttl_clamped` — sessions whose requested `ttl_minutes` exceeded the operator ceiling and were clamped. A non-trivial rate indicates workloads consistently want longer TTLs than the deployment allows; operators can use this to decide whether to raise `sessions.max_ttl_minutes`. Each clamp also emits a WARN log line with the requested-vs-committed values.
 
 ### Answer quality
 

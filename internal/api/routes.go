@@ -10,8 +10,10 @@ import (
 	"github.com/one-harsh/calm/internal/api/handlers"
 )
 
-// Mount wires the generated chi-aware router to the supplied handlers. The
-// route table itself lives in the generated code (driven by docs/api/openapi.yaml).
 func Mount(r chi.Router, h *handlers.Handlers) {
-	genapi.HandlerFromMux(h, r)
+	strictHandler := genapi.NewStrictHandlerWithOptions(h, nil, genapi.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc:  h.StrictErrorHandler,
+		ResponseErrorHandlerFunc: h.StrictErrorHandler,
+	})
+	genapi.HandlerFromMux(strictHandler, r)
 }

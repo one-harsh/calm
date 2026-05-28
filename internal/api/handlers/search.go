@@ -3,8 +3,12 @@
 
 package handlers
 
-import "net/http"
+import (
+	"context"
 
-func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
-	h.notImplemented(w, r, "POST /v1/search")
+	"github.com/one-harsh/calm/internal/api/genapi"
+)
+
+func (h *Handlers) Search(_ context.Context, _ genapi.SearchRequestObject) (genapi.SearchResponseObject, error) {
+	return nil, ErrNotImplemented
 }

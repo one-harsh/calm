@@ -56,6 +56,7 @@ type ServerConfig struct {
 
 type SessionsConfig struct {
 	DefaultTTLMinutes    int `mapstructure:"default_ttl_minutes"`
+	MaxTTLMinutes        int `mapstructure:"max_ttl_minutes"`
 	SnapshotMaxBudgetKB  int `mapstructure:"snapshot_max_budget_kb"`
 	TTLScannerIntervalMS int `mapstructure:"ttl_scanner_interval_ms"`
 	TTLScannerJitterMS   int `mapstructure:"ttl_scanner_jitter_ms"`
@@ -126,6 +127,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.rate_limit_per_second", 100)
 
 	v.SetDefault("sessions.default_ttl_minutes", 120)
+	v.SetDefault("sessions.max_ttl_minutes", 10_080)
 	v.SetDefault("sessions.snapshot_max_budget_kb", 8)
 	v.SetDefault("sessions.ttl_scanner_interval_ms", 60_000)
 	v.SetDefault("sessions.ttl_scanner_jitter_ms", 10_000)
@@ -143,6 +145,16 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Sessions.CacheSize < 0 {
 		return fmt.Errorf("sessions.cache_size must be >= 0 (0 disables cache); got %d", cfg.Sessions.CacheSize)
+	}
+	if cfg.Sessions.DefaultTTLMinutes <= 0 || cfg.Sessions.DefaultTTLMinutes > 10_080 {
+		return fmt.Errorf("sessions.default_ttl_minutes must be in [1, 10080]; got %d", cfg.Sessions.DefaultTTLMinutes)
+	}
+	if cfg.Sessions.MaxTTLMinutes <= 0 || cfg.Sessions.MaxTTLMinutes > 10_080 {
+		return fmt.Errorf("sessions.max_ttl_minutes must be in [1, 10080]; got %d", cfg.Sessions.MaxTTLMinutes)
+	}
+	if cfg.Sessions.DefaultTTLMinutes > cfg.Sessions.MaxTTLMinutes {
+		return fmt.Errorf("sessions.default_ttl_minutes (%d) must be <= sessions.max_ttl_minutes (%d) — otherwise the absent-TTL fallback would exceed the operator ceiling",
+			cfg.Sessions.DefaultTTLMinutes, cfg.Sessions.MaxTTLMinutes)
 	}
 	if cfg.Sessions.TTLScannerIntervalMS < 0 {
 		return fmt.Errorf("sessions.ttl_scanner_interval_ms must be >= 0 (0 disables scanner); got %d", cfg.Sessions.TTLScannerIntervalMS)

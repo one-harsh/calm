@@ -4,16 +4,28 @@
 package handlers
 
 import (
+	"errors"
+
 	logging "github.com/one-harsh/context-logging"
 
+	"github.com/one-harsh/calm/internal/api/genapi"
 	"github.com/one-harsh/calm/internal/client"
 	"github.com/one-harsh/calm/internal/session"
 )
+
+// ErrNotImplemented is the sentinel stubs return; StrictErrorHandler maps it to 501.
+var ErrNotImplemented = errors.New("endpoint not implemented")
+
+type HandlersConfig struct {
+	DefaultTTLMinutes int
+	MaxTTLMinutes     int
+}
 
 type Deps struct {
 	Logger   *logging.Logger
 	Clients  *client.Service
 	Sessions *session.Service
+	Cfg      HandlersConfig
 }
 
 type Handlers struct {
@@ -23,3 +35,5 @@ type Handlers struct {
 func New(deps Deps) *Handlers {
 	return &Handlers{deps: deps}
 }
+
+var _ genapi.StrictServerInterface = (*Handlers)(nil)

@@ -25,7 +25,8 @@ server:
   rate_limit_per_second: 100        # global default; per-namespace overrides below win
 
 sessions:
-  default_ttl_minutes: 120          # session inactivity TTL before TTL-scanner reaps
+  default_ttl_minutes: 120       # absent-TTL fallback for CreateSession. Active sessions never expire (Touch refreshes); only abandoned ones reach this.
+  max_ttl_minutes: 10080            # operator ceiling for workload-supplied ttl_minutes (also the OpenAPI hard cap). Lower for tighter compliance/cost limits.
   snapshot_max_budget_kb: 8         # max bytes returned by GET /v1/sessions/{id}/snapshot
   ttl_scanner_interval_ms: 60000    # background scanner cadence; 0 disables the scanner entirely
   ttl_scanner_jitter_ms: 10000      # ± window applied per tick to avoid cross-replica thundering herd; must be < interval

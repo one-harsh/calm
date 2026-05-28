@@ -4,23 +4,23 @@
 package handlers
 
 import (
-	"net/http"
+	"context"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
 
-func (h *Handlers) ManageListSessions(w http.ResponseWriter, r *http.Request, _ genapi.ManageListSessionsParams) {
-	h.notImplemented(w, r, "GET /v1/manage/sessions")
+func (h *Handlers) ManageListSessions(_ context.Context, _ genapi.ManageListSessionsRequestObject) (genapi.ManageListSessionsResponseObject, error) {
+	return nil, ErrNotImplemented
 }
 
-func (h *Handlers) ManageDeleteSessions(w http.ResponseWriter, r *http.Request, _ genapi.ManageDeleteSessionsParams) {
-	h.notImplemented(w, r, "DELETE /v1/manage/sessions")
+func (h *Handlers) ManageDeleteSessions(_ context.Context, _ genapi.ManageDeleteSessionsRequestObject) (genapi.ManageDeleteSessionsResponseObject, error) {
+	return nil, ErrNotImplemented
 }
 
-func (h *Handlers) ManageListClients(w http.ResponseWriter, r *http.Request) {
-	h.notImplemented(w, r, "GET /v1/manage/clients")
+func (h *Handlers) ManageListClients(_ context.Context, _ genapi.ManageListClientsRequestObject) (genapi.ManageListClientsResponseObject, error) {
+	return nil, ErrNotImplemented
 }
 
-func (h *Handlers) ManageDeleteClient(w http.ResponseWriter, r *http.Request, _ string, _ genapi.ManageDeleteClientParams) {
-	h.notImplemented(w, r, "DELETE /v1/manage/clients/{client}")
+func (h *Handlers) ManageDeleteClient(_ context.Context, _ genapi.ManageDeleteClientRequestObject) (genapi.ManageDeleteClientResponseObject, error) {
+	return nil, ErrNotImplemented
 }

@@ -67,7 +67,7 @@ import (
 )
 
 // expirySource is the narrow port the scanner consumes. *Service satisfies
-// it; mockery generates MockExpirySource for unit tests. Keeping the
+// it; mockery generates MockexpirySource for unit tests. Keeping the
 // interface scanner-local matches the existing DAL-port pattern: ports
 // live where they're consumed.
 type expirySource interface {

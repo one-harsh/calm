@@ -85,7 +85,7 @@ namespaces:
 		t.Errorf("defaults not applied to server: %+v", cfg.Server)
 	}
 	if cfg.Sessions.DefaultTTLMinutes != 120 {
-		t.Errorf("defaults not applied to sessions: %+v", cfg.Sessions)
+		t.Errorf("sessions.default_ttl_minutes default: want 120, got %d", cfg.Sessions.DefaultTTLMinutes)
 	}
 	if cfg.Sessions.CacheSize != 10_000 {
 		t.Errorf("sessions.cache_size default: want 10000, got %d", cfg.Sessions.CacheSize)
@@ -129,6 +129,159 @@ namespaces:
 	}
 	if !strings.Contains(err.Error(), "sessions.cache_size") {
 		t.Errorf("error should mention sessions.cache_size; got %v", err)
+	}
+}
+
+func TestLoad_DefaultTTLMinutesZeroRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  default_ttl_minutes: 0
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "sessions.default_ttl_minutes") {
+		t.Errorf("want error mentioning sessions.default_ttl_minutes; got %v", err)
+	}
+}
+
+func TestLoad_DefaultTTLMinutesNegativeRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  default_ttl_minutes: -5
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "sessions.default_ttl_minutes") {
+		t.Errorf("want error mentioning sessions.default_ttl_minutes; got %v", err)
+	}
+}
+
+func TestLoad_DefaultTTLMinutesAboveOpenAPICapRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  default_ttl_minutes: 20000
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "sessions.default_ttl_minutes") {
+		t.Errorf("want error mentioning sessions.default_ttl_minutes for value above OpenAPI cap; got %v", err)
+	}
+}
+
+func TestLoad_DefaultTTLMinutesAtOpenAPICapAccepted(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  default_ttl_minutes: 10080
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load at OpenAPI cap: want pass, got %v", err)
+	}
+	if cfg.Sessions.DefaultTTLMinutes != 10_080 {
+		t.Errorf("got %d; want 10080", cfg.Sessions.DefaultTTLMinutes)
+	}
+}
+
+func TestLoad_MaxTTLMinutesDefault(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sessions.MaxTTLMinutes != 10_080 {
+		t.Errorf("sessions.max_ttl_minutes default: want 10080, got %d", cfg.Sessions.MaxTTLMinutes)
+	}
+}
+
+func TestLoad_MaxTTLMinutesOverride(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  max_ttl_minutes: 240
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	t.Setenv("CALM_SESSIONS_DEFAULT_TTL_MINUTES", "120")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sessions.MaxTTLMinutes != 240 {
+		t.Errorf("got %d; want 240", cfg.Sessions.MaxTTLMinutes)
+	}
+}
+
+func TestLoad_MaxTTLMinutesZeroRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  max_ttl_minutes: 0
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "sessions.max_ttl_minutes") {
+		t.Errorf("want error mentioning sessions.max_ttl_minutes; got %v", err)
+	}
+}
+
+func TestLoad_MaxTTLMinutesAboveOpenAPICapRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  max_ttl_minutes: 20000
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "sessions.max_ttl_minutes") {
+		t.Errorf("want error mentioning sessions.max_ttl_minutes for value above OpenAPI cap; got %v", err)
+	}
+}
+
+func TestLoad_DefaultTTLMinutesAboveMaxRejected(t *testing.T) {
+	path := writeConfig(t, `
+sessions:
+  default_ttl_minutes: 5000
+  max_ttl_minutes: 240
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "must be <= sessions.max_ttl_minutes") {
+		t.Errorf("want error about inactivity > max; got %v", err)
 	}
 }
 

@@ -21,6 +21,7 @@ server:
 
 sessions:
   default_ttl_minutes: 120
+  max_ttl_minutes: 10080
   snapshot_max_budget_kb: 8
   ttl_scanner_interval_ms: 60000
 

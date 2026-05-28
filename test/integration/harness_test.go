@@ -39,12 +39,19 @@ const (
 	// authenticates as the master key for the `default` namespace.
 	testMasterKey = "test-master-key-0123456789abcdef"
 	testNamespace = "default"
+
+	testTenantAKey       = "test-tenant-a-key-0123456789abcdef"
+	testTenantANamespace = "tenant-a"
+
+	testDefaultTTLMinutes = 120
+	testMaxTTLMinutes     = 240
 )
 
 type harness struct {
 	client    *genapi.ClientWithResponses
 	serverURL string
 	store     *db.Store
+	sqlDB     *sql.DB // raw connection to the harness's test DB for assertions
 	teardown  func()
 }
 
@@ -66,7 +73,7 @@ func TestMain(m *testing.M) {
 }
 
 func bootstrap() (*harness, error) {
-	store, dbTeardown, err := openTestStore()
+	store, sqlDB, dbTeardown, err := openTestStore()
 	if err != nil {
 		return nil, err
 	}
@@ -79,13 +86,20 @@ func bootstrap() (*harness, error) {
 	}, server.Deps{
 		Logger: logging.Nop(),
 		Registry: auth.NewMemoryRegistry(
-			map[string]string{testMasterKey: testNamespace},
+			map[string]string{
+				testMasterKey:  testNamespace,
+				testTenantAKey: testTenantANamespace,
+			},
 			nil,
 		),
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
 			Clients:  client.New(store),
 			Sessions: session.New(store, 10_000),
+			Cfg: handlers.HandlersConfig{
+				DefaultTTLMinutes: testDefaultTTLMinutes,
+				MaxTTLMinutes:     testMaxTTLMinutes,
+			},
 		}),
 	})
 	if err != nil {
@@ -108,19 +122,39 @@ func bootstrap() (*harness, error) {
 		client:    client,
 		serverURL: srv.URL,
 		store:     store,
+		sqlDB:     sqlDB,
 		teardown: func() {
 			srv.Close()
+			_ = sqlDB.Close()
 			_ = store.Close()
 			dbTeardown()
 		},
 	}, nil
 }
 
+func (h *harness) clientForNamespace(t *testing.T, ns string) *genapi.ClientWithResponses {
+	t.Helper()
+	var key string
+	switch ns {
+	case testNamespace:
+		key = testMasterKey
+	case testTenantANamespace:
+		key = testTenantAKey
+	default:
+		t.Fatalf("clientForNamespace: unknown test namespace %q", ns)
+	}
+	c, err := genapi.NewClientWithResponses(h.serverURL, genapi.WithRequestEditorFn(bearerAuth(key)))
+	if err != nil {
+		t.Fatalf("clientForNamespace(%q): %v", ns, err)
+	}
+	return c
+}
+
 // openTestStore creates a per-suite test database against the dev Postgres
-// (started by `task dev:up`), opens a Store against it, and returns a
-// teardown that drops the database. Each suite run gets its own isolated DB
-// under the long-lived Postgres sidecar.
-func openTestStore() (*db.Store, func(), error) {
+// (started by `task dev:up`), opens a Store + raw *sql.DB against it, and
+// returns a teardown that drops the database. Each suite run gets its own
+// isolated DB under the long-lived Postgres sidecar.
+func openTestStore() (*db.Store, *sql.DB, func(), error) {
 	adminDSN := os.Getenv(envPGDSN)
 	if adminDSN == "" {
 		adminDSN = defaultPGDSN
@@ -129,13 +163,13 @@ func openTestStore() (*db.Store, func(), error) {
 	dbName := "calm_test_" + randHex(8)
 
 	if err := createTestDB(adminDSN, dbName); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	suiteDSN, err := withDBName(adminDSN, dbName)
 	if err != nil {
 		_ = dropTestDB(adminDSN, dbName)
-		return nil, nil, fmt.Errorf("rewrite test DSN: %w", err)
+		return nil, nil, nil, fmt.Errorf("rewrite test DSN: %w", err)
 	}
 
 	cleanup := func() {
@@ -147,9 +181,15 @@ func openTestStore() (*db.Store, func(), error) {
 	store, err := db.Open(context.Background(), suiteDSN, true, logging.Nop())
 	if err != nil {
 		cleanup()
-		return nil, nil, fmt.Errorf("open store: %w", err)
+		return nil, nil, nil, fmt.Errorf("open store: %w", err)
 	}
-	return store, cleanup, nil
+	sqlDB, err := sql.Open("pgx", suiteDSN)
+	if err != nil {
+		_ = store.Close()
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("open raw sql connection: %w", err)
+	}
+	return store, sqlDB, cleanup, nil
 }
 
 func createTestDB(adminDSN, dbName string) error {

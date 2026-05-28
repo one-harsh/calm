@@ -36,7 +36,9 @@ func Auth(registry auth.Registry) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := logging.Bind(r.Context(), obs.Namespace(ns))
+			// auth.WithNamespace for handlers; logging.Bind for log fields. Two stores, two concerns.
+			ctx := auth.WithNamespace(r.Context(), ns)
+			ctx = logging.Bind(ctx, obs.Namespace(ns))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

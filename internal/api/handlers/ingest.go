@@ -3,8 +3,12 @@
 
 package handlers
 
-import "net/http"
+import (
+	"context"
 
-func (h *Handlers) Ingest(w http.ResponseWriter, r *http.Request) {
-	h.notImplemented(w, r, "POST /v1/ingest")
+	"github.com/one-harsh/calm/internal/api/genapi"
+)
+
+func (h *Handlers) Ingest(_ context.Context, _ genapi.IngestRequestObject) (genapi.IngestResponseObject, error) {
+	return nil, ErrNotImplemented
 }

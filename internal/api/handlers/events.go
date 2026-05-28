@@ -4,15 +4,15 @@
 package handlers
 
 import (
-	"net/http"
+	"context"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
 
-func (h *Handlers) WriteEvents(w http.ResponseWriter, r *http.Request) {
-	h.notImplemented(w, r, "POST /v1/events")
+func (h *Handlers) WriteEvents(_ context.Context, _ genapi.WriteEventsRequestObject) (genapi.WriteEventsResponseObject, error) {
+	return nil, ErrNotImplemented
 }
 
-func (h *Handlers) ReadEvents(w http.ResponseWriter, r *http.Request, _ genapi.SessionID, _ genapi.ReadEventsParams) {
-	h.notImplemented(w, r, "GET /v1/events/{session_id}")
+func (h *Handlers) ReadEvents(_ context.Context, _ genapi.ReadEventsRequestObject) (genapi.ReadEventsResponseObject, error) {
+	return nil, ErrNotImplemented
 }

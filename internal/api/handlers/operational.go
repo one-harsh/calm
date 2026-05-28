@@ -3,12 +3,16 @@
 
 package handlers
 
-import "net/http"
+import (
+	"context"
 
-func (h *Handlers) GetHealth(w http.ResponseWriter, r *http.Request) {
-	h.notImplemented(w, r, "GET /v1/health")
+	"github.com/one-harsh/calm/internal/api/genapi"
+)
+
+func (h *Handlers) GetHealth(_ context.Context, _ genapi.GetHealthRequestObject) (genapi.GetHealthResponseObject, error) {
+	return nil, ErrNotImplemented
 }
 
-func (h *Handlers) GetVersion(w http.ResponseWriter, r *http.Request) {
-	h.notImplemented(w, r, "GET /v1/version")
+func (h *Handlers) GetVersion(_ context.Context, _ genapi.GetVersionRequestObject) (genapi.GetVersionResponseObject, error) {
+	return nil, ErrNotImplemented
 }

@@ -79,7 +79,15 @@ func run() error {
 	}, server.Deps{
 		Logger:   logger,
 		Registry: registry,
-		Handlers: handlers.New(handlers.Deps{Logger: logger, Clients: clientSvc, Sessions: sessionSvc}),
+		Handlers: handlers.New(handlers.Deps{
+			Logger:   logger,
+			Clients:  clientSvc,
+			Sessions: sessionSvc,
+			Cfg: handlers.HandlersConfig{
+				DefaultTTLMinutes: cfg.Sessions.DefaultTTLMinutes,
+				MaxTTLMinutes:     cfg.Sessions.MaxTTLMinutes,
+			},
+		}),
 	})
 	if err != nil {
 		return err

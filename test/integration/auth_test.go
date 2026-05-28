@@ -13,20 +13,15 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
 
-// TestBearerAuthSucceeds proves the harness's master key clears the auth
-// middleware. CreateSession is still a 501 stub, so asserting
-// exactly 501 means this test fails loudly when later work wires the real handler
-// — that failure is a useful prompt to reframe this assertion (e.g., switch
-// to expecting 201) rather than letting the test pass coincidentally.
 func TestBearerAuthSucceeds(t *testing.T) {
 	resp, err := env.client.CreateSessionWithResponse(context.Background(), genapi.CreateSessionJSONRequestBody{
-		SessionId: "wi-01-auth-smoke",
+		SessionId: "auth-smoke",
 	})
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	if resp.StatusCode() != http.StatusNotImplemented {
-		t.Fatalf("status = %d; want 501 (stub). If WI-07 has landed, reframe this test for the new CreateSession shape.", resp.StatusCode())
+	if resp.StatusCode() != http.StatusCreated {
+		t.Fatalf("status = %d; want 201", resp.StatusCode())
 	}
 }
 
