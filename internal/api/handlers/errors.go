@@ -1,0 +1,42 @@
+// Copyright 2026 The CALM Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package handlers
+
+import (
+	"context"
+	"errors"
+	"net/http"
+
+	"github.com/one-harsh/calm/internal/db"
+)
+
+type errorMapping struct {
+	Status int
+	Code   string
+	// Wire-safe default detail message.
+	Detail string
+}
+
+func mapSessionError(err error) (m errorMapping, ok bool) {
+	switch {
+	case errors.Is(err, db.ErrSessionExists):
+		return errorMapping{http.StatusConflict, "session_exists", "session already exists in this namespace"}, true
+	case errors.Is(err, db.ErrSessionNotFound):
+		return errorMapping{http.StatusNotFound, "session_not_found", "session not found in this namespace"}, true
+	case errors.Is(err, db.ErrSessionIDRequired):
+		return errorMapping{http.StatusBadRequest, "invalid_request", "session_id is required"}, true
+	case errors.Is(err, db.ErrInvalidTTL):
+		return errorMapping{http.StatusBadRequest, "invalid_request", "ttl_minutes must be a positive integer"}, true
+	case errors.Is(err, db.ErrNamespaceRequired):
+		return errorMapping{http.StatusBadRequest, "invalid_request", "namespace is required"}, true
+	default:
+		return errorMapping{}, false
+	}
+}
+
+// isContextError reports whether err is a client-cancellation / deadline-exceeded
+// signal that should propagate without an ERROR log.
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}

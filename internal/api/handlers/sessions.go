@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	logging "github.com/one-harsh/context-logging"
 
@@ -57,25 +58,25 @@ func (h *Handlers) CreateSession(
 	}
 
 	if err := h.deps.Sessions.Create(ctx, sess); err != nil {
-		switch {
-		case errors.Is(err, db.ErrSessionExists):
-			return genapi.CreateSession409JSONResponse{ConflictJSONResponse: genapi.ConflictJSONResponse{
-				Error:  "session_exists",
-				Detail: ptr(fmt.Sprintf("session %q already exists in namespace %q", sess.ID, namespace)),
-			}}, nil
-		case errors.Is(err, db.ErrSessionIDRequired), errors.Is(err, db.ErrInvalidTTL):
-			return genapi.CreateSession400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse{
-				Error:  "invalid_request",
-				Detail: ptr(err.Error()),
-			}}, nil
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			return nil, err
-		default:
+		if m, ok := mapSessionError(err); ok {
+			detail := m.Detail
+			if m.Status == http.StatusConflict {
+				detail = fmt.Sprintf("session %q already exists in namespace %q", sess.ID, namespace)
+			}
+			body := genapi.Error{Error: m.Code, Detail: &detail}
+			switch m.Status {
+			case http.StatusConflict:
+				return genapi.CreateSession409JSONResponse{ConflictJSONResponse: genapi.ConflictJSONResponse(body)}, nil
+			case http.StatusBadRequest:
+				return genapi.CreateSession400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse(body)}, nil
+			}
+		}
+		if !isContextError(err) {
 			h.deps.Logger.WithContext(ctx).Error("create session failed",
 				logging.ErrorField(err),
 			)
-			return nil, err
 		}
+		return nil, err
 	}
 
 	return genapi.CreateSession201JSONResponse(genapi.Session{
@@ -87,8 +88,53 @@ func (h *Handlers) CreateSession(
 	}), nil
 }
 
-func (h *Handlers) DeleteSession(_ context.Context, _ genapi.DeleteSessionRequestObject) (genapi.DeleteSessionResponseObject, error) {
-	return nil, ErrNotImplemented
+func (h *Handlers) DeleteSession(
+	ctx context.Context,
+	request genapi.DeleteSessionRequestObject,
+) (genapi.DeleteSessionResponseObject, error) {
+	namespace := auth.NamespaceFromContext(ctx)
+	if namespace == "" {
+		h.deps.Logger.WithContext(ctx).Error("namespace missing from request context — auth middleware did not run")
+		return nil, errors.New("namespace not present in request context")
+	}
+
+	sessionID := string(request.SessionId)
+	ctx = logging.Bind(ctx, obs.SessionID(sessionID))
+
+	result, err := h.deps.Sessions.Delete(ctx, namespace, sessionID)
+	if err != nil {
+		if m, ok := mapSessionError(err); ok && m.Status == http.StatusNotFound {
+			detail := fmt.Sprintf("session %q not found in namespace %q", sessionID, namespace)
+			return genapi.DeleteSession404JSONResponse{NotFoundJSONResponse: genapi.NotFoundJSONResponse{
+				Error:  m.Code,
+				Detail: &detail,
+			}}, nil
+		}
+		if !isContextError(err) {
+			h.deps.Logger.WithContext(ctx).Error("delete session failed",
+				logging.ErrorField(err),
+			)
+		}
+		return nil, err
+	}
+
+	h.deps.Logger.WithContext(ctx).Info("session closed",
+		obs.CloseReasonExplicit,
+		logging.IntField("session.delete.cascaded_events", result.Cascaded.Events),
+		logging.IntField("session.delete.cascaded_sources", result.Cascaded.Sources),
+		logging.IntField("session.delete.cascaded_chunks", result.Cascaded.Chunks),
+		logging.IntField("session.delete.cascaded_labels", result.Cascaded.Labels),
+	)
+
+	return genapi.DeleteSession200JSONResponse(genapi.DeleteSessionResult{
+		DeletedSessionId: result.SessionID,
+		Cascaded: genapi.CascadeCounts{
+			Sources: result.Cascaded.Sources,
+			Chunks:  result.Cascaded.Chunks,
+			Events:  result.Cascaded.Events,
+			Labels:  result.Cascaded.Labels,
+		},
+	}), nil
 }
 
 func (h *Handlers) GetSnapshot(_ context.Context, _ genapi.GetSnapshotRequestObject) (genapi.GetSnapshotResponseObject, error) {

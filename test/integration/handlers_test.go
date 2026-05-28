@@ -296,3 +296,150 @@ func TestNotImplementedHandlersStillReturn501(t *testing.T) {
 		t.Errorf("error = %v; want not_implemented", body["error"])
 	}
 }
+
+func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
+	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
+	seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, "del-happy", 60)
+	seedSessionLabel(t, env.sqlDB, testNamespace, "del-happy", "env", "prod")
+	seedSessionLabel(t, env.sqlDB, testNamespace, "del-happy", "tier", "1")
+	src := seedSource(t, env.sqlDB, testNamespace, "del-happy", "spec.md")
+	seedChunk(t, env.sqlDB, src, "Section 1", "body", "prose")
+	seedChunk(t, env.sqlDB, src, "Section 2", "body", "prose")
+	seedEvent(t, env.sqlDB, testNamespace, "del-happy", "ingest", 1, []byte(`{"x":1}`))
+
+	resp, err := env.client.DeleteSessionWithResponse(context.Background(), "del-happy")
+	if err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("status = %d; want 200; body=%s", resp.StatusCode(), string(resp.Body))
+	}
+	if resp.JSON200 == nil {
+		t.Fatal("JSON200 nil on 200")
+	}
+	if resp.JSON200.DeletedSessionId != "del-happy" {
+		t.Errorf("deleted_session_id = %q; want del-happy", resp.JSON200.DeletedSessionId)
+	}
+	if resp.JSON200.Cascaded.Labels != 2 {
+		t.Errorf("cascaded.labels = %d; want 2", resp.JSON200.Cascaded.Labels)
+	}
+	if resp.JSON200.Cascaded.Sources != 1 {
+		t.Errorf("cascaded.sources = %d; want 1", resp.JSON200.Cascaded.Sources)
+	}
+	if resp.JSON200.Cascaded.Chunks != 2 {
+		t.Errorf("cascaded.chunks = %d; want 2", resp.JSON200.Cascaded.Chunks)
+	}
+	if resp.JSON200.Cascaded.Events != 1 {
+		t.Errorf("cascaded.events = %d; want 1", resp.JSON200.Cascaded.Events)
+	}
+
+	for _, tbl := range []string{"sessions", "session_labels", "sources", "session_events"} {
+		if n := countRows(t, env.sqlDB,
+			"SELECT COUNT(*) FROM "+tbl+" WHERE namespace = $1 AND session_id = $2",
+			testNamespace, "del-happy",
+		); n != 0 {
+			t.Errorf("DB row count in %s = %d; want 0 after delete", tbl, n)
+		}
+	}
+}
+
+func TestDeleteSessionHandler_UnknownSessionReturns404(t *testing.T) {
+	resp, err := env.client.DeleteSessionWithResponse(context.Background(), "never-existed")
+	if err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if resp.StatusCode() != http.StatusNotFound {
+		t.Fatalf("status = %d; want 404; body=%s", resp.StatusCode(), string(resp.Body))
+	}
+	if resp.JSON404 == nil {
+		t.Fatal("JSON404 nil on 404")
+	}
+	if resp.JSON404.Error != "session_not_found" {
+		t.Errorf("error = %q; want session_not_found", resp.JSON404.Error)
+	}
+	if resp.JSON404.Detail == nil || !strings.Contains(*resp.JSON404.Detail, "never-existed") {
+		t.Errorf("detail %v should mention session id", resp.JSON404.Detail)
+	}
+}
+
+func TestDeleteSessionHandler_CrossNamespaceReturns404(t *testing.T) {
+	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
+	seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, "xns-1", 60)
+
+	clientB := env.clientForNamespace(t, testTenantANamespace)
+	resp, err := clientB.DeleteSessionWithResponse(context.Background(), "xns-1")
+	if err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if resp.StatusCode() != http.StatusNotFound {
+		t.Fatalf("ns-b delete of ns-a session: status = %d; want 404 (invisibility-not-denial)", resp.StatusCode())
+	}
+	// Original session in ns-a must still exist.
+	if n := countRows(t, env.sqlDB,
+		`SELECT COUNT(*) FROM sessions WHERE namespace = $1 AND session_id = $2`,
+		testNamespace, "xns-1",
+	); n != 1 {
+		t.Errorf("ns-a/xns-1 row count = %d; want 1 (cross-namespace delete must not touch other ns)", n)
+	}
+}
+
+func TestDeleteSessionHandler_SameSessionIDDifferentNamespacesIndependent(t *testing.T) {
+	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
+	seedClient(t, env.sqlDB, testTenantANamespace, db.DefaultClient)
+	seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, "shared-del", 60)
+	seedSession(t, env.sqlDB, testTenantANamespace, db.DefaultClient, "shared-del", 60)
+
+	resp, err := env.client.DeleteSessionWithResponse(context.Background(), "shared-del")
+	if err != nil {
+		t.Fatalf("DeleteSession in default: %v", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("status = %d; want 200", resp.StatusCode())
+	}
+
+	if n := countRows(t, env.sqlDB,
+		`SELECT COUNT(*) FROM sessions WHERE namespace = $1 AND session_id = $2`,
+		testNamespace, "shared-del",
+	); n != 0 {
+		t.Errorf("default/shared-del row count after delete = %d; want 0", n)
+	}
+	if n := countRows(t, env.sqlDB,
+		`SELECT COUNT(*) FROM sessions WHERE namespace = $1 AND session_id = $2`,
+		testTenantANamespace, "shared-del",
+	); n != 1 {
+		t.Errorf("tenant-a/shared-del row count = %d; want 1 (other-namespace session must survive)", n)
+	}
+}
+
+func TestDeleteSessionHandler_MissingBearerReturns401(t *testing.T) {
+	httpReq, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete,
+		env.serverURL+"/v1/sessions/whatever", http.NoBody)
+	httpResp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		t.Fatalf("http: %v", err)
+	}
+	defer func() { _ = httpResp.Body.Close() }()
+	if httpResp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401", httpResp.StatusCode)
+	}
+}
+
+func TestDeleteSessionHandler_IdempotentSecondDeleteReturns404(t *testing.T) {
+	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
+	seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, "double-del", 60)
+
+	first, err := env.client.DeleteSessionWithResponse(context.Background(), "double-del")
+	if err != nil {
+		t.Fatalf("first DeleteSession: %v", err)
+	}
+	if first.StatusCode() != http.StatusOK {
+		t.Fatalf("first call: status = %d; want 200", first.StatusCode())
+	}
+	second, err := env.client.DeleteSessionWithResponse(context.Background(), "double-del")
+	if err != nil {
+		t.Fatalf("second DeleteSession: %v", err)
+	}
+	if second.StatusCode() != http.StatusNotFound {
+		t.Errorf("second call: status = %d; want 404", second.StatusCode())
+	}
+}
