@@ -341,6 +341,15 @@ func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 			t.Errorf("DB row count in %s = %d; want 0 after delete", tbl, n)
 		}
 	}
+
+	// HLD explicit-close requirement: clients.last_activity_at bumped so
+	// post-teardown observability sees the client's most-recent activity.
+	if n := countRows(t, env.sqlDB,
+		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2 AND last_activity_at IS NOT NULL`,
+		testNamespace, db.DefaultClient,
+	); n != 1 {
+		t.Errorf("clients.last_activity_at not set after explicit close: matching-rows = %d; want 1", n)
+	}
 }
 
 func TestDeleteSessionHandler_UnknownSessionReturns404(t *testing.T) {

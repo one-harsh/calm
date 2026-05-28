@@ -226,11 +226,12 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace, id string) (DeleteS
 		// FOR UPDATE conflicts with FOR KEY SHARE that FK enforcement takes
 		// on concurrent INSERT INTO children — those inserts block until our
 		// COMMIT and then fail FK. Count and cascade see the same row set.
-		var one int
+		var client string
 		err := tx.QueryRowContext(ctx,
-			`SELECT 1 FROM sessions WHERE namespace = $1 AND session_id = $2 FOR UPDATE`,
+			`SELECT client FROM sessions
+			 WHERE namespace = $1 AND session_id = $2 FOR UPDATE`,
 			namespace, id,
-		).Scan(&one)
+		).Scan(&client)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSessionNotFound
 		}
@@ -262,6 +263,18 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace, id string) (DeleteS
 			logging.IntField("events", result.Cascaded.Events),
 			logging.IntField("labels", result.Cascaded.Labels),
 		)
+
+		// GREATEST guards against tx-start-order racing commit-order: NOW() returns
+		// the transaction's start timestamp, so a delete that started earlier but
+		// reaches this UPDATE later could otherwise overwrite a sibling session's
+		// more recent bump.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE clients SET last_activity_at = GREATEST(last_activity_at, NOW())
+			 WHERE namespace = $1 AND name = $2`,
+			namespace, client,
+		); err != nil {
+			return fmt.Errorf("%w: bump clients.last_activity_at for %q/%q: %w", ErrStorageBackend, namespace, client, err)
+		}
 
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM sessions WHERE namespace = $1 AND session_id = $2`,

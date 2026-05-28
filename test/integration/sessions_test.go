@@ -499,6 +499,71 @@ func TestDeleteSession_NoChildrenCleanDelete(t *testing.T) {
 	}
 }
 
+func TestDeleteSession_BumpsClientLastActivityAt(t *testing.T) {
+	// HLD explicit-close requirement: Delete is itself activity on the client,
+	// so clients.last_activity_at advances to the close moment.
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	seedSession(t, sqlDB, "ns-a", db.DefaultClient, "s1", 60)
+
+	before := time.Now().UTC()
+	if _, err := store.Sessions().Delete(context.Background(), "ns-a", "s1"); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	after := time.Now().UTC()
+
+	var got sql.NullTime
+	if err := sqlDB.QueryRow(
+		`SELECT last_activity_at FROM clients WHERE namespace = $1 AND name = $2`,
+		"ns-a", db.DefaultClient,
+	).Scan(&got); err != nil {
+		t.Fatalf("read client last_activity_at: %v", err)
+	}
+	if !got.Valid {
+		t.Fatal("clients.last_activity_at still NULL after delete; want close timestamp")
+	}
+	if got.Time.Before(before) || got.Time.After(after) {
+		t.Errorf("clients.last_activity_at = %v; want within [%v, %v] (close moment)", got.Time, before, after)
+	}
+}
+
+func TestDeleteSession_MonotonicClientLastActivityAt(t *testing.T) {
+	// GREATEST guards against tx-start-order racing commit-order: a delete
+	// whose tx started earlier must not stamp clients.last_activity_at with
+	// its older NOW() over a sibling's later bump. We simulate the hazard
+	// by pre-seeding a future value that the delete must not regress.
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	seedSession(t, sqlDB, "ns-a", db.DefaultClient, "s1", 60)
+
+	future := time.Now().UTC().Add(1 * time.Hour).Round(time.Microsecond)
+	if _, err := sqlDB.Exec(
+		`UPDATE clients SET last_activity_at = $3 WHERE namespace = $1 AND name = $2`,
+		"ns-a", db.DefaultClient, future,
+	); err != nil {
+		t.Fatalf("pre-seed last_activity_at: %v", err)
+	}
+
+	if _, err := store.Sessions().Delete(context.Background(), "ns-a", "s1"); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+
+	var got sql.NullTime
+	if err := sqlDB.QueryRow(
+		`SELECT last_activity_at FROM clients WHERE namespace = $1 AND name = $2`,
+		"ns-a", db.DefaultClient,
+	).Scan(&got); err != nil {
+		t.Fatalf("read last_activity_at: %v", err)
+	}
+	if !got.Valid || !got.Time.Equal(future) {
+		t.Errorf("clients.last_activity_at = %v; want %v (must not regress)", got.Time, future)
+	}
+}
+
 func TestDeleteSession_NegativeIsolation(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
