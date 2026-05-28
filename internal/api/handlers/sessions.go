@@ -42,7 +42,6 @@ func (h *Handlers) CreateSession(
 	if request.Body.TtlMinutes != nil {
 		sess.TTLMinutes = *request.Body.TtlMinutes
 	}
-	// WI-44 wires the calm_session_create_ttl_clamped counter at this site.
 	if sess.TTLMinutes > h.deps.Cfg.MaxTTLMinutes {
 		h.deps.Logger.WithContext(ctx).Warn("session.create.ttl_minutes clamped to operator ceiling",
 			logging.IntField("session.create.requested_ttl_minutes", sess.TTLMinutes),

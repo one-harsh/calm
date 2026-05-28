@@ -1048,50 +1048,52 @@ Metrics carry `namespace` and (where relevant) `client` labels so operators can 
 
 Exposed as OTel metrics, scraped by the configured backend.
 
+Metric names use OTel-canonical dotted hierarchy (matches the log-field convention). When exported via the Prometheus exporter, `.` becomes `_` per the OTel-Prometheus mapping spec — Grafana / PromQL users see e.g. `session_create_ttl_clamped`, while code and docs reference `session.create.ttl_clamped`. The `service.name` OTel resource attribute (`calm`) carries deployment-level scoping, so individual metric names don't include a `calm_` prefix.
+
 ### Context savings
 
 The core value proposition. If you can't measure savings, you can't justify the system.
 
-- `calm_ingest_bytes_received` — raw bytes received per ingest call
-- `calm_ingest_bytes_returned` — bytes in the compact representation returned to the workload
-- `calm_ingest_savings_ratio` — `1 - (returned / received)`, per call
-- `calm_session_tokens_saved` — estimated tokens saved per session (cumulative across all ingests in the session)
+- `ingest.bytes_received` — raw bytes received per ingest call
+- `ingest.bytes_returned` — bytes in the compact representation returned to the workload
+- `ingest.savings_ratio` — `1 - (returned / received)`, per call
+- `session.tokens_saved` — estimated tokens saved per session (cumulative across all ingests in the session)
 
 These are the numbers that answer "is CALM paying for itself."
 
 ### Search quality
 
-- `calm_search_hit_rate` — percentage of queries that returned at least one result
-- `calm_search_zero_results` — count of queries with no matches
-- `calm_search_match_layer` — distribution across `primary`, `trigram`, and `fuzzy`. If `fuzzy` is firing frequently, the indexed vocabulary doesn't match query vocabulary — a signal that the workload's content shape may need a different chunking strategy.
-- `calm_search_latency_ms` — per-query latency
-- `calm_ingest_intent_coverage` — when intents are provided on ingest, the average fraction of sections in the response with non-empty `matches`. Low coverage suggests workloads are providing intents that don't align with the content vocabulary.
+- `search.hit_rate` — percentage of queries that returned at least one result
+- `search.zero_results` — count of queries with no matches
+- `search.match_layer` — distribution across `primary`, `trigram`, and `fuzzy`. If `fuzzy` is firing frequently, the indexed vocabulary doesn't match query vocabulary — a signal that the workload's content shape may need a different chunking strategy.
+- `search.latency_ms` — per-query latency
+- `ingest.intent.coverage` — when intents are provided on ingest, the average fraction of sections in the response with non-empty `matches`. Low coverage suggests workloads are providing intents that don't align with the content vocabulary.
 
 ### Session lifecycle
 
-- `calm_sessions_active` — gauge of currently active sessions
-- `calm_session_duration_seconds` — histogram of session lifetimes
-- `calm_session_events_count` — events captured per session
-- `calm_session_cleanup_explicit` — sessions closed by the workload
-- `calm_session_cleanup_ttl` — sessions cleaned up by TTL scanner. A high ratio of TTL-to-explicit cleanups suggests workloads are crashing or not closing sessions properly.
-- `calm_session_create_ttl_clamped` — sessions whose requested `ttl_minutes` exceeded the operator ceiling and were clamped. A non-trivial rate indicates workloads consistently want longer TTLs than the deployment allows; operators can use this to decide whether to raise `sessions.max_ttl_minutes`. Each clamp also emits a WARN log line with the requested-vs-committed values.
+- `sessions.active` — gauge of currently active sessions
+- `session.duration_seconds` — histogram of session lifetimes
+- `session.events.count` — events captured per session
+- `session.cleanup.explicit` — sessions closed by the workload
+- `session.cleanup.ttl` — sessions cleaned up by TTL scanner. A high ratio of TTL-to-explicit cleanups suggests workloads are crashing or not closing sessions properly.
+- `session.create.ttl_clamped` — sessions whose requested `ttl_minutes` exceeded the operator ceiling and were clamped. A non-trivial rate indicates workloads consistently want longer TTLs than the deployment allows; operators can use this to decide whether to raise `sessions.max_ttl_minutes`. Each clamp also emits a WARN log line with the requested-vs-committed values.
 
 ### Answer quality
 
 Cost metrics tell you CALM is saving tokens. These tell you whether the model is still getting what it needs.
 
-- `calm_reingest_rate` — how often the same source label is re-indexed within a session. A workload re-ingesting a source it already indexed is a signal that the compact representation wasn't sufficient.
-- `calm_search_after_ingest_rate` — how often a `/v1/search` call follows a `/v1/ingest` on the same source within the same session turn. Expected behavior for iterative workflows; elevated rates on first turns suggest compact summaries aren't landing.
-- `calm_snapshot_injection_count` — how often `/v1/sessions/{id}/snapshot` is called. Tracks how frequently session continuity is actually exercised, not just available.
-- `calm_intent_zero_match_rate` — when intents are provided, the percentage of ingest calls where every section ended up with an empty `matches` array (no section was addressed by any intent). High rates suggest the intents don't align with the content's vocabulary — a signal to revisit either the intent phrasing or the workload's chunking strategy for that content type.
+- `ingest.reingest_rate` — how often the same source label is re-indexed within a session. A workload re-ingesting a source it already indexed is a signal that the compact representation wasn't sufficient.
+- `search.after_ingest_rate` — how often a `/v1/search` call follows a `/v1/ingest` on the same source within the same session turn. Expected behavior for iterative workflows; elevated rates on first turns suggest compact summaries aren't landing.
+- `snapshot.injection_count` — how often `/v1/sessions/{id}/snapshot` is called. Tracks how frequently session continuity is actually exercised, not just available.
+- `ingest.intent.zero_match_rate` — when intents are provided, the percentage of ingest calls where every section ended up with an empty `matches` array (no section was addressed by any intent). High rates suggest the intents don't align with the content's vocabulary — a signal to revisit either the intent phrasing or the workload's chunking strategy for that content type.
 
 ### Service health
 
-- `calm_request_latency_ms` — per-endpoint, p50/p95/p99
-- `calm_request_errors` — per-endpoint, by status code
-- `calm_db_query_latency_ms` — database operation latency
-- `calm_ttl_scanner_last_run` — timestamp of the last successful scan
-- `calm_ttl_scanner_sessions_cleaned` — sessions removed per scan cycle
+- `request.latency_ms` — per-endpoint, p50/p95/p99
+- `request.errors` — per-endpoint, by status code
+- `db.query.latency_ms` — database operation latency
+- `ttl_scanner.last_run` — timestamp of the last successful scan
+- `ttl_scanner.sessions_cleaned` — sessions removed per scan cycle
 
 ## Traces
 

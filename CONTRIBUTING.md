@@ -10,7 +10,13 @@ Every commit must carry a `Signed-off-by` trailer attesting that you wrote the c
 git commit -s
 ```
 
-This appends `Signed-off-by: Your Name <you@example.com>` to the commit message. The name and email must match the commit author. DCO enforcement runs in CI once the repository is public.
+This appends `Signed-off-by: Your Name <you@example.com>` to the commit message. The name and email must match the commit author. DCO enforcement is active in CI — `task ci` runs `task dco:check` as its first step, which verifies every commit in the PR (or push) range carries the trailer and fails the build otherwise.
+
+## AI-assisted contributions
+
+AI tools (Copilot, Claude Code, Cursor, etc.) are acceptable for drafting and editing contributions. The DCO sign-off means the same thing regardless of how the code was produced: you reviewed the change, you take responsibility for it, and you believe you have the right to submit it under Apache 2.0. Raw LLM output that wasn't reviewed doesn't clear that bar.
+
+The practical risk to watch is **license contamination** — models can reproduce training data verbatim, and that data may carry an incompatible license. If a generated chunk is non-trivial AND copy-paste-shaped (a distinctive helper, a recognizable algorithm), call it out in the PR so the reviewer can sanity-check provenance. When in doubt, paraphrase or rewrite before committing.
 
 ## Code conventions
 

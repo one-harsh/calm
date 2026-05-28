@@ -22,6 +22,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # PR: fetch exactly (commits + 1) so `HEAD~N..HEAD` resolves for the
+          # DCO range — no waste, scales naturally with PR size.
+          # Push: 50-commit bound (event payload doesn't expose a delta count
+          # reliably; pushes >20 truncate, first-push-to-branch and
+          # force-push edge cases need a fallback either way).
+          fetch-depth: ${{ github.event_name == 'pull_request' && (github.event.pull_request.commits + 1) || 50 }}
 
       - uses: actions/setup-go@v5
         with:
@@ -32,6 +39,12 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: DCO sign-off check
+        # Hoisted out of `task ci` so it fails early.
+        env:
+          DCO_BASE: ${{ github.event_name == 'pull_request' && format('HEAD~{0}', github.event.pull_request.commits) || github.event.before }}
+        run: task dco:check
 
       - name: Install Go tools
         run: |
