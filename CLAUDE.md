@@ -131,18 +131,21 @@ test/integration/        user-facing scenarios — see HLD's workload-scenarios 
   Recovery
     → Context (RequestID + OTel trace extraction)
       → Logging (start log + on-completion summary)
-        → Auth (API key → namespace)
-          → RateLimit (per-namespace → 429)
-            → BodySizeLimit (1MB cap → 413)
-              → Timeout (per-request budgets)
-                → OpenAPIValidator (kin-openapi against embedded spec)
-                  → Handler
+        → RateLimit:IP (per-IP, pre-auth → 429)
+          → Auth (API key → namespace)
+            → RateLimit:NS+Global (per-namespace + global aggregate → 429)
+              → BodySizeLimit (1MB cap → 413)
+                → Timeout (per-request budgets)
+                  → OpenAPIValidator (kin-openapi against embedded spec)
+                    → Handler
   ```
 
 - **Recovery** is outermost and holds a reference to the base logger so it can record panics even if `ctx` was never hydrated by Context middleware.
 - **Context** must run before Logging so every log line carries `request_id` and trace IDs.
 - **Logging** runs before Auth so failed-auth attempts are still recorded with full context.
-- **Auth** must run before RateLimit (rate limit is per-namespace).
+- **RateLimit:IP** sits before Auth so unauthenticated DDoS can't burn registry-lookup CPU on every bad-key attempt.
+- **Auth** must run before RateLimit:NS+Global (the namespace tier reads the auth-stamped namespace from context).
+- **RateLimit:NS+Global** checks namespace tier first, then global aggregate. Namespace-first is load-bearing for namespace-isolation: with global-first, a misbehaving namespace would burn shared global tokens on requests it was always going to 429 at its own tier, leaking overload pressure across the isolation boundary.
 - **BodySizeLimit** before Timeout — rejecting an oversized body shouldn't consume the timeout budget.
 
 ## Logging > comments

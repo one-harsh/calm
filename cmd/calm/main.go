@@ -71,11 +71,14 @@ func run() error {
 	}
 
 	srv, err := server.New(server.Config{
-		Address:              cfg.Server.Address,
-		MaxIngestPayloadKB:   cfg.Server.MaxIngestPayloadKB,
-		RateLimitPerSecond:   cfg.Server.RateLimitPerSecond,
-		RequestTimeout:       cfg.Server.RequestTimeout,
-		GracefulShutdownWait: cfg.Server.GracefulShutdownWait,
+		Address:                  cfg.Server.Address,
+		MaxIngestPayloadKB:       cfg.Server.MaxIngestPayloadKB,
+		RateLimitPerSecond:       cfg.Server.RateLimitPerSecond,
+		RateLimitGlobalPerSecond: cfg.Server.RateLimitGlobalPerSecond,
+		RateLimitPerIPPerSecond:  cfg.Server.RateLimitPerIPPerSecond,
+		TrustProxyHeaders:        cfg.Server.TrustProxyHeaders,
+		RequestTimeout:           cfg.Server.RequestTimeout,
+		GracefulShutdownWait:     cfg.Server.GracefulShutdownWait,
 	}, server.Deps{
 		Logger:   logger,
 		Registry: registry,

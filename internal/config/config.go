@@ -47,11 +47,14 @@ type ServiceConfig struct {
 }
 
 type ServerConfig struct {
-	Address              string        `mapstructure:"address"`
-	RequestTimeout       time.Duration `mapstructure:"request_timeout"`
-	GracefulShutdownWait time.Duration `mapstructure:"graceful_shutdown_wait"`
-	MaxIngestPayloadKB   int           `mapstructure:"max_ingest_payload_kb"`
-	RateLimitPerSecond   int           `mapstructure:"rate_limit_per_second"`
+	Address                  string        `mapstructure:"address"`
+	RequestTimeout           time.Duration `mapstructure:"request_timeout"`
+	GracefulShutdownWait     time.Duration `mapstructure:"graceful_shutdown_wait"`
+	MaxIngestPayloadKB       int           `mapstructure:"max_ingest_payload_kb"`
+	RateLimitPerSecond       int           `mapstructure:"rate_limit_per_second"`
+	RateLimitGlobalPerSecond int           `mapstructure:"rate_limit_global_per_second"`
+	RateLimitPerIPPerSecond  int           `mapstructure:"rate_limit_per_ip_per_second"`
+	TrustProxyHeaders        bool          `mapstructure:"trust_proxy_headers"`
 }
 
 type SessionsConfig struct {
@@ -125,6 +128,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.graceful_shutdown_wait", 10*time.Second)
 	v.SetDefault("server.max_ingest_payload_kb", 1024)
 	v.SetDefault("server.rate_limit_per_second", 100)
+	v.SetDefault("server.rate_limit_global_per_second", 0)
+	v.SetDefault("server.rate_limit_per_ip_per_second", 100)
+	v.SetDefault("server.trust_proxy_headers", false)
 
 	v.SetDefault("sessions.default_ttl_minutes", 120)
 	v.SetDefault("sessions.max_ttl_minutes", 10_080)
@@ -142,6 +148,15 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.DSN == "" {
 		return errors.New("storage.dsn is required")
+	}
+	if err := validateRate("server.rate_limit_per_second", cfg.Server.RateLimitPerSecond); err != nil {
+		return err
+	}
+	if err := validateRate("server.rate_limit_global_per_second", cfg.Server.RateLimitGlobalPerSecond); err != nil {
+		return err
+	}
+	if err := validateRate("server.rate_limit_per_ip_per_second", cfg.Server.RateLimitPerIPPerSecond); err != nil {
+		return err
 	}
 	if cfg.Sessions.CacheSize < 0 {
 		return fmt.Errorf("sessions.cache_size must be >= 0 (0 disables cache); got %d", cfg.Sessions.CacheSize)
@@ -206,6 +221,16 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("namespaces[%d] (%s): rate_per_second %d above maximum (%d)", i, ns.Name, ns.RatePerSecond, maxRatePerSecond)
 			}
 		}
+	}
+	return nil
+}
+
+func validateRate(field string, value int) error {
+	if value < 0 {
+		return fmt.Errorf("%s must be >= 0 (0 disables this tier); got %d", field, value)
+	}
+	if value > 0 && value > maxRatePerSecond {
+		return fmt.Errorf("%s %d above maximum (%d)", field, value, maxRatePerSecond)
 	}
 	return nil
 }

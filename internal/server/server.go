@@ -21,11 +21,14 @@ import (
 )
 
 type Config struct {
-	Address              string
-	MaxIngestPayloadKB   int
-	RateLimitPerSecond   int
-	RequestTimeout       time.Duration
-	GracefulShutdownWait time.Duration
+	Address                  string
+	MaxIngestPayloadKB       int
+	RateLimitPerSecond       int
+	RateLimitGlobalPerSecond int
+	RateLimitPerIPPerSecond  int
+	TrustProxyHeaders        bool
+	RequestTimeout           time.Duration
+	GracefulShutdownWait     time.Duration
 }
 
 type Deps struct {
@@ -48,12 +51,21 @@ func NewHandler(cfg Config, deps Deps) (http.Handler, error) {
 
 	r := chi.NewRouter()
 
-	// Middleware order is canonical (CLAUDE.md).
+	// Middleware order is canonical (CLAUDE.md). RateLimitIP sits pre-Auth
+	// so unauthenticated DDoS doesn't burn registry-lookup CPU;
+	// RateLimitNamespaceAndGlobal sits post-Auth because the namespace tier
+	// reads from auth context.
 	r.Use(middleware.Recovery(deps.Logger))
 	r.Use(middleware.Context())
 	r.Use(middleware.Logging(deps.Logger))
+	r.Use(middleware.RateLimitIP(cfg.RateLimitPerIPPerSecond, cfg.TrustProxyHeaders, deps.Logger))
 	r.Use(middleware.Auth(deps.Registry))
-	r.Use(middleware.RateLimit(cfg.RateLimitPerSecond))
+	r.Use(middleware.RateLimitNamespaceAndGlobal(
+		deps.Registry,
+		cfg.RateLimitPerSecond,
+		cfg.RateLimitGlobalPerSecond,
+		deps.Logger,
+	))
 	r.Use(middleware.BodySizeLimit(int64(cfg.MaxIngestPayloadKB) * 1024))
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(middleware.OpenAPIValidator(spec))

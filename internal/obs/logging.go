@@ -27,15 +27,16 @@ func NewLogger(serviceName, version, environment, region, level, format string) 
 }
 
 const (
-	KeySessionID   = "session_id"
-	KeyNamespace   = "namespace"
-	KeyClient      = "client"
-	KeySource      = "source"
-	KeyMatchLayer  = "match_layer"
-	KeyEndpoint    = "endpoint"
-	KeyEventType   = "event_type"
-	KeyFormatHint  = "format_hint"
-	KeyCloseReason = "close_reason"
+	KeySessionID     = "session_id"
+	KeyNamespace     = "namespace"
+	KeyClient        = "client"
+	KeySource        = "source"
+	KeyMatchLayer    = "match_layer"
+	KeyEndpoint      = "endpoint"
+	KeyEventType     = "event_type"
+	KeyFormatHint    = "format_hint"
+	KeyCloseReason   = "close_reason"
+	KeyRateLimitTier = "ratelimit.tier"
 )
 
 var (
@@ -45,6 +46,10 @@ var (
 
 	CloseReasonTTLExpired = logging.StringField(KeyCloseReason, "ttl_expired")
 	CloseReasonExplicit   = logging.StringField(KeyCloseReason, "explicit")
+
+	RateLimitTierIP        = logging.StringField(KeyRateLimitTier, "ip")
+	RateLimitTierGlobal    = logging.StringField(KeyRateLimitTier, "global")
+	RateLimitTierNamespace = logging.StringField(KeyRateLimitTier, "namespace")
 )
 
 func SessionID(value string) logging.LoggingField {

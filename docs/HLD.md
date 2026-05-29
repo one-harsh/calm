@@ -1190,7 +1190,12 @@ Hard limits, not tuning guidelines. CALM enforces these and returns explicit err
 - **Max events per session:** 1000 (already specified in §7). FIFO eviction by lowest priority, oldest first.
 - **Max search queries per call:** 10. More than 10 queries in a single `/v1/search` call are rejected with 400.
 - **Max snapshot budget:** 8 KB. Workloads can request less via `budget_bytes`, but not more.
-- **Per-namespace rate limiting:** Enforced at a configurable requests/second cap per namespace. A runaway workload (looping pipeline, misconfigured MCP adapter, internal LLM app in an error spiral) cannot flood CALM or saturate the shared database. Exceeding the rate limit returns 429.
+- **Rate limiting (three tiers, in-app, per-pod token buckets, burst = 2× rate).** Tier order: IP → namespace → global. IP is pre-Auth (cheapest check that doesn't need namespace context). Namespace runs *before* global at the post-Auth tier — this is load-bearing for the namespace-isolation invariant. With global-first, a misbehaving namespace would burn global tokens on requests it was always going to 429 at the namespace tier, leaking its overload pressure into other namespaces' shared global headroom. Namespace-first keeps each namespace's misbehavior contained to its own bucket.
+    1. **Per-IP, pre-auth.** Bounded per-client-IP bucket sitting *before* the Auth middleware. Defends against unauthenticated DDoS that would otherwise saturate registry-lookup CPU on every bad-key attempt. Bounded store (idle buckets evicted under fanout). The in-app middleware is a backstop; production deployments should also enforce IP rate limits at the LB layer, and configure `trust_proxy_headers` correctly when behind a trusted LB.
+    2. **Per-namespace** (primary). A runaway workload (looping pipeline, misconfigured MCP adapter, internal LLM app in an error spiral) cannot flood CALM or saturate the shared database. Rate comes from the namespace registry, falling back to the global default.
+    3. **Global aggregate** (optional, default disabled). Single shared bucket as defense-in-depth against many-small-namespaces sum-overload that per-namespace caps alone wouldn't catch. Operators opt in.
+
+  Exceeding any tier returns 429 with `Retry-After: 1` and `detail` indicating which tier throttled. Buckets are per-pod; cluster-wide effective rates scale with pod count.
 
 ---
 
@@ -1207,6 +1212,8 @@ Each pod runs its own LRU caches (session metadata, search results). If one pod 
 TTL scanner runs in every pod with jittered intervals (§9). Concurrent scans produce redundant deletes, not conflicts.
 
 For airgapped or on-prem deployments, the same topology applies — CALM pods deployed alongside Postgres in the operating org's cluster, no external dependencies, no outbound network requirements. API keys and namespace mappings are loaded from a ConfigMap or mounted Secret (see Decision Log [DL10](#dl10)). Workloads reach CALM via cluster-internal DNS.
+
+When CALM sits behind a trusted load balancer, set `server.trust_proxy_headers=true` so the pre-auth IP rate-limit tier reads the original client IP from `X-Forwarded-For` (left-most entry per RFC 7239) instead of the LB's IP. Leave it false otherwise — trusting the header without a stripping LB allows clients to spoof their source IP and bypass the IP tier.
 
 Postgres requires either `pg_search` or `pg_textsearch` before CALM can serve correct ranked results — neither ships with a standard Postgres distribution and both require operator installation. The Helm chart includes a preflight check that validates extension availability at deploy time and fails the rollout if neither is present. This is a hard gate, not a warning.
 
