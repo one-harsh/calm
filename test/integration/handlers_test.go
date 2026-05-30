@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
+	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/db"
 )
 
@@ -55,6 +56,7 @@ func TestCreateSessionHandler_HappyMinimal(t *testing.T) {
 
 func TestCreateSessionHandler_HappyWithAllFields(t *testing.T) {
 	client := "alice"
+	seedClient(t, env.sqlDB, testNamespace, client)
 	ttl := 60
 	labels := map[string]string{"env": "prod", "tier": "1"}
 	resp, err := env.client.CreateSessionWithResponse(context.Background(),
@@ -85,7 +87,10 @@ func TestCreateSessionHandler_HappyWithAllFields(t *testing.T) {
 	}
 }
 
-func TestCreateSessionHandler_AutoRegistersNewClient(t *testing.T) {
+func TestCreateSessionHandler_UnregisteredClientReturns400(t *testing.T) {
+	// Post-WI-09c: client is a first-class entity. Sessions cannot be created
+	// for an unregistered client — the FK violation surfaces as 400
+	// client_not_found. (Previously this handler auto-registered the client.)
 	client := "freshly-introduced-client"
 	resp, err := env.client.CreateSessionWithResponse(context.Background(),
 		genapi.CreateSessionJSONRequestBody{
@@ -96,14 +101,20 @@ func TestCreateSessionHandler_AutoRegistersNewClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if resp.StatusCode() != http.StatusCreated {
-		t.Fatalf("status = %d; want 201; body=%s", resp.StatusCode(), string(resp.Body))
+	if resp.StatusCode() != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400; body=%s", resp.StatusCode(), string(resp.Body))
+	}
+	if resp.JSON400 == nil {
+		t.Fatal("JSON400 nil on 400")
+	}
+	if resp.JSON400.Error != "client_not_found" {
+		t.Errorf("error = %q; want client_not_found", resp.JSON400.Error)
 	}
 	n := countRows(t, env.sqlDB,
 		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`,
 		testNamespace, client)
-	if n != 1 {
-		t.Errorf("client row count = %d; want 1 (Service.Create's WithTx auto-register must flow through the handler)", n)
+	if n != 0 {
+		t.Errorf("client row count = %d; want 0 (handler must not implicitly register)", n)
 	}
 }
 
@@ -279,7 +290,7 @@ func TestCreateSessionHandler_ResponseHasNoLabelsField(t *testing.T) {
 func TestNotImplementedHandlersStillReturn501(t *testing.T) {
 	httpReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
 		env.serverURL+"/v1/version", http.NoBody)
-	httpReq.Header.Set("Authorization", "Bearer "+testMasterKey)
+	httpReq.Header.Set(auth.HeaderAuthorization, auth.BearerPrefix+testMasterKey)
 	httpResp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		t.Fatalf("http: %v", err)

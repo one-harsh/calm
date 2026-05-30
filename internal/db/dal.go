@@ -12,7 +12,26 @@ import (
 // *Store via Store.Clients(). Mockery generates MockClientRepo
 // (mock_client_repo.go, build-tag "mocks") for unit tests that need a fake.
 type ClientRepo interface {
-	Register(ctx context.Context, namespace, name string) error
+	// Register creates a client row without a credential. Returns
+	// created=true on the first call; created=false on duplicates (no error).
+	// SeedDefaults and the public registration handler both call through
+	// here; the handler maps created=false → 409 while SeedDefaults ignores
+	// the flag (restart-safe).
+	Register(ctx context.Context, namespace, name string) (created bool, err error)
+
+	// RegisterWithCredential creates a client row bound to a token hash.
+	// Errors with ErrClientExists on duplicate — no silent re-issue, since
+	// the raw token can't be recovered post-hash.
+	RegisterWithCredential(ctx context.Context, namespace, name string, tokenHash []byte) error
+
+	// RotateCredential replaces the token hash for an existing client.
+	// Errors with ErrClientNotFound if no row matches.
+	RotateCredential(ctx context.Context, namespace, name string, newHash []byte) error
+
+	// LookupByToken resolves a (namespace, token hash) pair to the client
+	// name. Errors with ErrInvalidClientCredential on miss.
+	LookupByToken(ctx context.Context, namespace string, tokenHash []byte) (name string, err error)
+
 	List(ctx context.Context, namespace string) ([]ClientSummary, error)
 	CountSessions(ctx context.Context, namespace, name string) (int, error)
 	Delete(ctx context.Context, namespace, name string) (DeleteClientResult, error)

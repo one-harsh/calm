@@ -23,21 +23,30 @@ type Registry interface {
 	// RateFor returns the per-namespace requests-per-second override.
 	// Callers fall back to a global default when hasOverride is false.
 	RateFor(namespace string) (rate int, hasOverride bool)
+
+	// RequiresClientCredentials reports whether operations in the namespace
+	// must present a per-client bearer token (in addition to the namespace
+	// API key). Set per-namespace via require_client_credentials in YAML.
+	RequiresClientCredentials(namespace string) bool
 }
 
 type memoryRegistry struct {
-	keys  map[string]string
-	rates map[string]int
+	keys                map[string]string
+	rates               map[string]int
+	credentialsRequired map[string]bool
 }
 
-func NewMemoryRegistry(keys map[string]string, rates map[string]int) Registry {
+func NewMemoryRegistry(keys map[string]string, rates map[string]int, credentialsRequired map[string]bool) Registry {
 	if keys == nil {
 		keys = map[string]string{}
 	}
 	if rates == nil {
 		rates = map[string]int{}
 	}
-	return &memoryRegistry{keys: keys, rates: rates}
+	if credentialsRequired == nil {
+		credentialsRequired = map[string]bool{}
+	}
+	return &memoryRegistry{keys: keys, rates: rates, credentialsRequired: credentialsRequired}
 }
 
 func (m *memoryRegistry) Resolve(apiKey string) (string, bool) {
@@ -48,6 +57,10 @@ func (m *memoryRegistry) Resolve(apiKey string) (string, bool) {
 func (m *memoryRegistry) RateFor(namespace string) (int, bool) {
 	rate, ok := m.rates[namespace]
 	return rate, ok
+}
+
+func (m *memoryRegistry) RequiresClientCredentials(namespace string) bool {
+	return m.credentialsRequired[namespace]
 }
 
 // BuildRegistry resolves each namespace's bracketed api_key reference via
@@ -65,6 +78,7 @@ func BuildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, reader secrets.SecretReader, logger *logging.Logger) (Registry, error) {
 	keys := make(map[string]string, len(namespaces))
 	rates := make(map[string]int, len(namespaces))
+	credentialsRequired := make(map[string]bool, len(namespaces))
 	keyOrigin := make(map[string]string, len(namespaces))
 
 	for _, ns := range namespaces {
@@ -74,9 +88,9 @@ func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 		apiKey := reader.ReadSecret(nsCtx, ns.APIKey)
 
 		if apiKey == "" {
-			// An empty bearer would authenticate `Authorization: Bearer ` —
-			// the SecretReader allows empty env-var values by design; the
-			// consumer enforces non-empty for credential use.
+			// An empty value here would authenticate every empty
+			// X-CALM-API-Key header — the SecretReader allows empty env-var
+			// values by design; the consumer enforces non-empty for credential use.
 			return nil, fmt.Errorf("namespace %q: api_key resolved to empty value (secret %q)", ns.Name, ns.APIKey)
 		}
 
@@ -90,12 +104,16 @@ func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 		if ns.RatePerSecond > 0 {
 			rates[ns.Name] = ns.RatePerSecond
 		}
+		if ns.RequireClientCredentials {
+			credentialsRequired[ns.Name] = true
+		}
 	}
 
 	logger.WithContext(ctx).Info(
 		"registry loaded",
 		logging.IntField("namespace_count", len(namespaces)),
 		logging.IntField("rate_override_count", len(rates)),
+		logging.IntField("credentialed_namespace_count", len(credentialsRequired)),
 	)
-	return NewMemoryRegistry(keys, rates), nil
+	return NewMemoryRegistry(keys, rates, credentialsRequired), nil
 }

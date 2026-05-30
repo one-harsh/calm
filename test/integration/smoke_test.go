@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/one-harsh/calm/internal/auth"
 )
 
 func TestHarness_RoutesResolve(t *testing.T) {
@@ -18,7 +20,7 @@ func TestHarness_RoutesResolve(t *testing.T) {
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sessions/"+uniqueSessionID(t)+"/sources", nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+testMasterKey)
+	req.Header.Set(auth.HeaderAPIKey, testMasterKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -34,7 +36,7 @@ func TestHarness_RequestIDPropagation(t *testing.T) {
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sessions/"+uniqueSessionID(t)+"/sources", nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+testMasterKey)
+	req.Header.Set(auth.HeaderAPIKey, testMasterKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -53,7 +55,7 @@ func TestHarness_OpenAPIValidationFiresBeforeHandler(t *testing.T) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, env.serverURL+"/v1/sessions", body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+testMasterKey)
+	req.Header.Set(auth.HeaderAPIKey, testMasterKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)

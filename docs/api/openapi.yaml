@@ -3,20 +3,27 @@ info:
   title: CALM API
   version: 1.0.0
   description: |
-    Formal contract for the CALM HTTP API. The HLD (`docs/HLD.md` §6) is the
-    canonical *intent*; this file is the canonical *contract*. Code is generated
-    against this spec via oapi-codegen. Drift between the two is checked in CI.
+    HTTP API for CALM — a context-management service that filters and
+    compresses tool output before it enters the LLM context window. Workloads
+    create a session, ingest tool output into it, search across it, capture
+    structured events, and tear it down at the end of work.
 
-    All requests carry `Authorization: Bearer <key>`. CALM resolves the key to a
-    namespace and enforces it on every operation. Cross-namespace access returns
-    404 (invisibility, not denial) per HLD §6.
+    Authentication: every request carries `X-CALM-API-Key: <namespace-api-key>`.
+    CALM resolves the key to a namespace and enforces it on every operation.
+    Cross-namespace access returns 404 (invisibility, not denial — the
+    response is indistinguishable from a truly nonexistent resource).
+
+    Namespaces configured with `require_client_credentials: true` additionally
+    require `Authorization: Bearer <client-token>` carrying the per-client
+    token issued by `POST /v1/clients/{name}`. Namespaces without the flag
+    set ignore the Authorization header.
 
 servers:
   - url: http://localhost:8080
     description: Local development
 
 security:
-  - bearerAuth: []
+  - apiKey: []
 
 paths:
   /v1/health:
@@ -60,15 +67,81 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/VersionResult' }
 
+  /v1/clients/{name}:
+    parameters:
+      - $ref: '#/components/parameters/ClientName'
+    post:
+      operationId: registerClient
+      summary: Register a client in the namespace
+      description: |
+        Establishes the client as a first-class entity. Returns 201 with
+        the registered name; 409 if the name is already taken (workloads that
+        intend restart-safety treat 409 as success).
+
+        In namespaces with `require_client_credentials: true`, the response
+        body additionally carries a one-time `client_token` — a per-client
+        secret the workload must persist and present via `Authorization: Bearer`
+        on subsequent operations. Lost tokens require rotation; CALM has no
+        path to recover them.
+
+        This endpoint itself is exempt from the client-token requirement (the
+        client doesn't have a token yet), but still requires the namespace API
+        key.
+      tags: [clients]
+      security:
+        - apiKey: []
+      responses:
+        '201':
+          description: Client registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisterClientResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/clients/{name}/rotate-token:
+    parameters:
+      - $ref: '#/components/parameters/ClientName'
+    post:
+      operationId: rotateClientToken
+      summary: Rotate the client's bearer token (credentialed namespaces only)
+      description: |
+        Mints a new client token and invalidates the previous one
+        atomically. Only valid in namespaces with `require_client_credentials: true`;
+        other namespaces return 404 (invisibility-not-denial).
+        Sessions owned by this client persist across rotation — only the
+        credential changes. Requires the current client token in the
+        Authorization header.
+      tags: [clients]
+      security:
+        - apiKey: []
+          clientToken: []
+      responses:
+        '200':
+          description: Token rotated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RotateClientTokenResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/sessions:
     post:
       operationId: createSession
       summary: Create a session
       description: |
-        HLD §6. Session ID is workload-provided and opaque. Namespace is resolved
-        from the API key, never from the body. Optional `client` identifier
-        auto-registers on first reference (HLD DL01); omitted means `default`.
+        Session ID is workload-provided and opaque. Namespace is resolved
+        from the API key, never from the body. When the namespace does not
+        require client credentials, `client` is workload-supplied and must
+        reference a previously-registered client (auto-default to `default`
+        when omitted). When it does, `client` is ignored — or, if present,
+        must match the auth-resolved client; the session is bound to the
+        client whose token was presented.
       tags: [sessions]
+      security:
+        - apiKey: []
+          clientToken: []
       requestBody:
         required: true
         content:
@@ -91,7 +164,7 @@ paths:
       operationId: deleteSession
       summary: Tear down a session and all its data
       description: |
-        HLD §6 / §8. Sources, chunks, vocabulary, events, and labels cascade.
+        Sources, chunks, vocabulary, events, and labels cascade.
         Response carries cascade counts so workloads can audit what was removed
         without a follow-up read.
       tags: [sessions]
@@ -110,7 +183,7 @@ paths:
     get:
       operationId: listSources
       summary: List ingested sources within a session
-      description: HLD §6. End-of-work observability — what was indexed and how much.
+      description: End-of-work observability — what was indexed and how much.
       tags: [sessions]
       responses:
         '200':
@@ -127,12 +200,12 @@ paths:
       - in: query
         name: budget_bytes
         schema: { type: integer, minimum: 256, maximum: 8192, default: 2048 }
-        description: Byte budget for the snapshot. HLD §11 caps at 8KB.
+        description: Byte budget for the snapshot. Server caps at 8KB.
     get:
       operationId: getSnapshot
       summary: Return session events ordered by priority and recency within a byte budget
       description: |
-        HLD §6 / §8. Generic event store (DL08) — CALM does not interpret event
+        Generic event store — CALM does not interpret event
         content or build a structured state representation. Workloads needing
         structured shapes build them in their own middleware from the returned
         event stream.
@@ -151,8 +224,8 @@ paths:
       operationId: ingest
       summary: Ingest raw content; return a compact representation
       description: |
-        HLD §4 / §6. Chunks, indexes, optionally orders the compact summary by
-        intent relevance via RRF (DL05). Same `source` label within a session
+        Chunks, indexes, optionally orders the compact summary by
+        intent relevance via RRF. Same `source` label within a session
         replaces previous content idempotently (invariant #6).
       tags: [ingest]
       requestBody:
@@ -177,7 +250,7 @@ paths:
       operationId: search
       summary: Query indexed content within a session
       description: |
-        HLD §4 / §6 / §7. Three-layer fallback (primary tokenizer → trigram →
+        Three-layer fallback (primary tokenizer → trigram →
         fuzzy) is internal. Layer 1 runs against both `chunks_fts_prose` and
         `chunks_fts_code` and the two rankings are RRF-fused; results from both
         tokenization paths come back in one ranked list. Workload does not scope
@@ -203,9 +276,9 @@ paths:
       operationId: writeEvents
       summary: Record session events
       description: |
-        HLD §4 / §6. `type` is workload-defined (no fixed taxonomy). `priority`
+        `type` is workload-defined (no fixed taxonomy). `priority`
         is required (1=critical, 4=noise). `data` is opaque to CALM. Generic
-        event store (DL08) — CALM persists and serves; workloads interpret.
+        event store — CALM persists and serves; workloads interpret.
       tags: [events]
       requestBody:
         required: true
@@ -243,7 +316,7 @@ paths:
     get:
       operationId: readEvents
       summary: Read events for a session
-      description: HLD §6. Supports filtering by `type` and `min_priority`.
+      description: Supports filtering by `type` and `min_priority`.
       tags: [events]
       responses:
         '200':
@@ -273,7 +346,7 @@ paths:
     get:
       operationId: manageListSessions
       summary: List sessions in the API key's namespace
-      description: HLD §6. Scoped to the API key's namespace. Returns rich session info including labels, last activity, and event count.
+      description: Scoped to the API key's namespace. Returns rich session info including labels, last activity, and event count.
       tags: [manage]
       responses:
         '200':
@@ -285,7 +358,7 @@ paths:
     delete:
       operationId: manageDeleteSessions
       summary: Bulk-delete sessions in the namespace
-      description: HLD §6. `dry_run=true` returns the affected count without deleting.
+      description: "`dry_run=true` returns the affected count without deleting."
       tags: [manage]
       parameters:
         - in: query
@@ -304,7 +377,7 @@ paths:
       operationId: manageListClients
       summary: List clients in the API key's namespace
       description: |
-        HLD §6. Read-only at v1 — operators can see which clients exist and
+        Read-only at v1 — operators can see which clients exist and
         their activity. Useful for spotting typo-clients and dead workloads.
       tags: [manage]
       responses:
@@ -325,7 +398,7 @@ paths:
       operationId: manageDeleteClient
       summary: Remove a client and cascade all its sessions
       description: |
-        HLD §6. Cascades through `sessions.client` FK — all the client's
+        Cascades through `sessions.client` FK — all the client's
         sessions, sources, chunks, events, and labels are removed. The `default`
         client cannot be deleted (returns 409) — it's the bootstrap fallback
         for sessions without a `client` field.
@@ -346,9 +419,22 @@ paths:
 
 components:
   securitySchemes:
-    bearerAuth:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-CALM-API-Key
+      description: |
+        Namespace API key. Operator-issued, long-lived, configured per-namespace
+        in the CALM YAML. Required on every request that isn't operational
+        (health/version) or registration (POST /v1/clients/{name}).
+    clientToken:
       type: http
       scheme: bearer
+      description: |
+        Per-client bearer token, issued at registration when the namespace has
+        require_client_credentials=true. Required for session-touching
+        operations in those namespaces; ignored when the flag is false. Issued once at
+        POST /v1/clients/{name} time and on rotation; not recoverable post-mint.
 
   parameters:
     SessionID:
@@ -356,6 +442,11 @@ components:
       name: session_id
       required: true
       schema: { type: string, minLength: 1, maxLength: 256 }
+    ClientName:
+      in: path
+      name: name
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-zA-Z0-9_-]+$' }
 
   responses:
     BadRequest:
@@ -381,12 +472,12 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     PayloadTooLarge:
-      description: Body exceeds the 1MB ingest cap (HLD §11)
+      description: Request body exceeded the configured size limit
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     TooManyRequests:
-      description: Per-namespace rate limit exceeded (HLD §11)
+      description: Per-namespace rate limit exceeded
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -400,9 +491,32 @@ components:
         endpoint: { type: string }
         detail: { type: string }
 
+    RegisterClientResult:
+      description: |
+        Response to a successful client registration. `client_token` is only
+        present in namespaces with `require_client_credentials: true` — it
+        is shown once and not recoverable. Omitted entirely when the flag
+        is false.
+      type: object
+      required: [name, namespace, created_at]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        created_at: { type: string, format: date-time }
+        client_token: { type: string, description: One-time bearer token; present only when require_client_credentials is true for the namespace. }
+
+    RotateClientTokenResult:
+      type: object
+      required: [name, namespace, client_token, rotated_at]
+      properties:
+        name: { type: string }
+        namespace: { type: string }
+        client_token: { type: string, description: The new bearer token; replaces the previous one immediately. }
+        rotated_at: { type: string, format: date-time }
+
     Session:
       description: |
-        Session as echoed in the createSession response. Matches HLD §6 — minimal
+        Session as echoed in the createSession response. Minimal
         confirmation of what CALM committed, after namespace resolution, client
         auto-registration, and operator-ceiling clamping on `ttl_minutes`.
       type: object
@@ -453,7 +567,7 @@ components:
           description: Inactivity timeout. Clamped to the operator-configured ceiling.
 
     CascadeCounts:
-      description: Counts of dependent rows removed by a cascading delete (HLD §6).
+      description: Counts of dependent rows removed by a cascading delete.
       type: object
       required: [sources, chunks, events, labels]
       properties:
@@ -496,11 +610,11 @@ components:
         format:
           type: string
           enum: [log, stacktrace, csv, tsv, metrics, json, markdown, text]
-          description: Format hint for chunking. If absent, CALM auto-detects (HLD §4).
+          description: Format hint for chunking. If absent, CALM auto-detects.
         content_type:
           type: string
           description: |
-            Workload-provided default for tokenization branching (HLD DL06). `code`
+            Workload-provided default for tokenization branching. `code`
             for source-file or build-output content; `prose` for natural-language
             content (default if omitted). The chunker may override per chunk when
             format signals demand it — fenced code blocks inside a markdown ingest
@@ -512,7 +626,7 @@ components:
           maxItems: 3
           items: { type: string, minLength: 1 }
           description: |
-            Up to 3 intent strings (HLD DL05). When provided and content exceeds
+            Up to 3 intent strings. When provided and content exceeds
             the configured size threshold, `summary` is ordered by RRF across
             per-intent rankings and each section carries a `matches` array.
 
@@ -568,7 +682,7 @@ components:
           enum: [primary, trigram, fuzzy]
           description: |
             Which fallback layer produced this hit. `primary` covers both the
-            prose and code FTS indexes (RRF-fused at layer 1, per HLD §7) —
+            prose and code FTS indexes (RRF-fused at layer 1) —
             workloads do not see, and do not need to disambiguate, which
             tokenizer matched. Frequent `fuzzy` hits suggest the indexed
             vocabulary doesn't match what workloads search for.
@@ -592,12 +706,12 @@ components:
           type: string
           minLength: 1
           maxLength: 64
-          description: Workload-chosen event type. Not validated against a fixed set (HLD DL08).
+          description: Workload-chosen event type. Not validated against a fixed set.
         priority:
           type: integer
           minimum: 1
           maximum: 4
-          description: 1=critical (always retained), 2=high, 3=normal, 4=noise. Workload-set per HLD §4.
+          description: 1=critical (always retained), 2=high, 3=normal, 4=noise. Workload-assigned.
         data:
           type: object
           additionalProperties: true
@@ -668,7 +782,7 @@ components:
       description: |
         Generic event list ordered by (priority asc, created_at desc) and
         accumulated until `byte_budget_used` approaches the requested
-        `budget_bytes`. CALM does not synthesize state — workloads do (HLD DL08).
+        `budget_bytes`. CALM does not synthesize state — workloads do.
       type: object
       required: [session_id, byte_budget_used, budget_exceeded, events]
       properties:
@@ -680,7 +794,7 @@ components:
             True when high-priority events alone exceeded `budget_bytes` and
             lower-priority events had to be dropped — or when even the highest
             priority tier was truncated to fit. Workloads can retry with a
-            larger `budget_bytes` if their context allows (HLD §8).
+            larger `budget_bytes` if their context allows.
         events:
           type: array
           items: { $ref: '#/components/schemas/Event' }

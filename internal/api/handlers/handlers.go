@@ -9,7 +9,8 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
-	"github.com/one-harsh/calm/internal/client"
+	"github.com/one-harsh/calm/internal/auth"
+	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/session"
 )
 
@@ -23,7 +24,8 @@ type HandlersConfig struct {
 
 type Deps struct {
 	Logger   *logging.Logger
-	Clients  *client.Service
+	Registry auth.Registry
+	Clients  *clientreg.Service
 	Sessions *session.Service
 	Cfg      HandlersConfig
 }

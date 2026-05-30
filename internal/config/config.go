@@ -76,9 +76,10 @@ type StorageConfig struct {
 }
 
 type NamespaceConfig struct {
-	Name          string         `mapstructure:"name"`
-	APIKey        secrets.Secret `mapstructure:"api_key"`
-	RatePerSecond int            `mapstructure:"rate_per_second"`
+	Name                     string         `mapstructure:"name"`
+	APIKey                   secrets.Secret `mapstructure:"api_key"`
+	RatePerSecond            int            `mapstructure:"rate_per_second"`
+	RequireClientCredentials bool           `mapstructure:"require_client_credentials"`
 }
 
 // Load reads the YAML config at path, applies env overrides (CALM_-prefixed,

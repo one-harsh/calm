@@ -19,7 +19,7 @@ func TestRegisterClient_NewRowInserted(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	if err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
+	if _, err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
 		t.Fatalf("RegisterClient: %v", err)
 	}
 	got := countRows(t, sqlDB, `SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`, "ns-a", "alice")
@@ -33,7 +33,7 @@ func TestRegisterClient_IdempotentOnRepeat(t *testing.T) {
 	defer teardown()
 
 	for i := 0; i < 3; i++ {
-		if err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
+		if _, err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
 			t.Fatalf("RegisterClient (call %d): %v", i, err)
 		}
 	}
@@ -47,10 +47,10 @@ func TestRegisterClient_CrossNamespaceIndependent(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	if err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
+	if _, err := store.Clients().Register(context.Background(), "ns-a", "alice"); err != nil {
 		t.Fatalf("RegisterClient ns-a: %v", err)
 	}
-	if err := store.Clients().Register(context.Background(), "ns-b", "alice"); err != nil {
+	if _, err := store.Clients().Register(context.Background(), "ns-b", "alice"); err != nil {
 		t.Fatalf("RegisterClient ns-b: %v", err)
 	}
 	total := countRows(t, sqlDB, `SELECT COUNT(*) FROM clients WHERE name = $1`, "alice")
@@ -63,7 +63,7 @@ func TestRegisterClient_EmptyNamespace(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	err := store.Clients().Register(context.Background(), "", "alice")
+	_, err := store.Clients().Register(context.Background(), "", "alice")
 	if !errors.Is(err, db.ErrNamespaceRequired) {
 		t.Fatalf("want ErrNamespaceRequired, got %v", err)
 	}
@@ -76,7 +76,7 @@ func TestRegisterClient_EmptyName(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	err := store.Clients().Register(context.Background(), "ns-a", "")
+	_, err := store.Clients().Register(context.Background(), "ns-a", "")
 	if !errors.Is(err, db.ErrClientNameRequired) {
 		t.Fatalf("want ErrClientNameRequired, got %v", err)
 	}

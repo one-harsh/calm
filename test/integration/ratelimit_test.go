@@ -18,7 +18,7 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 	"github.com/one-harsh/calm/internal/api/handlers"
 	"github.com/one-harsh/calm/internal/auth"
-	"github.com/one-harsh/calm/internal/client"
+	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/server"
 	"github.com/one-harsh/calm/internal/session"
 )
@@ -46,6 +46,7 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 			testTenantAKey: testTenantANamespace,
 		},
 		cfg.NSOverrides,
+		nil,
 	)
 
 	handler, err := server.NewHandler(server.Config{
@@ -61,7 +62,7 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 		Registry: registry,
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
-			Clients:  client.New(env.store),
+			Clients:  clientreg.New(env.store),
 			Sessions: session.New(env.store, 10_000),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
@@ -75,7 +76,7 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 	srv := httptest.NewServer(handler)
 
 	mkClient := func(key string) *genapi.ClientWithResponses {
-		c, err := genapi.NewClientWithResponses(srv.URL, genapi.WithRequestEditorFn(bearerAuth(key)))
+		c, err := genapi.NewClientWithResponses(srv.URL, genapi.WithRequestEditorFn(apiKeyHeader(key)))
 		if err != nil {
 			t.Fatalf("build client: %v", err)
 		}
@@ -241,7 +242,7 @@ func TestRateLimit_PerIPTrumpsAuthFailure(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build req: %v", err)
 		}
-		req.Header.Set("Authorization", "Bearer invalid-bogus-key")
+		req.Header.Set(auth.HeaderAPIKey, "invalid-bogus-key")
 		return req
 	}
 

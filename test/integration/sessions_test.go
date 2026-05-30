@@ -64,35 +64,33 @@ func TestCreateSession_HappyWithLabels(t *testing.T) {
 	}
 }
 
-// session.Service.Create is the DL01 auto-attribution boundary; this test
-// covers the service-layer orchestration that the repo no longer owns.
-func TestSessionService_Create_AutoRegistersNewClient(t *testing.T) {
+// Post-WI-09c: clients are first-class entities. session.Service.Create no
+// longer auto-registers — the client must exist beforehand. A missing
+// client surfaces as ErrClientNotFound via the DAL's FK-violation
+// translation.
+func TestSessionService_Create_UnregisteredClientReturnsErrClientNotFound(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
 	svc := session.New(store, 10_000)
-	if err := svc.Create(context.Background(), &db.Session{
+	err := svc.Create(context.Background(), &db.Session{
 		ID: "s1", Namespace: "ns-a", Client: "alice", TTLMinutes: 60,
-	}); err != nil {
-		t.Fatalf("service Create: %v", err)
+	})
+	if !errors.Is(err, db.ErrClientNotFound) {
+		t.Fatalf("service Create with unregistered client: got %v; want ErrClientNotFound", err)
 	}
 	if n := countRows(t, sqlDB,
 		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`,
 		"ns-a", "alice",
-	); n != 1 {
-		t.Errorf("want 1 client row, got %d", n)
-	}
-	if n := countRows(t, sqlDB,
-		`SELECT COUNT(*) FROM sessions WHERE namespace = $1 AND session_id = $2`,
-		"ns-a", "s1",
-	); n != 1 {
-		t.Errorf("want 1 session row, got %d", n)
+	); n != 0 {
+		t.Errorf("client row count = %d; want 0 (service must not auto-register)", n)
 	}
 }
 
-func TestSessionService_Create_DefaultsEmptyClient(t *testing.T) {
+func TestSessionService_Create_EmptyClientDefaultsToDefault(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
 	svc := session.New(store, 10_000)
 	if err := svc.Create(context.Background(), &db.Session{
@@ -100,11 +98,16 @@ func TestSessionService_Create_DefaultsEmptyClient(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("service Create: %v", err)
 	}
-	if n := countRows(t, sqlDB,
-		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`,
-		"ns-a", db.DefaultClient,
-	); n != 1 {
-		t.Errorf("want default-client row, got %d", n)
+	// session.client column should be "default" (normalized in place).
+	var got string
+	if err := sqlDB.QueryRow(
+		`SELECT client FROM sessions WHERE namespace = $1 AND session_id = $2`,
+		"ns-a", "s1",
+	).Scan(&got); err != nil {
+		t.Fatalf("read session.client: %v", err)
+	}
+	if got != db.DefaultClient {
+		t.Errorf("session.client = %q; want %q", got, db.DefaultClient)
 	}
 }
 
@@ -1077,6 +1080,7 @@ func deleteSessionRow(t *testing.T, sqlDB *sql.DB, namespace, id string) {
 func TestSessionService_Create_PrimesCache(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", "alice")
 
 	svc := session.New(store, 10_000)
 	if err := svc.Create(context.Background(), &db.Session{
@@ -1138,8 +1142,9 @@ func TestSessionService_Lookup_NotFoundNotCached(t *testing.T) {
 }
 
 func TestSessionService_Delete_InvalidatesCache(t *testing.T) {
-	store, _, teardown := openConcreteStore(t)
+	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
 	svc := session.New(store, 10_000)
 	if err := svc.Create(context.Background(), &db.Session{
@@ -1158,6 +1163,8 @@ func TestSessionService_Delete_InvalidatesCache(t *testing.T) {
 func TestSessionService_DeleteAll_InvalidatesOnlyTargetNamespace(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	seedClient(t, sqlDB, "ns-b", db.DefaultClient)
 
 	svc := session.New(store, 10_000)
 	for _, sid := range []string{"a1", "a2"} {
@@ -1193,6 +1200,7 @@ func TestSessionService_DeleteAll_InvalidatesOnlyTargetNamespace(t *testing.T) {
 func TestSessionService_Touch_OnStaleEntrySelfHeals(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
 	svc := session.New(store, 10_000)
 	if err := svc.Create(context.Background(), &db.Session{
@@ -1213,8 +1221,10 @@ func TestSessionService_Touch_OnStaleEntrySelfHeals(t *testing.T) {
 }
 
 func TestSessionService_SameIDDifferentNamespacesIndependent(t *testing.T) {
-	store, _, teardown := openConcreteStore(t)
+	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", "alice")
+	seedClient(t, sqlDB, "ns-b", "bob")
 
 	svc := session.New(store, 10_000)
 	if err := svc.Create(context.Background(), &db.Session{
@@ -1246,6 +1256,7 @@ func TestSessionService_SameIDDifferentNamespacesIndependent(t *testing.T) {
 func TestSessionService_CacheDisabled_AlwaysHitsDB(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
 	svc := session.New(store, 0) // disabled
 	if err := svc.Create(context.Background(), &db.Session{
@@ -1267,8 +1278,9 @@ func TestSessionService_CacheDisabled_AlwaysHitsDB(t *testing.T) {
 // recompute it.
 
 func TestSession_ExpiresAtPopulatedOnCreate(t *testing.T) {
-	store, _, teardown := openConcreteStore(t)
+	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
 	svc := session.New(store, 0)
 	sess := &db.Session{ID: "s1", Namespace: "ns-a", TTLMinutes: 60}
@@ -1304,8 +1316,9 @@ func TestSession_ExpiresAtPopulatedOnGet(t *testing.T) {
 }
 
 func TestSession_ExpiresAtRecomputesOnTouch(t *testing.T) {
-	store, _, teardown := openConcreteStore(t)
+	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
 	svc := session.New(store, 0)
 	sess := &db.Session{ID: "s1", Namespace: "ns-a", TTLMinutes: 30}

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
+	"github.com/one-harsh/calm/internal/auth"
 )
 
 func TestBearerAuthSucceeds(t *testing.T) {
@@ -34,7 +35,7 @@ func TestMissingAuthHeaderRejected(t *testing.T) {
 
 func TestNonBearerSchemeRejected(t *testing.T) {
 	status := rawPOSTStatus(t, "/v1/sessions", `{"session_id":"x"}`, map[string]string{
-		"Authorization": "Basic dXNlcjpwYXNz",
+		auth.HeaderAuthorization: "Basic dXNlcjpwYXNz",
 	})
 	if status != http.StatusUnauthorized {
 		t.Errorf("status = %d; want 401", status)
@@ -43,7 +44,7 @@ func TestNonBearerSchemeRejected(t *testing.T) {
 
 func TestUnknownBearerKeyRejected(t *testing.T) {
 	status := rawPOSTStatus(t, "/v1/sessions", `{"session_id":"x"}`, map[string]string{
-		"Authorization": "Bearer not-a-real-key",
+		auth.HeaderAuthorization: auth.BearerPrefix + "not-a-real-key",
 	})
 	if status != http.StatusUnauthorized {
 		t.Errorf("status = %d; want 401", status)

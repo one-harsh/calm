@@ -50,7 +50,23 @@ func (h *Handlers) CreateSession(
 		)
 		sess.TTLMinutes = h.deps.Cfg.MaxTTLMinutes
 	}
-	if request.Body.Client != nil {
+	// Credentialed namespace: client identity comes from the X-CALM-API-Key
+	// + Authorization: Bearer pair the auth middleware resolved. If the
+	// body's `client` field is present, it must match — defense-in-depth
+	// against a workload holding a valid client token for client-A trying
+	// to spoof client-B in the same namespace.
+	// Uncredentialed namespace: client comes from the body (workload-supplied
+	// metadata, no auth check).
+	if authClient := auth.ClientFromContext(ctx); authClient != "" {
+		if request.Body.Client != nil && *request.Body.Client != authClient {
+			detail := fmt.Sprintf("body client %q does not match authenticated client %q", *request.Body.Client, authClient)
+			return genapi.CreateSession400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse{
+				Error:  "client_mismatch",
+				Detail: &detail,
+			}}, nil
+		}
+		sess.Client = authClient
+	} else if request.Body.Client != nil {
 		sess.Client = *request.Body.Client
 	}
 	if request.Body.Labels != nil {

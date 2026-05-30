@@ -32,9 +32,10 @@ type Config struct {
 }
 
 type Deps struct {
-	Logger   *logging.Logger
-	Registry auth.Registry
-	Handlers *handlers.Handlers
+	Logger         *logging.Logger
+	Registry       auth.Registry
+	ClientResolver middleware.ClientResolver
+	Handlers       *handlers.Handlers
 }
 
 type Server struct {
@@ -59,7 +60,7 @@ func NewHandler(cfg Config, deps Deps) (http.Handler, error) {
 	r.Use(middleware.Context())
 	r.Use(middleware.Logging(deps.Logger))
 	r.Use(middleware.RateLimitIP(cfg.RateLimitPerIPPerSecond, cfg.TrustProxyHeaders, deps.Logger))
-	r.Use(middleware.Auth(deps.Registry))
+	r.Use(middleware.Auth(deps.Registry, deps.ClientResolver, deps.Logger))
 	r.Use(middleware.RateLimitNamespaceAndGlobal(
 		deps.Registry,
 		cfg.RateLimitPerSecond,

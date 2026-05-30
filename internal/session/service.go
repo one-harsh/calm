@@ -23,10 +23,12 @@ func New(store db.DAL, cacheSize int) *Service {
 	return &Service{store: store, cache: newCache(cacheSize)}
 }
 
-// Create is the auto-attribution boundary: client Register + session insert
-// share one tx via Store.WithTx so a partial failure rolls back both. sess is
-// normalized (default client) and enriched (CreatedAt from RETURNING) in
-// place, so the handler can serialize the populated struct directly.
+// Create inserts the session row directly. The client must already be
+// registered (via POST /v1/clients/{name} or via SeedDefaults for the
+// default client); a missing client surfaces as ErrClientNotFound via the
+// DAL's FK-violation translation. sess is normalized (default client) and
+// enriched (CreatedAt from RETURNING) in place, so the handler can
+// serialize the populated struct directly.
 func (s *Service) Create(ctx context.Context, sess *db.Session) error {
 	if sess.ID == "" {
 		return db.ErrSessionIDRequired
@@ -37,13 +39,7 @@ func (s *Service) Create(ctx context.Context, sess *db.Session) error {
 	if sess.Client == "" {
 		sess.Client = db.DefaultClient
 	}
-	err := s.store.WithTx(ctx, func(r db.Repos) error {
-		if err := r.Clients.Register(ctx, sess.Namespace, sess.Client); err != nil {
-			return err
-		}
-		return r.Sessions.Create(ctx, sess)
-	})
-	if err != nil {
+	if err := s.store.Sessions().Create(ctx, sess); err != nil {
 		return err
 	}
 

@@ -21,10 +21,11 @@ type sessionRepo struct {
 	logger  *logging.Logger
 }
 
-// Create inserts the session row + any declared labels atomically. Caller is
-// responsible for ensuring the (namespace, client) row in clients exists —
-// without it, the session insert fails FK. session.Service.Create wraps
-// Register + Create inside Store.WithTx so the whole composition is atomic.
+// Create inserts the session row + any declared labels atomically. The
+// (namespace, client) row in clients must exist; a missing client surfaces
+// as ErrClientNotFound (translated from Postgres FK violation 23503).
+// Clients are first-class registered entities — POST /v1/clients/{name} for
+// custom names, SeedDefaults for `default`.
 func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 	if sess.Namespace == "" {
 		return ErrNamespaceRequired
@@ -47,8 +48,14 @@ func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 			sess.ID, sess.Namespace, sess.Client, sess.TTLMinutes,
 		).Scan(&sess.CreatedAt, &sess.LastActivity, &sess.ExpiresAt); err != nil {
 			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				return ErrSessionExists
+			if errors.As(err, &pgErr) {
+				switch pgErr.Code {
+				case "23505":
+					return ErrSessionExists
+				case "23503":
+					// foreign_key_violation on (namespace, client) → clients FK.
+					return ErrClientNotFound
+				}
 			}
 			return fmt.Errorf("%w: insert session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
 		}

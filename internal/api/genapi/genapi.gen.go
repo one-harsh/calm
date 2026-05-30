@@ -24,7 +24,8 @@ import (
 )
 
 const (
-	BearerAuthScopes bearerAuthContextKey = "bearerAuth.Scopes"
+	ApiKeyScopes      apiKeyContextKey      = "apiKey.Scopes"
+	ClientTokenScopes clientTokenContextKey = "clientToken.Scopes"
 )
 
 // Defines values for HealthResultChecks.
@@ -120,7 +121,7 @@ func (e SearchHitMatchLayer) Valid() bool {
 	}
 }
 
-// CascadeCounts Counts of dependent rows removed by a cascading delete (HLD §6).
+// CascadeCounts Counts of dependent rows removed by a cascading delete.
 type CascadeCounts struct {
 	Chunks  int `json:"chunks"`
 	Events  int `json:"events"`
@@ -151,7 +152,7 @@ type CreateSessionRequest struct {
 type DeleteClientResult struct {
 	AffectedSessions *int `json:"affected_sessions,omitempty"`
 
-	// Cascaded Counts of dependent rows removed by a cascading delete (HLD §6).
+	// Cascaded Counts of dependent rows removed by a cascading delete.
 	Cascaded        *CascadeCounts `json:"cascaded,omitempty"`
 	DeletedClient   *string        `json:"deleted_client,omitempty"`
 	DeletedSessions *int           `json:"deleted_sessions,omitempty"`
@@ -161,14 +162,14 @@ type DeleteClientResult struct {
 type DeleteManagedSessionsResult struct {
 	AffectedSessions *int `json:"affected_sessions,omitempty"`
 
-	// Cascaded Counts of dependent rows removed by a cascading delete (HLD §6).
+	// Cascaded Counts of dependent rows removed by a cascading delete.
 	Cascaded        *CascadeCounts `json:"cascaded,omitempty"`
 	DeletedSessions *int           `json:"deleted_sessions,omitempty"`
 }
 
 // DeleteSessionResult defines model for DeleteSessionResult.
 type DeleteSessionResult struct {
-	// Cascaded Counts of dependent rows removed by a cascading delete (HLD §6).
+	// Cascaded Counts of dependent rows removed by a cascading delete.
 	Cascaded         CascadeCounts `json:"cascaded"`
 	DeletedSessionId string        `json:"deleted_session_id"`
 }
@@ -194,10 +195,10 @@ type EventInput struct {
 	// Data Workload-structured JSON payload. CALM does not interpret content.
 	Data map[string]interface{} `json:"data"`
 
-	// Priority 1=critical (always retained), 2=high, 3=normal, 4=noise. Workload-set per HLD §4.
+	// Priority 1=critical (always retained), 2=high, 3=normal, 4=noise. Workload-assigned.
 	Priority int `json:"priority"`
 
-	// Type Workload-chosen event type. Not validated against a fixed set (HLD DL08).
+	// Type Workload-chosen event type. Not validated against a fixed set.
 	Type string `json:"type"`
 }
 
@@ -223,7 +224,7 @@ type HealthResultStatus string
 type IngestRequest struct {
 	Content string `json:"content"`
 
-	// ContentType Workload-provided default for tokenization branching (HLD DL06). `code`
+	// ContentType Workload-provided default for tokenization branching. `code`
 	// for source-file or build-output content; `prose` for natural-language
 	// content (default if omitted). The chunker may override per chunk when
 	// format signals demand it — fenced code blocks inside a markdown ingest
@@ -232,10 +233,10 @@ type IngestRequest struct {
 	// as `prose` for tokenization until their strategies are implemented.
 	ContentType *string `json:"content_type,omitempty"`
 
-	// Format Format hint for chunking. If absent, CALM auto-detects (HLD §4).
+	// Format Format hint for chunking. If absent, CALM auto-detects.
 	Format *IngestRequestFormat `json:"format,omitempty"`
 
-	// Intents Up to 3 intent strings (HLD DL05). When provided and content exceeds
+	// Intents Up to 3 intent strings. When provided and content exceeds
 	// the configured size threshold, `summary` is ordered by RRF across
 	// per-intent rankings and each section carries a `matches` array.
 	Intents   *[]string `json:"intents,omitempty"`
@@ -245,7 +246,7 @@ type IngestRequest struct {
 	Source string `json:"source"`
 }
 
-// IngestRequestFormat Format hint for chunking. If absent, CALM auto-detects (HLD §4).
+// IngestRequestFormat Format hint for chunking. If absent, CALM auto-detects.
 type IngestRequestFormat string
 
 // IngestResult defines model for IngestResult.
@@ -301,10 +302,31 @@ type ReadEventsResult struct {
 	Events []Event `json:"events"`
 }
 
+// RegisterClientResult Response to a successful client registration. `client_token` is only
+// present in namespaces with `require_client_credentials: true` — it
+// is shown once and not recoverable. Omitted entirely when the flag
+// is false.
+type RegisterClientResult struct {
+	// ClientToken One-time bearer token; present only when require_client_credentials is true for the namespace.
+	ClientToken *string   `json:"client_token,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	Name        string    `json:"name"`
+	Namespace   string    `json:"namespace"`
+}
+
+// RotateClientTokenResult defines model for RotateClientTokenResult.
+type RotateClientTokenResult struct {
+	// ClientToken The new bearer token; replaces the previous one immediately.
+	ClientToken string    `json:"client_token"`
+	Name        string    `json:"name"`
+	Namespace   string    `json:"namespace"`
+	RotatedAt   time.Time `json:"rotated_at"`
+}
+
 // SearchHit defines model for SearchHit.
 type SearchHit struct {
 	// MatchLayer Which fallback layer produced this hit. `primary` covers both the
-	// prose and code FTS indexes (RRF-fused at layer 1, per HLD §7) —
+	// prose and code FTS indexes (RRF-fused at layer 1) —
 	// workloads do not see, and do not need to disambiguate, which
 	// tokenizer matched. Frequent `fuzzy` hits suggest the indexed
 	// vocabulary doesn't match what workloads search for.
@@ -317,7 +339,7 @@ type SearchHit struct {
 }
 
 // SearchHitMatchLayer Which fallback layer produced this hit. `primary` covers both the
-// prose and code FTS indexes (RRF-fused at layer 1, per HLD §7) —
+// prose and code FTS indexes (RRF-fused at layer 1) —
 // workloads do not see, and do not need to disambiguate, which
 // tokenizer matched. Frequent `fuzzy` hits suggest the indexed
 // vocabulary doesn't match what workloads search for.
@@ -349,7 +371,7 @@ type SectionPreview struct {
 	Title   string    `json:"title"`
 }
 
-// Session Session as echoed in the createSession response. Matches HLD §6 — minimal
+// Session Session as echoed in the createSession response. Minimal
 // confirmation of what CALM committed, after namespace resolution, client
 // auto-registration, and operator-ceiling clamping on `ttl_minutes`.
 type Session struct {
@@ -362,12 +384,12 @@ type Session struct {
 
 // SnapshotResult Generic event list ordered by (priority asc, created_at desc) and
 // accumulated until `byte_budget_used` approaches the requested
-// `budget_bytes`. CALM does not synthesize state — workloads do (HLD DL08).
+// `budget_bytes`. CALM does not synthesize state — workloads do.
 type SnapshotResult struct {
 	// BudgetExceeded True when high-priority events alone exceeded `budget_bytes` and
 	// lower-priority events had to be dropped — or when even the highest
 	// priority tier was truncated to fit. Workloads can retry with a
-	// larger `budget_bytes` if their context allows (HLD §8).
+	// larger `budget_bytes` if their context allows.
 	BudgetExceeded bool    `json:"budget_exceeded"`
 	ByteBudgetUsed int     `json:"byte_budget_used"`
 	Events         []Event `json:"events"`
@@ -408,6 +430,9 @@ type WriteEventsResult struct {
 	} `json:"rejected,omitempty"`
 }
 
+// ClientName defines model for ClientName.
+type ClientName = string
+
 // SessionID defines model for SessionID.
 type SessionID = string
 
@@ -429,8 +454,11 @@ type TooManyRequests = Error
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
 
-// bearerAuthContextKey is the context key for bearerAuth security scheme
-type bearerAuthContextKey string
+// apiKeyContextKey is the context key for apiKey security scheme
+type apiKeyContextKey string
+
+// clientTokenContextKey is the context key for clientToken security scheme
+type clientTokenContextKey string
 
 // ReadEventsParams defines parameters for ReadEvents.
 type ReadEventsParams struct {
@@ -471,7 +499,7 @@ type ManageListSessionsParams struct {
 
 // GetSnapshotParams defines parameters for GetSnapshot.
 type GetSnapshotParams struct {
-	// BudgetBytes Byte budget for the snapshot. HLD §11 caps at 8KB.
+	// BudgetBytes Byte budget for the snapshot. Server caps at 8KB.
 	BudgetBytes *int `form:"budget_bytes,omitempty" json:"budget_bytes,omitempty"`
 }
 
@@ -560,6 +588,12 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// RegisterClient request
+	RegisterClient(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateClientToken request
+	RotateClientToken(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// WriteEventsWithBody request with any body
 	WriteEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -609,6 +643,30 @@ type ClientInterface interface {
 
 	// GetVersion request
 	GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+func (c *Client) RegisterClient(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterClientRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RotateClientToken(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateClientTokenRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 func (c *Client) WriteEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -825,6 +883,74 @@ func (c *Client) GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) 
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewRegisterClientRequest generates requests for RegisterClient
+func NewRegisterClientRequest(server string, name ClientName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/clients/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRotateClientTokenRequest generates requests for RotateClientToken
+func NewRotateClientTokenRequest(server string, name ClientName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/clients/%s/rotate-token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewWriteEventsRequest calls the generic WriteEvents builder with application/json body
@@ -1530,6 +1656,12 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// RegisterClientWithResponse request
+	RegisterClientWithResponse(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*RegisterClientResponse, error)
+
+	// RotateClientTokenWithResponse request
+	RotateClientTokenWithResponse(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*RotateClientTokenResponse, error)
+
 	// WriteEventsWithBodyWithResponse request with any body
 	WriteEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error)
 
@@ -1579,6 +1711,71 @@ type ClientWithResponsesInterface interface {
 
 	// GetVersionWithResponse request
 	GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionResponse, error)
+}
+
+type RegisterClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *RegisterClientResult
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON409      *Conflict
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterClientResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotateClientTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *RotateClientTokenResult
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateClientTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateClientTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotateClientTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type WriteEventsResponse struct {
@@ -2030,6 +2227,24 @@ func (r GetVersionResponse) ContentType() string {
 	return ""
 }
 
+// RegisterClientWithResponse request returning *RegisterClientResponse
+func (c *ClientWithResponses) RegisterClientWithResponse(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*RegisterClientResponse, error) {
+	rsp, err := c.RegisterClient(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterClientResponse(rsp)
+}
+
+// RotateClientTokenWithResponse request returning *RotateClientTokenResponse
+func (c *ClientWithResponses) RotateClientTokenWithResponse(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*RotateClientTokenResponse, error) {
+	rsp, err := c.RotateClientToken(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateClientTokenResponse(rsp)
+}
+
 // WriteEventsWithBodyWithResponse request with arbitrary body returning *WriteEventsResponse
 func (c *ClientWithResponses) WriteEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error) {
 	rsp, err := c.WriteEventsWithBody(ctx, contentType, body, reqEditors...)
@@ -2186,6 +2401,93 @@ func (c *ClientWithResponses) GetVersionWithResponse(ctx context.Context, reqEdi
 		return nil, err
 	}
 	return ParseGetVersionResponse(rsp)
+}
+
+// ParseRegisterClientResponse parses an HTTP response from a RegisterClientWithResponse call
+func ParseRegisterClientResponse(rsp *http.Response) (*RegisterClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest RegisterClientResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotateClientTokenResponse parses an HTTP response from a RotateClientTokenWithResponse call
+func ParseRotateClientTokenResponse(rsp *http.Response) (*RotateClientTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateClientTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RotateClientTokenResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseWriteEventsResponse parses an HTTP response from a WriteEventsWithResponse call
@@ -2757,6 +3059,12 @@ func ParseGetVersionResponse(rsp *http.Response) (*GetVersionResponse, error) {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Register a client in the namespace
+	// (POST /v1/clients/{name})
+	RegisterClient(w http.ResponseWriter, r *http.Request, name ClientName)
+	// Rotate the client's bearer token (credentialed namespaces only)
+	// (POST /v1/clients/{name}/rotate-token)
+	RotateClientToken(w http.ResponseWriter, r *http.Request, name ClientName)
 	// Record session events
 	// (POST /v1/events)
 	WriteEvents(w http.ResponseWriter, r *http.Request)
@@ -2804,6 +3112,18 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// Register a client in the namespace
+// (POST /v1/clients/{name})
+func (_ Unimplemented) RegisterClient(w http.ResponseWriter, r *http.Request, name ClientName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Rotate the client's bearer token (credentialed namespaces only)
+// (POST /v1/clients/{name}/rotate-token)
+func (_ Unimplemented) RotateClientToken(w http.ResponseWriter, r *http.Request, name ClientName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // Record session events
 // (POST /v1/events)
@@ -2898,12 +3218,78 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// RegisterClient operation middleware
+func (siw *ServerInterfaceWrapper) RegisterClient(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name ClientName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterClient(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotateClientToken operation middleware
+func (siw *ServerInterfaceWrapper) RotateClientToken(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name ClientName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, ClientTokenScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateClientToken(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // WriteEvents operation middleware
 func (siw *ServerInterfaceWrapper) WriteEvents(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -2935,7 +3321,7 @@ func (siw *ServerInterfaceWrapper) ReadEvents(w http.ResponseWriter, r *http.Req
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3011,7 +3397,7 @@ func (siw *ServerInterfaceWrapper) Ingest(w http.ResponseWriter, r *http.Request
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3031,7 +3417,7 @@ func (siw *ServerInterfaceWrapper) ManageListClients(w http.ResponseWriter, r *h
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3063,7 +3449,7 @@ func (siw *ServerInterfaceWrapper) ManageDeleteClient(w http.ResponseWriter, r *
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3102,7 +3488,7 @@ func (siw *ServerInterfaceWrapper) ManageDeleteSessions(w http.ResponseWriter, r
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3167,7 +3553,7 @@ func (siw *ServerInterfaceWrapper) ManageListSessions(w http.ResponseWriter, r *
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3216,7 +3602,7 @@ func (siw *ServerInterfaceWrapper) Search(w http.ResponseWriter, r *http.Request
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3236,7 +3622,9 @@ func (siw *ServerInterfaceWrapper) CreateSession(w http.ResponseWriter, r *http.
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, ClientTokenScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3268,7 +3656,7 @@ func (siw *ServerInterfaceWrapper) DeleteSession(w http.ResponseWriter, r *http.
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3300,7 +3688,7 @@ func (siw *ServerInterfaceWrapper) GetSnapshot(w http.ResponseWriter, r *http.Re
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3348,7 +3736,7 @@ func (siw *ServerInterfaceWrapper) ListSources(w http.ResponseWriter, r *http.Re
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -3491,6 +3879,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/clients/{name}", wrapper.RegisterClient)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/clients/{name}/rotate-token", wrapper.RotateClientToken)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/v1/events", wrapper.WriteEvents)
 	})
 	r.Group(func(r chi.Router) {
@@ -3547,6 +3941,120 @@ type PayloadTooLargeJSONResponse Error
 type TooManyRequestsJSONResponse Error
 
 type UnauthorizedJSONResponse Error
+
+type RegisterClientRequestObject struct {
+	Name ClientName `json:"name"`
+}
+
+type RegisterClientResponseObject interface {
+	VisitRegisterClientResponse(w http.ResponseWriter) error
+}
+
+type RegisterClient201JSONResponse RegisterClientResult
+
+func (response RegisterClient201JSONResponse) VisitRegisterClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterClient400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response RegisterClient400JSONResponse) VisitRegisterClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterClient401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RegisterClient401JSONResponse) VisitRegisterClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterClient409JSONResponse struct{ ConflictJSONResponse }
+
+func (response RegisterClient409JSONResponse) VisitRegisterClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateClientTokenRequestObject struct {
+	Name ClientName `json:"name"`
+}
+
+type RotateClientTokenResponseObject interface {
+	VisitRotateClientTokenResponse(w http.ResponseWriter) error
+}
+
+type RotateClientToken200JSONResponse RotateClientTokenResult
+
+func (response RotateClientToken200JSONResponse) VisitRotateClientTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateClientToken401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RotateClientToken401JSONResponse) VisitRotateClientTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateClientToken404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RotateClientToken404JSONResponse) VisitRotateClientTokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type WriteEventsRequestObject struct {
 	Body *WriteEventsJSONRequestBody
@@ -4264,6 +4772,12 @@ func (response GetVersion200JSONResponse) VisitGetVersionResponse(w http.Respons
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// Register a client in the namespace
+	// (POST /v1/clients/{name})
+	RegisterClient(ctx context.Context, request RegisterClientRequestObject) (RegisterClientResponseObject, error)
+	// Rotate the client's bearer token (credentialed namespaces only)
+	// (POST /v1/clients/{name}/rotate-token)
+	RotateClientToken(ctx context.Context, request RotateClientTokenRequestObject) (RotateClientTokenResponseObject, error)
 	// Record session events
 	// (POST /v1/events)
 	WriteEvents(ctx context.Context, request WriteEventsRequestObject) (WriteEventsResponseObject, error)
@@ -4335,6 +4849,58 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// RegisterClient operation middleware
+func (sh *strictHandler) RegisterClient(w http.ResponseWriter, r *http.Request, name ClientName) {
+	var request RegisterClientRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RegisterClient(ctx, request.(RegisterClientRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RegisterClient")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RegisterClientResponseObject); ok {
+		if err := validResponse.VisitRegisterClientResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RotateClientToken operation middleware
+func (sh *strictHandler) RotateClientToken(w http.ResponseWriter, r *http.Request, name ClientName) {
+	var request RotateClientTokenRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RotateClientToken(ctx, request.(RotateClientTokenRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RotateClientToken")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RotateClientTokenResponseObject); ok {
+		if err := validResponse.VisitRotateClientTokenResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // WriteEvents operation middleware
@@ -4723,107 +5289,124 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"5CSjAam27vzR+NGYmP//AQAA//8=",
+	"1HzbchtH0uarZGAmwmQMAII6OGwqfEHL1phrnVakx7traIlCdwKoYXdVu6oaJOxQxF5NxN5O7CPsk/lJ",
+	"/sisqj4A3SAli/L4xhbR3XXIyuOXmfXrINF5oRUqZwcnvw4KYUSODg3/9TSTqNxLkSP9JdXgZFAItxoM",
+	"B4p/8/8bDgz+XEqD6eDEmRKHA5usMBf0TS5unqNautXg5PNHw0EuVfzzeEhjOTQ06v/+SYx+OR39r8no",
+	"y8vR27/9dTAcuE1BM1hnpFoO3r0bDs7RWqnV2Tc9i7H++aVM77qkB48/317T9rTvaChbaGWRSfK1SN/g",
+	"zyVaR38lWjlU/E9RFJlMhJNaHf3TakW/1ZP+1eBicDL4y1FN7iP/1B59a4w2fqoUbWJkQYMMTgYvRLbQ",
+	"JscUTJjy3XDwVKtFJpNPMH3YJyRhRgvX0q0gKY1B5cA64RAOcLwcDyEt/fQI4RSGQIebFw6chhQzdAiz",
+	"FBeizNwMEmasQ9rPS+2e6VKln2I/VpcmQVDawYLm5A1JBW6FkIgsQ/OZBeImW4gEx/DUaGtH1Q9TJZIE",
+	"rQWDrjTKwqPJoyGP9mjyEH77P/8PpFpLK+cyk27jn6SopMjGU0V7fS02mRbphdbPhVnipzvCuU43gDcJ",
+	"Yoqp365WC7ksDaZg5S8Imcwl89eF1i+E2oQv7f2v8TWamsRgiId4MdV6aVU/KFG6lTbyF/wEnPJCWivV",
+	"ErShExWZTGGOwqABp69QsTYKg7CaFDYRKT7VZdCi7dH876AXkGKBKiXhMfqa2CjXa0xhvgEBCQ9Cs3pp",
+	"GQ+Gg8LoAo2TXvUkq1Jd8b+CkpLK4RIN0QfXUYPvPsvEHLOeZ14iOh++ayrRn6o3h3Ed1aTVDG8r9ann",
+	"/8TEqyuW9PMyz4XZsIVp7SkT1l2KxMm1dJtd0p3OLVFLLjzP8liwEhYUrtHASqQgFPD3leYhwpHaFG5w",
+	"MkiFw5GTbKW2VHu0G7/uPoiWJKGTuwNtghlsf9ZJDYPCYTBkDTuyddC8z11q/KjNFekPkMRDciHRjOG0",
+	"dHpkcCktWW3QChbSWAcGF2hQkRp7lUvnMCWNbOS8dGhJKVfamAj2XkaxyVIiTSUtT2SvW3vY+WSHFg1z",
+	"/b5WeThwLrvMpaK97NLpTEWOAjp6XboxPM1EXpDu08xKtFThtBk19GCCMpNqGcgh8zIfnBxPJl9MeDXh",
+	"7+GtclJvq4sDvmHh9lLxBm2ZdZyz/50URuD4oBFgJhYLTByml2EWOwNpwaKD6xUqmKVmc2lK9RX5PLMn",
+	"dMT0YXrpx5nB3+qf6hH+BjOvfDCdgTDI42m3QnMtbYce2llEt2qJY96mhdvak3Vxc9GdzLS9iR4Z7aH+",
+	"C6HEEtMghvb2Y5iX2dUoODHBXch5DDh9ffY7juU//ww+jMCVgouE3dJvH2lVQXXsRgpNeez4pkGXLhH1",
+	"bsHOqlN0Qmad7IgqLbTs4VWMw+1fp3+tcz3rIAZbVGRbkl4KfnY3i5cKJ/q1to+Udub3VK4mkMp9/mgw",
+	"7OC2wkhtgh2vNOij/doz/nIbefjY+JXGPGFDwyYteil4poqyg4x3IUm3GR5ZZ8rEse34b+evXkLh3fsx",
+	"PD19/gJSjZZDANqrKQxyJEVe63jQscYm8drzHX+VGOlkIjI4ENm12HAAIqTC9HAID75ayeVqCA+/UnRC",
+	"2RAefaU0KQ2oFiqslUuFacu03flgenafrLRFBewEAr07hpfaAbvLgt2NpZDKOhCwkDcUZ6DbcjV2IYH9",
+	"TNBz/l1H/h2KzK16NdAKk6u9/gsqostPA31F7qSQWUtZNC3RdiwTnfxkwyFyacfwPW4sa3We10eYMXKe",
+	"Fdq6pUE7G07VrFheOrxxFoVJVjN6urx0ZpnPDp8QZUv048z01Yyik5lf2WwMFyucKltgIhcy8dZj4aez",
+	"ZItkXmSYo3IcJ41SXBD7gFAp5GIDS6Ovp0qTT02qg2PZ63DQFuxKl1nKvLwSJh0lOkU2gle44VOdqi6O",
+	"9rvf5aBXazQiy2DFRzT2m5GLBbGS2QQazTHT11AIaz3bts4jxaXZUt89HBPWMIwn3sUqZ2qJ1vV743Wo",
+	"uXP64dnlLaJSGL2WFHkHlxsWOoSS8hc+EJgboZIVeZ8wI/LOpore8UHXaCEzpOOelzJLR7p0RVkpkycw",
+	"K4y2OONBlXClEdkoE2pZiiVOVXgNDuLccgHaBwSHzDbA8RwaZgRiASNThAKNf8AuDK8mFw5Ij4jMQoo5",
+	"8Y50zCoLijNSYL6YZ5p5TlkaRkAuzFWqrxVIJvNUsRxkpJIWkljQhh2DwaUwaYaWY2XiL6eLUYZrzGAl",
+	"lRsyu1onkitnGI5ZGJYkGjEoRj/UGH5QV4omDTJToLGSVJEdSQvz0vE3zluNqaI1NIjYOplSOZnRaqQB",
+	"64xwuJRhzkqoMG2JQM0f0Whuc8YzT03aFc/IlObTP1uA4KB36K2IoPAuRYeJs005yPRywCIWiEEsbte0",
+	"Bv5vjs7IhBifIRHSuv4Y6A28cZ26TDKndEjsDwXFTQ/BvwD+CzuGH8m7rZibTidym8du7FR1YU1uZdCu",
+	"dJYOYWY9MsAOszYpGo+HvHnzDERitLVTVaAZhZmNYDJZngtFsgKLCR9TIozhc4FZLlyyQkt+tBEbfzLS",
+	"Yc4buyWuzMXNmX/1YfWUh+mIWPeP5EV3l5bPKXSOEfxGqiW4lbQV4RqIZMQz4A2OvPDQ24zB8mORY1AQ",
+	"YLDIREKMTqaxGuxAqrUwUig3eD9D23aWgwKs9rRPiXbb21TS4hmmuXRo8g4eu9AF8CM6/rNvnvlAi8Oo",
+	"ACgnoigYxYBHkzH8QydiXmbCbJgaz5+/iHaqtMhCtdBZpq9HZQHenI6bfLDn5B9Nuo6e2cxeSpXijQ9d",
+	"2ut/WeZzNKS54rsgVZKVJBnhQD1sjGnN9eNOP7qazGknsi5SOZHV0xRGp2Xi5SYqkieszb0Uwmx79TNG",
+	"1EypEtJ/PYvo4d9vkxU5tn4/Hl2e+Xe98mRhJ+0WoLhdwaixwC2/QCGgcmbDxicsNW6zefyPJ62j3BdC",
+	"nvuvXxtcS7xun/PjrnP2i7usiNNBfVNiiOsr5XUtbGN9RJvHk5HfC2PZDULMtc5QqA6R2+KwHT7oWl11",
+	"TjVdhx3S1iWxz6V1HoeyvW6yf8z5trtQuw32vtsm79aO4+h9i+uFadqLbEIUd1ple9xbl1mN37fOc4+M",
+	"966vhtjvxrL8/l2JGEfvWtzWRnc4OTwAuxJFQzvNNw2Ei9wbj3KdpqmFFl4/BI8De8eMA0GPfUeUNdEG",
+	"Ic6ykJiltiOt0Q/zfQjE0VjGbemQD8eud9IWd084cJprb9ahE9XagbzvDkM35x1GcrfHa5F6e3ttmnYx",
+	"2hsUKWMsvUJQ56fuJAMe8rqN98Og3SvyCZFbgXbO7BO/CrAlZ3cXZRZxd59WMd6Wwcz/esnhgXdYVbaZ",
+	"qsKgz1KpOncccuWzsNyAZV8mBtnxE5k9AUaDfdrYTZXkOPtagVYJskBRvG0woZBMzLNGHodGMJhtvBUi",
+	"QVtkYslDLERm0bu8XVLm195peplpW2nOJxB3Rvv0k/Xvh+hBO/IR1AobefQuUfgQ0e7N1+2Tq+5UXUsi",
+	"9oOHb7QTMWNzQXTZby37SEyRtsLrLQpXjjtRrCAvRZfEVxRc5phK4TDbjD8aMYYDw7t5H7rfgYDNjbem",
+	"6KLnOTvj38kOCnLkdpmJDZoONGUlkxUxeDYXyRXwW7Xvy6HCSroxRfLSe2UsOhbm2kdMJKnaYohTU4Rn",
+	"F+fBzbRw8ObNs9GitN6D84MfH5J0TlWNhKWapdIiepsX/lboM4uptCKfy2UpHA7hmhY8VQFNYICFAtN0",
+	"DM/Yc1YOZovyl182M1q4BVsuKYZiVghO4FSt6zAn1WjVZ84PA9cr4ZoYHVOVhM9Lf8QJAjHoWI1cGpEP",
+	"hgOetBMBsEoWBXZoym9vROJGDm98aG8KBwuj8+ZaA1wkDFfWeA/CMaYV4rpWNLonXt61fNJldxBt/1q9",
+	"iYZv3GSsfp7shQB9cQwThTG0wcnjBpD+eHIbkv5ziUZuuYB3BiKO/fDxr9tgiTsDEeeJLoLiCczjrWCF",
+	"IXtogd2l8eC9EIO4332k7tahhn/f653dMe6LSubdLsG2q+wKitppzZsAbcFv//o3Y02Ysmh2JGy2th/X",
+	"3b3jVgzarfW66hgYXpsFVG4G12iwRtt0RFSH/gjLeQD9w/usEacq4mNhEjiYb4ACVWEE+RlSgVCb8M1n",
+	"lhHX7w/H8G1euI0H0KYqR6Fs1F6gdHh9DKE8hz0DvxguyanesFvgW59jXZ1MUdPo92mB7nO4JQ4SFjBZ",
+	"6RqwSZrlOhDrQMfwgqRdZAyuV2AH0Z6VMuO2ic69tzYEsXBooFHihlZnZQA12HROlaireLy76e1LXabi",
+	"a1MgyURecGmaglnDg5/1+3wfLbL6c0QvnSevRGFXujcO+DsqNDIJucxMWtfEog9ivhGETYZQzwU0yiEd",
+	"FFeGlnmZceLTpwxm843Dy3mZLtFdkmMxI8EzWrAcNvAzMvOz8B59Y2fbGWS7UW6FjJ37qtt2fi7VXacf",
+	"RqyqKPcAWSu5XI2qXfqwCkRGbmhVNNpeod90pq/R7HxIKsBpmCOkRjMmRsvVxs9FL/HuaVJOCFXfO4mG",
+	"obQK36JxFuTU/VhtNhEkic5sfIQlpioTZolme4G+ZlAGMPzGgcgyfW1biZoKixsOtg/rtjLL3xPG3iIs",
+	"+2RhZ5nDnXMe7ouL2+BSR168v8Q0uHnvpTLYebh9i/61RmVpY66uXfwDzb76Ik6TXvKadlNZF085xW2d",
+	"yIs6gJ5LRS42MR99Xds2qSDFtc+82ruXlnr136FppAumAc6/O415Th69f8qd0dd+/12WLBfKyQTCG3EC",
+	"UypFViNsM5YeHI8n48ns8HbvLk7YdRg/Gukwoj89DvSHyI2v19lyhX+XL7xPsPbITGuD3RwnkgQL16c1",
+	"DP6Ti/Va+28PwAzf97UIVe23VEjxENX7XTvZi6ZVe3jb5exaTEpS0ud0RGHThfweO/I4LytP5/T1GVzh",
+	"Zgyvoh8jrS3JJ8q0Wo4yuaZ/N9LDRbMXYKqCG8bG8H+evng+hjdhweT/+HKRmIRy5HpJDpC918Shw1Qd",
+	"+DKTo8DCh2SImo4WHLx+dX4BR+vjo5CQOPqVlvDuMDivtKUVihRN3Wr0P0a0ptHp67MRkaCmrCfJu+io",
+	"XHRjQa/RjALE2ISDhuDJA6INPdZqqnYiV8JOVT8ax6WmDXJxMYnn95HTJYflU1URynqPV9vGFPYJyKXS",
+	"9HULZ4QKZoQzv1yPWLqp6qGkrylif1YBo0NSqyfb+CYU2rpRLlWoJ2JlwFaaSVQTeeVc4bs2pFroXep+",
+	"d3HxmlmPNs28Q/6HiI7AqJHYsGjWMkHPPAuZcQk9uzaklQxay7XyOoNQdDPHhTYI0gEqfjnmnqOXcS1V",
+	"qq8bDstUeYeRQuuYyQ6xUnNgqZwG6YYxFvfFD/xLIgpXGpyqRr2hV1c+SHAoDK2Iq2xC+hGJ2Av2EcdT",
+	"NVWnpVsRa/g+mZMt2YnFE7M2X5/AtJxMHiYVS4xEIUdXuOGfkWIOJi8HNOvg1F7hxgMJNa9ydkgttEmQ",
+	"dlTLbsV/NFK71wp2W60YQOpsr+IDZoQvxmhc86Z8InRZSrtiDmPISpB7mW1AaYU30vq6ktAadsjEelmj",
+	"+A3ddFdAv8Ytsk0lojA7Df1L4QC+9nLvCewHG7ESCLTlMwnlIVyNNYqhIr8VNcV8A7MeqZuN4WU7HaFL",
+	"18gWWHRBwPnH1vrAK7zgLPvAe8Bnffr6bNBwQAbsQpDC0wUqUcjByeDheDJ+OOD2zhUbit21bbea/tTt",
+	"D9SvHDVaUd+9HQ5IV3SglNaJeSZtDLCCjhWWa1CNdSMuPOMEituQevTM9WByzATy5UqxmQZT5uEn8Gjy",
+	"ZWxBoh+It0RmUKQbcIIO46COxUiTkOFyJIGG3EzjRlYskOIbUgQ8mrAx2+Q57uxDUkfDEER6jp8qbvJr",
+	"cl+jKErHBM9WEstrxiZ7WUwMej6Ju4K8tK6uoVNplRhaS9HD2bOp0sqjUh7qrm3NGJ5r1n5XqGzMKDXs",
+	"AvMZN3npqSImIn0SDAWtK2eSXawkHaQvvAfpLGYLOhm84a7TCp1uylacjHX/ASuM2GETsPWVWJOm9m9v",
+	"0B0OuVrQOpll8Wu7ZYpPX59NFbk5LC3VPs9SzjA285CDrWbiB5Pjj9bM2Jnx7OhtfNpMbRKTk/A+mkz6",
+	"xq8WfNRofeZPjm//pNW2yR99eftHVYdz0+9kHRE9zp/ekg6oCokqKpOR99uTW/4SqTGxtK2yExp+VzUd",
+	"+fTVqErj3YOeeiEZYOF8YFiw5ziuqVWxhH43KzhVwulcJiTdY3ilso2vt/+w3POTqeIWo+an3t7umtuR",
+	"0m7krS2prFiUA/q6KhmRNm6mUhXeiYmi7XEgWrQXvWpBkKwEuUSVwxrUd+g0b5HIn6z3aLrt1ZYEbqdv",
+	"d4Vw8vGEsCdX3CGHF14h+Vzp7xCoR7d/VLXY7xGorYhlR8J4nQ2F+plthS5wUJ9msJuBoei8D/eJX40N",
+	"dAvLjNx+LreI9qhqXzhQOvSWOHGjlc43hz7/y3jijCsiYogLB3UfTdUjQ6+nwglfzVGIn0uuBSELNIaA",
+	"Ck+Vh4WtI1eJWJgNVOBxX4pMcQQFTLUfUDX9dPFkA1EIV1WgdV/rdPPRGLEDlHnXDvhJA7zbEYUH97OC",
+	"PiH4NkDNEXr4pKbovSWnYW8SbdIYz0HVBx95PIJJbRY/+rVGnNgDXnZl2s/LotDG2RCOMmq3gSAExGuz",
+	"XKrLisfHHS5HLMa6V023XfLVe7p/0AmJGCQzDFAF312nNHxPG19fRPNuuHvZQ56LkUV63WEakkmLRpuc",
+	"9UkNOlyYc20P3hSZTnFwwrBKgJw4H10jTvzloHmPzd2zqtZtOIBbaJN3LNlHQd4wB5KxA1HlZX77v//f",
+	"m3fupoEDTvvAV5Br3wSjjRPKMYzctfQmvw62buK5UysiLblrYF+W0Tni8WRyW9v+2yCcHh/slcdXNZgY",
+	"OtaqqKMZQE5qkKwwmqELaaEsvEvn7FRVfYEUkR28Dl1/kGilYol7ZavwxqFiB+uQO40MioQhjCdT9Xjy",
+	"0M8Vu+DG4CUn4Dsh33b1BXcGzLGqWmJEIVjtACPYMZyX0nlwRBtfKpXJNSragOAQVqSS/wqDCQfr4yec",
+	"dwvvHdXv2CKTjlN0cyQTGKuzMkHcHjGIuUFxFTtfpqoiZ4el/Ds638l5n7qs1SvaocfOA0oobeAAlqrH",
+	"k4d/xAqq3sctZ67lrsX3V5F2Uec1oPHaPHk4st8De8ppuWGslRuCLiqIgfPkwV3XeSESB2EZMN8EIISi",
+	"zQzXXHCylgLevHk2hnORY905whnA2PxUKeupajQ2hSgo9jbJFPNC0z+zTaO0DP7y+WEXI/n+pHvyttod",
+	"pHdytCYfffLegD8ci8GA2vAk/8Gu1nDw6Pjh7R9sX6ZF3z24A7ywfcFV23Hw1AQjrusG2xATi4rDt0hZ",
+	"i1eQpEqyfKrhqNFH02ljyFsZsf1l7erj5JAy8xUPFtHXk4bwywJj1z5X4escYr3+GH6wuCgzn/MptOO2",
+	"Qbcp9Ch+y6Wr5CFV8UqXyPj2kUab0H3q4N1upF7s6kM9ytY503wVLQNaFNKVzTvgGmfrz7LvbI9+9f94",
+	"5083Q9dRfBAuNCF1aXS5XMEsNheN4w09z773mGyWtYLtqYpvDkNhph36gls7bCWDfHdLcBr4ejHf5F3d",
+	"9lRBnolQ5BXMMVwvlMJBnWz58jA0Jnzmdftca2edEUVVgB0a1CMOFG27iAjzzDf89DNW8yakwY4L3uXv",
+	"hWt0Wh5fVZEbfOedLru398i0HZc5dd87GO4RClcIHWgDqdmMTKmAm2oOP6FqfX8EthFUEUPVICsX0nuW",
+	"ZoblIvbYLdchON2H3L7EM6mB8o9zgefbtrg2uwX7xLR9X1OVgiQ5iPcu+XOruJ5HCneH9fP6eU2bPy+3",
+	"d3dlflK2bzHl1427uSpttAf+b3BjN/6S6MY9cR0moY76jOQLCDwIJNVCh45vsrexMzITjIPHhsmqUdJT",
+	"YLzH6Da45V6t7p0PtFrQxzK/28d1R/u7Iz1bd2tEaKXKBVW3JTZvV+g62R4Ao9JJNVF3SrG6r3nwMM8Y",
+	"ztFIkREd+L4Tzxw/XeHm7VeMqczgIEUsXnG9FTBeQ1HMizJzssgQCiGNN+qnL78ZxetGKtzIa8hOiMQ3",
+	"uzaX/jtubAw4Ur3UQaVefdlKfwx5sTKII99XVfVwHYTuJKh7pH77178hdCrRv6eKm5UOfT2HQ6NENobn",
+	"vj0LTKlsdc0UYxcz7xNdLpy9DDe6sIvc/N3fNiNCk5K71o1rRQxC1QhGjj93dfhkMo1fdXP5rBNXOFBU",
+	"gMD7kYpb90LnSCZto3K5Uc1NGmaqiEEb1wd1OUq+i+WegtZ2z9MnDlpbXUBdxsOTMBzAEJZGl4VPNHoO",
+	"/5NkCv47dxVVHXLtS166QOkgR1WU0fRXuiUrtqecfdPKkbWu5fGprUZBEHBmjMu20qmqiiWCUhyG+3Wr",
+	"3+c63YTrftq1D5Gp60KnGF3U2eZhHRI0F2hL4p54CVlpeYxwZy2ICvDJNqNGQU4Y/SBci+RvtGpeZjtV",
+	"jI3WN1zxoqWv8GivJFY3+u6EIchFrGsZThWXvPhOS/b7SrcaRYKFVTxp3tJDA85956OGZmXJNVdV+iTp",
+	"tbBxCuyMjFr3A9+T3HfeQXwn8T/+iOIf7t7o9TJim82fsjrllmT6062C0Jb4x8tGthXATvawL3o534YH",
+	"6hbiTqggRHDjqaquQ4h1YzG4S/wN5lY3EtyJUCDKVLrQiSyq+8ynqgYD6juYDIpOlm+FRoN7D1/aV9Pu",
+	"4b8AivwhVuMChQnlvJV+oROLQXa49bSDaX5HKvPtPoY7sqGFrhfDbPfQbRVLdNyFyu/V1xPG2w1px3WZ",
+	"s+92a8OtzWYwhZhyJXvzm5Uo0IbR3ArzEF5IA0TRXKZphtfk6VXmLV59U5d6GBR5Tz4qNhPeJ69uNSx2",
+	"sWlcxR+TXWdAvF3/0GyZrDsmOYWY8G2oldcz3zgE37b20bl4JxD7up6supokMjMHZuToJKLgzOYX33/d",
+	"FwQ2uwu7MZkHk0dfNK4F+OL4yweNFDRDVb1J6B6hq6+O6pS5b1U60osRKWXQc4tmLXy1nm8QjXo5up90",
+	"GCt9DXnpL8Nrs3bjKqv7hhzaN2Z1cXdYxx/B3AxN+EQOaRO/kv0u+8dUv43evp5cUY1Gttv6PrNV21+O",
+	"TpCR2CkNGE9VIzuUYpHpDVdDr9HIRTjRUIaaMHBC0bhYYo8yDJ2Y98kw7WbPDmb5x9am75QZX1cL70mN",
+	"31J7zHqjC356rhORQYprzHSRe9yoNFnoWzo5OsrohZW27uSLyRcTOvj/CgAA//8=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

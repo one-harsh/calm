@@ -385,7 +385,7 @@ Developer starts Claude Code session
 
 # 6. API Surface
 
-The API is HTTP REST with JSON request and response bodies (see Decision Log [DL09](#dl09) for the protocol choice). All requests carry an API key via header (`Authorization: Bearer <key>`). API keys are mapped to namespaces in service configuration (see Decision Log [DL10](#dl10)); CALM resolves the key to its namespace — a content-agnostic partition, not a hierarchical tenant (see Decision Log [DL11](#dl11)) — and enforces it on every operation. Workloads never pass a namespace directly. Per-workload attribution comes from the `client` identifier described below, not from per-user credentials. The MCP adapter follows the same model — developers configure the adapter binary with the team's namespace API key and the adapter self-identifies via `client` on each request.
+The API is HTTP REST with JSON request and response bodies (see Decision Log [DL09](#dl09) for the protocol choice). All requests carry the namespace API key via the `X-CALM-API-Key` header. API keys are mapped to namespaces in service configuration (see Decision Log [DL10](#dl10)); CALM resolves the key to its namespace — a content-agnostic partition, not a hierarchical tenant (see Decision Log [DL11](#dl11)) — and enforces it on every operation. Workloads never pass a namespace directly. Per-workload attribution comes from the `client` identifier. In namespaces configured with `require_client_credentials: true`, workloads additionally present a per-client bearer token via `Authorization: Bearer <token>` — that token authenticates the client identity, replacing the body-field claim with a server-verified credential. The MCP adapter follows the same model — developers configure the adapter binary with the team's namespace API key and the adapter self-identifies via the registered client (token in credentialed mode, name in body otherwise).
 
 Two path groups on the same service:
 
@@ -396,9 +396,11 @@ Two path groups on the same service:
 
 ## Integration contract
 
-Every workload that uses CALM follows the same five-obligation pattern. The shape is uniform across internal LLM applications, automated pipelines, and the MCP adapter; only the surrounding code differs by workload.
+Every workload that uses CALM follows the same six-obligation pattern. The shape is uniform across internal LLM applications, automated pipelines, and the MCP adapter; only the surrounding code differs by workload.
 
-1. **Create the session at the start of work.** `POST /v1/sessions` with a workload-chosen session ID (opaque to CALM), optional `client` identifier, optional `ttl_minutes` (bounded by an operator ceiling). The session lives for the duration of the workload's unit of work — one conversation, one pipeline step, one batch job.
+0. **Register the workload's client at install time.** `POST /v1/clients/{name}` once per workload-deployment. Establishes the client as a first-class entity in the namespace. Returns 409 if the name is already taken; workloads that intend restart-safety catch 409 and treat as success. In namespaces configured with `require_client_credentials: true`, registration returns a one-time client token that the workload must persist and present via `Authorization: Bearer <token>` on subsequent operations — providing real per-workload isolation within a shared namespace. Lost tokens require `POST /v1/clients/{name}/rotate-token` (requires the current token) or operator intervention via the management API.
+
+1. **Create the session at the start of work.** `POST /v1/sessions` with a workload-chosen session ID (opaque to CALM), optional `client` identifier (when the namespace doesn't require client credentials, the client name in the body must reference a previously-registered client; when it does require them, the body's `client` is ignored — the session is bound to the client whose token was presented), optional `ttl_minutes` (bounded by an operator ceiling). The session lives for the duration of the workload's unit of work — one conversation, one pipeline step, one batch job.
 
 2. **Execute tools normally.** Raw output is the workload's responsibility. CALM never runs tools — it receives the output after the workload has produced it.
 

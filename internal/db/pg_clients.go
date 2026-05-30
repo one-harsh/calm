@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	logging "github.com/one-harsh/context-logging"
 )
 
@@ -17,20 +18,102 @@ type clientRepo struct {
 	logger  *logging.Logger
 }
 
-func (r *clientRepo) Register(ctx context.Context, namespace, name string) error {
+func (r *clientRepo) Register(ctx context.Context, namespace, name string) (bool, error) {
+	if namespace == "" {
+		return false, ErrNamespaceRequired
+	}
+	if name == "" {
+		return false, ErrClientNameRequired
+	}
+	result, err := r.queryer.ExecContext(ctx,
+		`INSERT INTO clients (namespace, name) VALUES ($1, $2) ON CONFLICT (namespace, name) DO NOTHING`,
+		namespace, name,
+	)
+	if err != nil {
+		return false, fmt.Errorf("%w: register client %q/%q: %w", ErrStorageBackend, namespace, name, err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("%w: rows-affected for register %q/%q: %w", ErrStorageBackend, namespace, name, err)
+	}
+	return n > 0, nil
+}
+
+func (r *clientRepo) RegisterWithCredential(ctx context.Context, namespace, name string, tokenHash []byte) error {
 	if namespace == "" {
 		return ErrNamespaceRequired
 	}
 	if name == "" {
 		return ErrClientNameRequired
 	}
-	if _, err := r.queryer.ExecContext(ctx,
-		`INSERT INTO clients (namespace, name) VALUES ($1, $2) ON CONFLICT (namespace, name) DO NOTHING`,
-		namespace, name,
-	); err != nil {
-		return fmt.Errorf("%w: register client %q/%q: %w", ErrStorageBackend, namespace, name, err)
+	if len(tokenHash) == 0 {
+		return ErrInvalidClientCredential
+	}
+	_, err := r.queryer.ExecContext(ctx,
+		`INSERT INTO clients (namespace, name, client_token_hash, token_issued_at)
+		 VALUES ($1, $2, $3, now())`,
+		namespace, name, tokenHash,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrClientExists
+		}
+		return fmt.Errorf("%w: register credentialed client %q/%q: %w", ErrStorageBackend, namespace, name, err)
 	}
 	return nil
+}
+
+func (r *clientRepo) RotateCredential(ctx context.Context, namespace, name string, newHash []byte) error {
+	if namespace == "" {
+		return ErrNamespaceRequired
+	}
+	if name == "" {
+		return ErrClientNameRequired
+	}
+	if len(newHash) == 0 {
+		return ErrInvalidClientCredential
+	}
+	result, err := r.queryer.ExecContext(ctx,
+		`UPDATE clients SET client_token_hash = $3, token_rotated_at = now()
+		  WHERE namespace = $1 AND name = $2 AND client_token_hash IS NOT NULL`,
+		namespace, name, newHash,
+	)
+	if err != nil {
+		return fmt.Errorf("%w: rotate client credential %q/%q: %w", ErrStorageBackend, namespace, name, err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%w: rows-affected for rotate %q/%q: %w", ErrStorageBackend, namespace, name, err)
+	}
+	if n == 0 {
+		// Either the client doesn't exist or it was registered without a
+		// credential. Both surface as not-found from the caller's
+		// perspective — there's no token-bearing row to rotate.
+		return ErrClientNotFound
+	}
+	return nil
+}
+
+func (r *clientRepo) LookupByToken(ctx context.Context, namespace string, tokenHash []byte) (string, error) {
+	if namespace == "" {
+		return "", ErrNamespaceRequired
+	}
+	if len(tokenHash) == 0 {
+		return "", ErrInvalidClientCredential
+	}
+	var name string
+	err := r.queryer.QueryRowContext(ctx,
+		`SELECT name FROM clients WHERE namespace = $1 AND client_token_hash = $2`,
+		namespace, tokenHash,
+	).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrInvalidClientCredential
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: lookup client by token in %q: %w", ErrStorageBackend, namespace, err)
+	}
+	return name, nil
 }
 
 func (r *clientRepo) List(ctx context.Context, namespace string) ([]ClientSummary, error) {

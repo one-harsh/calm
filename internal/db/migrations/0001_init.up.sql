@@ -10,12 +10,19 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS pg_textsearch;
 
 CREATE TABLE clients (
-  namespace        TEXT NOT NULL,
-  name             TEXT NOT NULL,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_activity_at TIMESTAMPTZ,
+  namespace         TEXT NOT NULL,
+  name              TEXT NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_activity_at  TIMESTAMPTZ,
+  client_token_hash BYTEA,
+  token_issued_at   TIMESTAMPTZ,
+  token_rotated_at  TIMESTAMPTZ,
   PRIMARY KEY (namespace, name)
 );
+
+-- Partial index keeps it tight — only credentialed clients participate.
+CREATE INDEX clients_token_hash_idx ON clients(namespace, client_token_hash)
+  WHERE client_token_hash IS NOT NULL;
 
 -- session_id is namespace-scoped (composite PK with namespace): the schema
 -- treats sessions as subordinate to namespace, matching the conceptual model.

@@ -11,7 +11,7 @@ import (
 
 	logging "github.com/one-harsh/context-logging"
 
-	"github.com/one-harsh/calm/internal/client"
+	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/db"
 )
 
@@ -22,7 +22,7 @@ func TestSeedNamespaceClients_HappyAndIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	svc := client.New(store)
+	svc := clientreg.New(store)
 	namespaces := []string{"default", "tenant-a", "tenant-b"}
 	if err := svc.SeedDefaults(ctx, namespaces); err != nil {
 		t.Fatalf("first seed: %v", err)

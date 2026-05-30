@@ -30,6 +30,7 @@ func TestMemoryRegistry_Resolve(t *testing.T) {
 		map[string]int{
 			"production": 500,
 		},
+		nil,
 	)
 
 	cases := []struct {
@@ -62,6 +63,7 @@ func TestMemoryRegistry_RateFor(t *testing.T) {
 		map[string]int{
 			"production": 500,
 		},
+		nil,
 	)
 
 	cases := []struct {
@@ -85,13 +87,40 @@ func TestMemoryRegistry_RateFor(t *testing.T) {
 }
 
 func TestMemoryRegistry_NilMapsAcceptable(t *testing.T) {
-	reg := NewMemoryRegistry(nil, nil)
+	reg := NewMemoryRegistry(nil, nil, nil)
 
 	if ns, ok := reg.Resolve("anything"); ok {
 		t.Errorf("Resolve on empty registry returned (%q, true); want (\"\", false)", ns)
 	}
 	if rate, has := reg.RateFor("anything"); has {
 		t.Errorf("RateFor on empty registry returned (%d, true); want (0, false)", rate)
+	}
+	if reg.RequiresClientCredentials("anything") {
+		t.Errorf("RequiresClientCredentials on empty registry returned true; want false (default)")
+	}
+}
+
+func TestMemoryRegistry_RequiresClientCredentials(t *testing.T) {
+	reg := NewMemoryRegistry(
+		map[string]string{"k1": "credentialed-ns", "k2": "uncredentialed-ns"},
+		nil,
+		map[string]bool{"credentialed-ns": true},
+	)
+	cases := []struct {
+		ns   string
+		want bool
+	}{
+		{"credentialed-ns", true},
+		{"uncredentialed-ns", false},
+		{"unknown-ns", false}, // default is false for unmapped namespaces
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ns, func(t *testing.T) {
+			if got := reg.RequiresClientCredentials(tc.ns); got != tc.want {
+				t.Errorf("RequiresClientCredentials(%q) = %v; want %v", tc.ns, got, tc.want)
+			}
+		})
 	}
 }
 

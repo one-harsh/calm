@@ -199,22 +199,90 @@ func (_c *MockClientRepo_List_Call) RunAndReturn(run func(context.Context, strin
 	return _c
 }
 
+// LookupByToken provides a mock function with given fields: ctx, namespace, tokenHash
+func (_m *MockClientRepo) LookupByToken(ctx context.Context, namespace string, tokenHash []byte) (string, error) {
+	ret := _m.Called(ctx, namespace, tokenHash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LookupByToken")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) (string, error)); ok {
+		return rf(ctx, namespace, tokenHash)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) string); ok {
+		r0 = rf(ctx, namespace, tokenHash)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, []byte) error); ok {
+		r1 = rf(ctx, namespace, tokenHash)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockClientRepo_LookupByToken_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LookupByToken'
+type MockClientRepo_LookupByToken_Call struct {
+	*mock.Call
+}
+
+// LookupByToken is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - tokenHash []byte
+func (_e *MockClientRepo_Expecter) LookupByToken(ctx interface{}, namespace interface{}, tokenHash interface{}) *MockClientRepo_LookupByToken_Call {
+	return &MockClientRepo_LookupByToken_Call{Call: _e.mock.On("LookupByToken", ctx, namespace, tokenHash)}
+}
+
+func (_c *MockClientRepo_LookupByToken_Call) Run(run func(ctx context.Context, namespace string, tokenHash []byte)) *MockClientRepo_LookupByToken_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockClientRepo_LookupByToken_Call) Return(name string, err error) *MockClientRepo_LookupByToken_Call {
+	_c.Call.Return(name, err)
+	return _c
+}
+
+func (_c *MockClientRepo_LookupByToken_Call) RunAndReturn(run func(context.Context, string, []byte) (string, error)) *MockClientRepo_LookupByToken_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Register provides a mock function with given fields: ctx, namespace, name
-func (_m *MockClientRepo) Register(ctx context.Context, namespace string, name string) error {
+func (_m *MockClientRepo) Register(ctx context.Context, namespace string, name string) (bool, error) {
 	ret := _m.Called(ctx, namespace, name)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Register")
 	}
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) (bool, error)); ok {
+		return rf(ctx, namespace, name)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) bool); ok {
 		r0 = rf(ctx, namespace, name)
 	} else {
-		r0 = ret.Error(0)
+		r0 = ret.Get(0).(bool)
 	}
 
-	return r0
+	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = rf(ctx, namespace, name)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // MockClientRepo_Register_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Register'
@@ -237,12 +305,110 @@ func (_c *MockClientRepo_Register_Call) Run(run func(ctx context.Context, namesp
 	return _c
 }
 
-func (_c *MockClientRepo_Register_Call) Return(_a0 error) *MockClientRepo_Register_Call {
+func (_c *MockClientRepo_Register_Call) Return(created bool, err error) *MockClientRepo_Register_Call {
+	_c.Call.Return(created, err)
+	return _c
+}
+
+func (_c *MockClientRepo_Register_Call) RunAndReturn(run func(context.Context, string, string) (bool, error)) *MockClientRepo_Register_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RegisterWithCredential provides a mock function with given fields: ctx, namespace, name, tokenHash
+func (_m *MockClientRepo) RegisterWithCredential(ctx context.Context, namespace string, name string, tokenHash []byte) error {
+	ret := _m.Called(ctx, namespace, name, tokenHash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RegisterWithCredential")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, []byte) error); ok {
+		r0 = rf(ctx, namespace, name, tokenHash)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockClientRepo_RegisterWithCredential_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterWithCredential'
+type MockClientRepo_RegisterWithCredential_Call struct {
+	*mock.Call
+}
+
+// RegisterWithCredential is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - name string
+//   - tokenHash []byte
+func (_e *MockClientRepo_Expecter) RegisterWithCredential(ctx interface{}, namespace interface{}, name interface{}, tokenHash interface{}) *MockClientRepo_RegisterWithCredential_Call {
+	return &MockClientRepo_RegisterWithCredential_Call{Call: _e.mock.On("RegisterWithCredential", ctx, namespace, name, tokenHash)}
+}
+
+func (_c *MockClientRepo_RegisterWithCredential_Call) Run(run func(ctx context.Context, namespace string, name string, tokenHash []byte)) *MockClientRepo_RegisterWithCredential_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockClientRepo_RegisterWithCredential_Call) Return(_a0 error) *MockClientRepo_RegisterWithCredential_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockClientRepo_Register_Call) RunAndReturn(run func(context.Context, string, string) error) *MockClientRepo_Register_Call {
+func (_c *MockClientRepo_RegisterWithCredential_Call) RunAndReturn(run func(context.Context, string, string, []byte) error) *MockClientRepo_RegisterWithCredential_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RotateCredential provides a mock function with given fields: ctx, namespace, name, newHash
+func (_m *MockClientRepo) RotateCredential(ctx context.Context, namespace string, name string, newHash []byte) error {
+	ret := _m.Called(ctx, namespace, name, newHash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RotateCredential")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, []byte) error); ok {
+		r0 = rf(ctx, namespace, name, newHash)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockClientRepo_RotateCredential_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RotateCredential'
+type MockClientRepo_RotateCredential_Call struct {
+	*mock.Call
+}
+
+// RotateCredential is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - name string
+//   - newHash []byte
+func (_e *MockClientRepo_Expecter) RotateCredential(ctx interface{}, namespace interface{}, name interface{}, newHash interface{}) *MockClientRepo_RotateCredential_Call {
+	return &MockClientRepo_RotateCredential_Call{Call: _e.mock.On("RotateCredential", ctx, namespace, name, newHash)}
+}
+
+func (_c *MockClientRepo_RotateCredential_Call) Run(run func(ctx context.Context, namespace string, name string, newHash []byte)) *MockClientRepo_RotateCredential_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockClientRepo_RotateCredential_Call) Return(_a0 error) *MockClientRepo_RotateCredential_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockClientRepo_RotateCredential_Call) RunAndReturn(run func(context.Context, string, string, []byte) error) *MockClientRepo_RotateCredential_Call {
 	_c.Call.Return(run)
 	return _c
 }

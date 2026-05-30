@@ -25,7 +25,7 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 	"github.com/one-harsh/calm/internal/api/handlers"
 	"github.com/one-harsh/calm/internal/auth"
-	"github.com/one-harsh/calm/internal/client"
+	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/server"
 	"github.com/one-harsh/calm/internal/session"
@@ -78,23 +78,39 @@ func bootstrap() (*harness, error) {
 		return nil, err
 	}
 
+	registry := auth.NewMemoryRegistry(
+		map[string]string{
+			testMasterKey:  testNamespace,
+			testTenantAKey: testTenantANamespace,
+		},
+		nil,
+		nil,
+	)
+	clientSvc := clientreg.New(store)
+
+	// Match production behavior: seed the `default` client for each
+	// configured namespace at startup (cmd/calm/main.go does the same).
+	// Tests that omit `client` from session-create payloads land on `default`
+	// and require the FK target to exist.
+	if err := clientSvc.SeedDefaults(context.Background(), []string{testNamespace, testTenantANamespace}); err != nil {
+		_ = store.Close()
+		dbTeardown()
+		return nil, fmt.Errorf("seed default clients: %w", err)
+	}
+
 	handler, err := server.NewHandler(server.Config{
 		MaxIngestPayloadKB:   1024,
 		RateLimitPerSecond:   100,
 		RequestTimeout:       2 * time.Second,
 		GracefulShutdownWait: 0,
 	}, server.Deps{
-		Logger: logging.Nop(),
-		Registry: auth.NewMemoryRegistry(
-			map[string]string{
-				testMasterKey:  testNamespace,
-				testTenantAKey: testTenantANamespace,
-			},
-			nil,
-		),
+		Logger:         logging.Nop(),
+		Registry:       registry,
+		ClientResolver: clientSvc,
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
-			Clients:  client.New(store),
+			Registry: registry,
+			Clients:  clientSvc,
 			Sessions: session.New(store, 10_000),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
@@ -110,7 +126,7 @@ func bootstrap() (*harness, error) {
 
 	srv := httptest.NewServer(handler)
 
-	client, err := genapi.NewClientWithResponses(srv.URL, genapi.WithRequestEditorFn(bearerAuth(testMasterKey)))
+	client, err := genapi.NewClientWithResponses(srv.URL, genapi.WithRequestEditorFn(apiKeyHeader(testMasterKey)))
 	if err != nil {
 		srv.Close()
 		_ = store.Close()
@@ -143,7 +159,7 @@ func (h *harness) clientForNamespace(t *testing.T, ns string) *genapi.ClientWith
 	default:
 		t.Fatalf("clientForNamespace: unknown test namespace %q", ns)
 	}
-	c, err := genapi.NewClientWithResponses(h.serverURL, genapi.WithRequestEditorFn(bearerAuth(key)))
+	c, err := genapi.NewClientWithResponses(h.serverURL, genapi.WithRequestEditorFn(apiKeyHeader(key)))
 	if err != nil {
 		t.Fatalf("clientForNamespace(%q): %v", ns, err)
 	}
@@ -246,11 +262,23 @@ func randHex(n int) string {
 	return hex.EncodeToString(buf)
 }
 
-// bearerAuth returns a genapi request editor that stamps the Authorization
-// header so the test client clears the auth middleware.
-func bearerAuth(key string) genapi.RequestEditorFn {
+// apiKeyHeader returns a genapi request editor that stamps the namespace API
+// key into the X-CALM-API-Key header. Replaces the prior bearerAuth helper
+// (the namespace key moved out of Authorization: Bearer into its own
+// header when client tokens claimed the bearer slot).
+func apiKeyHeader(key string) genapi.RequestEditorFn {
 	return func(_ context.Context, req *http.Request) error {
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set(auth.HeaderAPIKey, key)
+		return nil
+	}
+}
+
+// clientTokenBearer returns a genapi request editor that stamps the per-client
+// token into Authorization: Bearer. Used by credentialed-namespace tests after
+// they call POST /v1/clients/{name} and capture the token.
+func clientTokenBearer(token string) genapi.RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		req.Header.Set(auth.HeaderAuthorization, auth.BearerPrefix+token)
 		return nil
 	}
 }

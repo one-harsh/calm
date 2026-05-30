@@ -42,3 +42,37 @@ func TestWithNamespace_ChildOverridesParent(t *testing.T) {
 		t.Errorf("parent after child shadow: NamespaceFromContext = %q; want %q", got, "ns-a")
 	}
 }
+
+func TestWithClient_ThenClientFromContextReturnsValue(t *testing.T) {
+	ctx := WithClient(context.Background(), "factory-pipeline")
+	if got := ClientFromContext(ctx); got != "factory-pipeline" {
+		t.Errorf("ClientFromContext = %q; want factory-pipeline", got)
+	}
+}
+
+func TestClientFromContext_UnboundReturnsEmpty(t *testing.T) {
+	// Handlers rely on "" meaning "no client token authenticated" — fall
+	// back to body-supplied `client` field. Pin that contract.
+	if got := ClientFromContext(context.Background()); got != "" {
+		t.Errorf("ClientFromContext on bare ctx = %q; want empty", got)
+	}
+}
+
+func TestClientFromContext_NonStringValueReturnsEmpty(t *testing.T) {
+	ctx := context.WithValue(context.Background(), clientCtxKey{}, 42)
+	if got := ClientFromContext(ctx); got != "" {
+		t.Errorf("ClientFromContext with int value = %q; want empty", got)
+	}
+}
+
+func TestWithClient_NamespaceAndClientCoexist(t *testing.T) {
+	// Auth middleware stamps both. Reading one mustn't disturb the other.
+	ctx := WithNamespace(context.Background(), "ns-a")
+	ctx = WithClient(ctx, "alice")
+	if got := NamespaceFromContext(ctx); got != "ns-a" {
+		t.Errorf("namespace = %q; want ns-a", got)
+	}
+	if got := ClientFromContext(ctx); got != "alice" {
+		t.Errorf("client = %q; want alice", got)
+	}
+}

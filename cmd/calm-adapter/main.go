@@ -17,6 +17,7 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
+	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/obs"
 )
 
@@ -82,7 +83,7 @@ func run() error {
 func apiKeyEditor(apiKey string) genapi.RequestEditorFn {
 	return func(_ context.Context, req *http.Request) error {
 		if apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
+			req.Header.Set(auth.HeaderAPIKey, apiKey)
 		}
 		return nil
 	}

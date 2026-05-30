@@ -59,6 +59,8 @@ CALM has two distinct isolation primitives, both load-bearing, that enforce diff
 
 **Session-isolation enforces the content/scope boundary.** Per-session data (chunks, sources, events, labels, vocabulary) is bound to a session and invisible to other sessions in the same namespace; caches are session-keyed; search returns only this session's content; snapshots return only this session's events. The wall between workload-units inside a namespace. **Bugs here are workload-contract violations** — the LLM context window gets contaminated; CALM's value proposition fails. Session is *not* a cleanup primitive or observability artifact; it's the content boundary that defines what each workload-unit sees of its own data.
 
+**Client-isolation is the optional third layer.** When `require_client_credentials: false` (the default), `client` is workload-supplied metadata — any holder of the namespace API key can claim any client. When `require_client_credentials: true`, each client is registered with a server-minted bearer token and the auth middleware verifies it; within-namespace workload isolation becomes a real boundary. This is the layer that lets shared-namespace tenants (e.g., `eval-shared` for a dev team) actually isolate from each other without requiring an operator to mint a new namespace per workload. The discipline applies only when the namespace opts in; the default code path treats `client` as a tag.
+
 Most bugs that quietly degrade CALM start as a missed `namespace` or `session_id` filter, a cache that wasn't session-keyed, or a "convenience" cross-{namespace,session} query.
 
 Concrete disciplines that fall out of both:

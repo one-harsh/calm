@@ -150,10 +150,10 @@ func RateLimitNamespaceAndGlobal(
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ns := auth.NamespaceFromContext(r.Context())
 			if ns == "" {
-				logger.WithContext(r.Context()).Error(
-					"rate-limit: namespace missing from context — auth middleware did not run",
-				)
-				writeInternalError(w)
+				// Unauthenticated paths (health, version) intentionally bypass
+				// the auth middleware and have no namespace. They're also
+				// rate-limit-exempt — operational probes shouldn't be throttled.
+				next.ServeHTTP(w, r)
 				return
 			}
 			if lim, perSec := nsLimiterFor(ns); lim != nil && !lim.Allow() {
@@ -206,10 +206,4 @@ func writeRateLimited(w http.ResponseWriter, endpoint, tier string, perSec int) 
 		Endpoint: &endpoint,
 		Detail:   &detail,
 	})
-}
-
-func writeInternalError(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusInternalServerError)
-	_ = json.NewEncoder(w).Encode(genapi.Error{Error: "internal server error"})
 }

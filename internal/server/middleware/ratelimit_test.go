@@ -218,7 +218,7 @@ func TestRateLimitIP_BucketEvictionSweepsIdle(t *testing.T) {
 func newNSGMiddleware(t *testing.T, defaultNS, global int, overrides map[string]int) (func(http.Handler) http.Handler, func() int) {
 	t.Helper()
 	calls := 0
-	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, overrides)
+	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, overrides, nil)
 	mw := RateLimitNamespaceAndGlobal(registry, defaultNS, global, logging.Nop())
 	return func(next http.Handler) http.Handler {
 		return mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +239,7 @@ func TestRateLimitNSG_BothTiersDisabled(t *testing.T) {
 }
 
 func TestRateLimitNSG_NamespaceAllowsUpToBurstThenThrottles(t *testing.T) {
-	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil)
+	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil, nil)
 	mw := RateLimitNamespaceAndGlobal(registry, 5, 0, logging.Nop())(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
@@ -263,7 +263,7 @@ func TestRateLimitNSG_NamespaceAllowsUpToBurstThenThrottles(t *testing.T) {
 }
 
 func TestRateLimitNSG_PerNamespaceIndependent(t *testing.T) {
-	registry := auth.NewMemoryRegistry(map[string]string{"a": "ns-a", "b": "ns-b"}, nil)
+	registry := auth.NewMemoryRegistry(map[string]string{"a": "ns-a", "b": "ns-b"}, nil, nil)
 	mw := RateLimitNamespaceAndGlobal(registry, 1, 0, logging.Nop())(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
@@ -292,6 +292,7 @@ func TestRateLimitNSG_HonorsNamespaceOverride(t *testing.T) {
 	registry := auth.NewMemoryRegistry(
 		map[string]string{"a": "ns-a", "b": "ns-b"},
 		map[string]int{"ns-a": 2},
+		nil,
 	)
 	mw := RateLimitNamespaceAndGlobal(registry, 100, 0, logging.Nop())(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
@@ -318,7 +319,7 @@ func TestRateLimitNSG_HonorsNamespaceOverride(t *testing.T) {
 }
 
 func TestRateLimitNSG_GlobalCapEnforced(t *testing.T) {
-	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil)
+	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil, nil)
 	mw := RateLimitNamespaceAndGlobal(registry, 1000, 3, logging.Nop())(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
@@ -342,7 +343,7 @@ func TestRateLimitNSG_GlobalCapEnforced(t *testing.T) {
 }
 
 func TestRateLimitNSG_GlobalCapAcrossNamespaces(t *testing.T) {
-	registry := auth.NewMemoryRegistry(map[string]string{"a": "ns-a", "b": "ns-b"}, nil)
+	registry := auth.NewMemoryRegistry(map[string]string{"a": "ns-a", "b": "ns-b"}, nil, nil)
 	mw := RateLimitNamespaceAndGlobal(registry, 1000, 3, logging.Nop())(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
@@ -377,7 +378,7 @@ func TestRateLimitNSG_NamespaceCheckedBeforeGlobal(t *testing.T) {
 	// the next request should report "namespace" (checked first), not "global".
 	// Namespace-first is load-bearing: it prevents a misbehaving namespace
 	// from leaking its overload pressure into the shared global bucket.
-	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil)
+	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil, nil)
 	mw := RateLimitNamespaceAndGlobal(registry, 1, 1, logging.Nop())(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
@@ -403,23 +404,27 @@ func TestRateLimitNSG_NamespaceCheckedBeforeGlobal(t *testing.T) {
 	}
 }
 
-func TestRateLimitNSG_NamespaceMissingReturns500(t *testing.T) {
-	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil)
+func TestRateLimitNSG_NamespaceMissingPassesThrough(t *testing.T) {
+	// Unauthenticated paths (health, version) bypass auth and have no
+	// namespace. NSG must pass them through, not 500 — operational probes
+	// are not rate-limited.
+	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil, nil)
+	called := false
 	mw := RateLimitNamespaceAndGlobal(registry, 100, 0, logging.Nop())(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusOK)
+		}),
 	)
 	rec := httptest.NewRecorder()
 	mw.ServeHTTP(rec, newRequest(t, "1.1.1.1:1", "")) // no namespace
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("missing namespace: got %d; want 500", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "internal server error") {
-		t.Errorf("body = %q; want internal server error message", rec.Body.String())
+	if !called || rec.Code != http.StatusOK {
+		t.Errorf("missing namespace should pass through: called=%v status=%d; want true/200", called, rec.Code)
 	}
 }
 
 func TestRateLimitNSG_RecoversAfterCooldown(t *testing.T) {
-	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil)
+	registry := auth.NewMemoryRegistry(map[string]string{"k": "ns-a"}, nil, nil)
 	mw := RateLimitNamespaceAndGlobal(registry, 5, 0, logging.Nop())(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)

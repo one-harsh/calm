@@ -40,17 +40,6 @@ func newServiceHarness(t *testing.T, cacheSize int) *serviceHarness {
 	}
 }
 
-// expectWithTx wires DAL.WithTx to invoke fn with Repos backed by the
-// harness's mock repos, then return fnErr (separately from WithTx's own
-// return — we want the fn-path to surface, the tx commit/begin is opaque).
-func (h *serviceHarness) expectWithTx() *db.MockDAL_WithTx_Call {
-	return h.dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
-		func(_ context.Context, fn func(db.Repos) error) error {
-			return fn(db.Repos{Clients: h.clients, Sessions: h.sessions})
-		},
-	)
-}
-
 // ---------- New / constructor ----------
 
 func TestNew_NonPositiveCacheSizeUsesNoopCache(t *testing.T) {
@@ -83,18 +72,16 @@ func TestCreate_NonPositiveTTLRejectedBeforeAnyRepoCall(t *testing.T) {
 
 // ---------- Create — orchestration ----------
 
-func TestCreate_HappyPath_RegistersClientThenInsertsSessionThenPrimesCache(t *testing.T) {
+func TestCreate_HappyPath_InsertsSessionThenPrimesCache(t *testing.T) {
 	h := newServiceHarness(t, 100)
 	expectedCreatedAt := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 
-	h.clients.EXPECT().Register(mock.Anything, "ns-a", "alice").Return(nil).Once()
 	h.sessions.EXPECT().Create(mock.Anything, mock.Anything).
 		RunAndReturn(func(_ context.Context, s *db.Session) error {
 			// Stand in for the RETURNING flow: DAL populates CreatedAt.
 			s.CreatedAt = expectedCreatedAt
 			return nil
 		}).Once()
-	h.expectWithTx().Once()
 
 	in := &db.Session{ID: "s1", Namespace: "ns-a", Client: "alice", TTLMinutes: 60}
 	if err := h.svc.Create(context.Background(), in); err != nil {
@@ -114,11 +101,9 @@ func TestCreate_HappyPath_RegistersClientThenInsertsSessionThenPrimesCache(t *te
 	}
 }
 
-func TestCreate_EmptyClientDefaultsBeforeRegister(t *testing.T) {
+func TestCreate_EmptyClientDefaults(t *testing.T) {
 	h := newServiceHarness(t, 100)
-	h.clients.EXPECT().Register(mock.Anything, "ns-a", db.DefaultClient).Return(nil).Once()
 	h.sessions.EXPECT().Create(mock.Anything, mock.Anything).Return(nil).Once()
-	h.expectWithTx().Once()
 
 	in := &db.Session{ID: "s1", Namespace: "ns-a", TTLMinutes: 60}
 	if err := h.svc.Create(context.Background(), in); err != nil {
@@ -129,16 +114,16 @@ func TestCreate_EmptyClientDefaultsBeforeRegister(t *testing.T) {
 	}
 }
 
-func TestCreate_ClientRegisterFails_SessionCreateNotCalled_CacheNotPrimed(t *testing.T) {
+func TestCreate_ClientNotFound_CacheNotPrimed(t *testing.T) {
+	// New post-WI-09c behavior: sessions.Create translates FK violation
+	// (23503) on the (namespace, client) → clients FK to ErrClientNotFound.
+	// Service.Create just surfaces it; no separate Register step exists.
 	h := newServiceHarness(t, 100)
-	registerErr := errors.New("simulated register failure")
-	h.clients.EXPECT().Register(mock.Anything, "ns-a", "alice").Return(registerErr).Once()
-	// sessions.Create deliberately NOT expected — must not be called.
-	h.expectWithTx().Once()
+	h.sessions.EXPECT().Create(mock.Anything, mock.Anything).Return(db.ErrClientNotFound).Once()
 
-	err := h.svc.Create(context.Background(), &db.Session{ID: "s1", Namespace: "ns-a", Client: "alice", TTLMinutes: 60})
-	if !errors.Is(err, registerErr) {
-		t.Fatalf("Create error = %v; want wrapping %v", err, registerErr)
+	err := h.svc.Create(context.Background(), &db.Session{ID: "s1", Namespace: "ns-a", Client: "unregistered", TTLMinutes: 60})
+	if !errors.Is(err, db.ErrClientNotFound) {
+		t.Fatalf("Create error = %v; want ErrClientNotFound", err)
 	}
 
 	// Cache NOT primed: next Lookup must reach SessionRepo.Get.
@@ -151,9 +136,7 @@ func TestCreate_ClientRegisterFails_SessionCreateNotCalled_CacheNotPrimed(t *tes
 func TestCreate_SessionInsertFails_CacheNotPrimed(t *testing.T) {
 	h := newServiceHarness(t, 100)
 	insertErr := db.ErrSessionExists
-	h.clients.EXPECT().Register(mock.Anything, "ns-a", "alice").Return(nil).Once()
 	h.sessions.EXPECT().Create(mock.Anything, mock.Anything).Return(insertErr).Once()
-	h.expectWithTx().Once()
 
 	err := h.svc.Create(context.Background(), &db.Session{ID: "s1", Namespace: "ns-a", Client: "alice", TTLMinutes: 60})
 	if !errors.Is(err, insertErr) {

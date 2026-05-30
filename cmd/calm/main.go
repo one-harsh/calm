@@ -17,7 +17,7 @@ import (
 
 	"github.com/one-harsh/calm/internal/api/handlers"
 	"github.com/one-harsh/calm/internal/auth"
-	"github.com/one-harsh/calm/internal/client"
+	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/config"
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/obs"
@@ -64,9 +64,9 @@ func run() error {
 	}
 	defer func() { _ = store.Close() }()
 
-	clientSvc := client.New(store)
+	clientSvc := clientreg.New(store)
 	sessionSvc := session.New(store, cfg.Sessions.CacheSize)
-	if err := clientSvc.SeedDefaults(openCtx, namespaceNames(cfg.Namespaces)); err != nil {
+	if err := clientSvc.SeedDefaults(openCtx, uncredentialedNamespaceNames(cfg.Namespaces)); err != nil {
 		return fmt.Errorf("seed clients: %w", err)
 	}
 
@@ -80,10 +80,12 @@ func run() error {
 		RequestTimeout:           cfg.Server.RequestTimeout,
 		GracefulShutdownWait:     cfg.Server.GracefulShutdownWait,
 	}, server.Deps{
-		Logger:   logger,
-		Registry: registry,
+		Logger:         logger,
+		Registry:       registry,
+		ClientResolver: clientSvc,
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logger,
+			Registry: registry,
 			Clients:  clientSvc,
 			Sessions: sessionSvc,
 			Cfg: handlers.HandlersConfig{
@@ -121,10 +123,18 @@ func run() error {
 	return nil
 }
 
-func namespaceNames(ns []config.NamespaceConfig) []string {
-	out := make([]string, len(ns))
-	for i, n := range ns {
-		out[i] = n.Name
+// uncredentialedNamespaceNames returns names of namespaces that auto-seed
+// the default client. Credentialed namespaces (require_client_credentials=true)
+// are skipped: the seeded `default` client would have no client token and
+// would be unreachable from session operations there (the auth middleware
+// requires a client token in credentialed namespaces), so seeding it is
+// dead state.
+func uncredentialedNamespaceNames(ns []config.NamespaceConfig) []string {
+	out := make([]string, 0, len(ns))
+	for _, n := range ns {
+		if !n.RequireClientCredentials {
+			out = append(out, n.Name)
+		}
 	}
 	return out
 }
