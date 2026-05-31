@@ -121,7 +121,7 @@ func (r *clientRepo) List(ctx context.Context, namespace string) ([]ClientSummar
 		return nil, ErrNamespaceRequired
 	}
 	rows, err := r.queryer.QueryContext(ctx,
-		`SELECT c.name, COUNT(s.session_id), MAX(s.last_activity)
+		`SELECT c.name, COUNT(s.id), MAX(s.last_activity)
 		   FROM clients c
 		   LEFT JOIN sessions s
 		     ON s.namespace = c.namespace AND s.client = c.name
@@ -207,24 +207,21 @@ func (r *clientRepo) Delete(ctx context.Context, namespace, name string) (Delete
 		}
 		r.logger.WithContext(ctx).Debug("delete client: lock acquired")
 
-		// Child subqueries must filter by namespace = $1; without it, a
-		// session_id that collides across namespaces (composite PK allows
-		// this) pulls foreign-namespace children into the count.
 		err = tx.QueryRowContext(ctx,
 			`WITH target_sessions AS (
-			   SELECT session_id FROM sessions WHERE namespace = $1 AND client = $2
+			   SELECT id FROM sessions WHERE namespace = $1 AND client = $2
 			 )
 			 SELECT
 			   (SELECT COUNT(*) FROM target_sessions),
-			   (SELECT COUNT(*) FROM sources WHERE namespace = $1
-			      AND session_id IN (SELECT session_id FROM target_sessions)),
+			   (SELECT COUNT(*) FROM sources
+			      WHERE session_id IN (SELECT id FROM target_sessions)),
 			   (SELECT COUNT(*) FROM chunks WHERE source_id IN
-			      (SELECT id FROM sources WHERE namespace = $1
-			         AND session_id IN (SELECT session_id FROM target_sessions))),
-			   (SELECT COUNT(*) FROM session_events WHERE namespace = $1
-			      AND session_id IN (SELECT session_id FROM target_sessions)),
-			   (SELECT COUNT(*) FROM session_labels WHERE namespace = $1
-			      AND session_id IN (SELECT session_id FROM target_sessions))`,
+			      (SELECT id FROM sources
+			         WHERE session_id IN (SELECT id FROM target_sessions))),
+			   (SELECT COUNT(*) FROM session_events
+			      WHERE session_id IN (SELECT id FROM target_sessions)),
+			   (SELECT COUNT(*) FROM session_labels
+			      WHERE session_id IN (SELECT id FROM target_sessions))`,
 			namespace, name,
 		).Scan(
 			&result.DeletedSessions,

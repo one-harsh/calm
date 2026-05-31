@@ -18,9 +18,10 @@ import (
 func TestHarness_RoutesResolve(t *testing.T) {
 	t.Parallel()
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sessions/"+uniqueSessionID(t)+"/sources", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sources", nil)
 	require.NoError(t, err)
 	req.Header.Set(auth.HeaderAPIKey, testMasterKey)
+	req.Header.Set("X-CALM-Session-Token", uniqueSessionToken(t))
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -34,9 +35,10 @@ func TestHarness_RoutesResolve(t *testing.T) {
 func TestHarness_RequestIDPropagation(t *testing.T) {
 	t.Parallel()
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sessions/"+uniqueSessionID(t)+"/sources", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sources", nil)
 	require.NoError(t, err)
 	req.Header.Set(auth.HeaderAPIKey, testMasterKey)
+	req.Header.Set("X-CALM-Session-Token", uniqueSessionToken(t))
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -49,9 +51,9 @@ func TestHarness_RequestIDPropagation(t *testing.T) {
 func TestHarness_OpenAPIValidationFiresBeforeHandler(t *testing.T) {
 	t.Parallel()
 
-	// Body missing the required `session_id` field. Validation middleware
-	// should reject with 400 before the handler ever sees the request.
-	body := bytes.NewBufferString(`{}`)
+	// Body has a field of the wrong type. Validation middleware should reject
+	// with 400 before the handler ever sees the request.
+	body := bytes.NewBufferString(`{"ttl_minutes":"not-a-number"}`)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, env.serverURL+"/v1/sessions", body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")

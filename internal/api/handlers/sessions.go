@@ -33,10 +33,8 @@ func (h *Handlers) CreateSession(
 		h.deps.Logger.WithContext(ctx).Error("namespace missing from request context — auth middleware did not run")
 		return nil, errors.New("namespace not present in request context")
 	}
-	ctx = logging.Bind(ctx, obs.SessionID(request.Body.SessionId))
 
 	sess := &db.Session{
-		ID:         request.Body.SessionId,
 		Namespace:  namespace,
 		TTLMinutes: h.deps.Cfg.DefaultTTLMinutes,
 	}
@@ -50,13 +48,9 @@ func (h *Handlers) CreateSession(
 		)
 		sess.TTLMinutes = h.deps.Cfg.MaxTTLMinutes
 	}
-	// Credentialed namespace: client identity comes from the X-CALM-API-Key
-	// + Authorization: Bearer pair the auth middleware resolved. If the
-	// body's `client` field is present, it must match — defense-in-depth
-	// against a workload holding a valid client token for client-A trying
-	// to spoof client-B in the same namespace.
-	// Uncredentialed namespace: client comes from the body (workload-supplied
-	// metadata, no auth check).
+	// Credentialed namespace: auth-context client is the source of truth;
+	// reject body.client mismatch as spoofing. Uncredentialed: body.client
+	// is workload-supplied metadata.
 	if authClient := auth.ClientFromContext(ctx); authClient != "" {
 		if request.Body.Client != nil && *request.Body.Client != authClient {
 			detail := fmt.Sprintf("body client %q does not match authenticated client %q", *request.Body.Client, authClient)
@@ -73,18 +67,26 @@ func (h *Handlers) CreateSession(
 		sess.Labels = *request.Body.Labels
 	}
 
-	if err := h.deps.Sessions.Create(ctx, sess); err != nil {
+	idempotencyKey := ""
+	if request.Params.IdempotencyKey != nil {
+		idempotencyKey = *request.Params.IdempotencyKey
+	}
+
+	if err := h.deps.Sessions.Create(ctx, sess, idempotencyKey); err != nil {
 		if m, ok := mapSessionError(err); ok {
-			detail := m.Detail
-			if m.Status == http.StatusConflict {
-				detail = fmt.Sprintf("session %q already exists in namespace %q", sess.ID, namespace)
-			}
-			body := genapi.Error{Error: m.Code, Detail: &detail}
+			body := genapi.Error{Error: m.Code, Detail: &m.Detail}
 			switch m.Status {
 			case http.StatusConflict:
 				return genapi.CreateSession409JSONResponse{ConflictJSONResponse: genapi.ConflictJSONResponse(body)}, nil
 			case http.StatusBadRequest:
 				return genapi.CreateSession400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse(body)}, nil
+			default:
+				// Unmapped status → 500. Warn so the gap is visible.
+				h.deps.Logger.WithContext(ctx).Warn("create session: mapped sentinel has no response variant — returning 500",
+					logging.IntField("http.status", m.Status),
+					logging.StringField("error.code", m.Code),
+					logging.ErrorField(err),
+				)
 			}
 		}
 		if !isContextError(err) {
@@ -95,12 +97,17 @@ func (h *Handlers) CreateSession(
 		return nil, err
 	}
 
+	ctx = logging.Bind(ctx, obs.SessionID(sess.ID))
+	h.deps.Logger.WithContext(ctx).Debug("session created",
+		logging.IntField("session.create.committed_ttl_minutes", sess.TTLMinutes),
+	)
+
 	return genapi.CreateSession201JSONResponse(genapi.Session{
-		SessionId:  sess.ID,
-		Namespace:  sess.Namespace,
-		Client:     sess.Client,
-		TtlMinutes: sess.TTLMinutes,
-		CreatedAt:  sess.CreatedAt,
+		SessionToken: sess.SessionToken,
+		Namespace:    sess.Namespace,
+		Client:       sess.Client,
+		TtlMinutes:   sess.TTLMinutes,
+		CreatedAt:    sess.CreatedAt,
 	}), nil
 }
 
@@ -114,17 +121,23 @@ func (h *Handlers) DeleteSession(
 		return nil, errors.New("namespace not present in request context")
 	}
 
-	sessionID := string(request.SessionId)
-	ctx = logging.Bind(ctx, obs.SessionID(sessionID))
+	sessionToken := request.Params.XCALMSessionToken
 
-	result, err := h.deps.Sessions.Delete(ctx, namespace, sessionID)
+	result, err := h.deps.Sessions.Delete(ctx, namespace, sessionToken)
 	if err != nil {
-		if m, ok := mapSessionError(err); ok && m.Status == http.StatusNotFound {
-			detail := fmt.Sprintf("session %q not found in namespace %q", sessionID, namespace)
-			return genapi.DeleteSession404JSONResponse{NotFoundJSONResponse: genapi.NotFoundJSONResponse{
-				Error:  m.Code,
-				Detail: &detail,
-			}}, nil
+		if m, ok := mapSessionError(err); ok {
+			if m.Status == http.StatusNotFound {
+				return genapi.DeleteSession404JSONResponse{NotFoundJSONResponse: genapi.NotFoundJSONResponse{
+					Error:  m.Code,
+					Detail: &m.Detail,
+				}}, nil
+			}
+			// Unmapped status → 500. Warn so the gap is visible.
+			h.deps.Logger.WithContext(ctx).Warn("delete session: mapped sentinel has no response variant — returning 500",
+				logging.IntField("http.status", m.Status),
+				logging.StringField("error.code", m.Code),
+				logging.ErrorField(err),
+			)
 		}
 		if !isContextError(err) {
 			h.deps.Logger.WithContext(ctx).Error("delete session failed",
@@ -134,6 +147,7 @@ func (h *Handlers) DeleteSession(
 		return nil, err
 	}
 
+	ctx = logging.Bind(ctx, obs.SessionID(result.ID))
 	h.deps.Logger.WithContext(ctx).Info("session closed",
 		obs.CloseReasonExplicit,
 		logging.IntField("session.delete.cascaded_events", result.Cascaded.Events),
@@ -143,7 +157,6 @@ func (h *Handlers) DeleteSession(
 	)
 
 	return genapi.DeleteSession200JSONResponse(genapi.DeleteSessionResult{
-		DeletedSessionId: result.SessionID,
 		Cascaded: genapi.CascadeCounts{
 			Sources: result.Cascaded.Sources,
 			Chunks:  result.Cascaded.Chunks,

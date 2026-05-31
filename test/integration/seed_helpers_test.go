@@ -9,10 +9,23 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+
+	"github.com/one-harsh/calm/internal/auth"
 )
 
 // Fixture helpers. Each takes the sibling *sql.DB (not the under-test *db.Store)
 // so tests bypass the surface they're verifying.
+
+// seededSession carries the surrogate id of a freshly-seeded session plus the
+// raw session_token a test can present to handler/service-level entry points
+// that authenticate by token. Tests that only need the FK target use .ID;
+// tests that exercise the auth boundary use .SessionToken.
+type seededSession struct {
+	ID           int64
+	SessionToken string
+	Namespace    string
+	Client       string
+}
 
 func seedClient(t *testing.T, sqlDB *sql.DB, namespace, name string) {
 	t.Helper()
@@ -24,44 +37,67 @@ func seedClient(t *testing.T, sqlDB *sql.DB, namespace, name string) {
 	}
 }
 
-func seedSession(t *testing.T, sqlDB *sql.DB, namespace, client, sessionID string, ttlMinutes int) {
+// seedSession inserts a session with a freshly-minted token and returns the
+// surrogate id alongside the raw token. The caller picks either the id (for
+// child-row FK references / cascade assertions) or the token (for service /
+// handler entry points).
+func seedSession(t *testing.T, sqlDB *sql.DB, namespace, client string, ttlMinutes int) seededSession {
+	t.Helper()
+	raw, err := auth.NewRandomToken()
+	if err != nil {
+		t.Fatalf("seedSession mint token: %v", err)
+	}
+	hash := auth.HashToken(namespace, raw)
+	var id int64
+	if err := sqlDB.QueryRowContext(context.Background(),
+		`INSERT INTO sessions (namespace, client, session_token_hash, ttl_minutes)
+		 VALUES ($1, $2, $3, $4) RETURNING id`,
+		namespace, client, hash, ttlMinutes,
+	).Scan(&id); err != nil {
+		t.Fatalf("seedSession(%q/%q): %v", namespace, client, err)
+	}
+	return seededSession{ID: id, SessionToken: raw, Namespace: namespace, Client: client}
+}
+
+// seedSessionWithActivity is seedSession + an explicit last_activity stamp
+// (the trigger derives expires_at from it). Used by TTL-scanner tests that
+// need predictable expiry.
+func seedSessionWithActivity(t *testing.T, sqlDB *sql.DB, namespace, client string, ttlMinutes int, lastActivity time.Time) seededSession {
+	t.Helper()
+	raw, err := auth.NewRandomToken()
+	if err != nil {
+		t.Fatalf("seedSessionWithActivity mint token: %v", err)
+	}
+	hash := auth.HashToken(namespace, raw)
+	var id int64
+	if err := sqlDB.QueryRowContext(context.Background(),
+		`INSERT INTO sessions (namespace, client, session_token_hash, ttl_minutes, last_activity)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		namespace, client, hash, ttlMinutes, lastActivity,
+	).Scan(&id); err != nil {
+		t.Fatalf("seedSessionWithActivity(%q/%q): %v", namespace, client, err)
+	}
+	return seededSession{ID: id, SessionToken: raw, Namespace: namespace, Client: client}
+}
+
+func seedSessionLabel(t *testing.T, sqlDB *sql.DB, sessionID int64, key, value string) {
 	t.Helper()
 	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO sessions (session_id, namespace, client, ttl_minutes) VALUES ($1, $2, $3, $4)`,
-		sessionID, namespace, client, ttlMinutes,
+		`INSERT INTO session_labels (session_id, key, value) VALUES ($1, $2, $3)`,
+		sessionID, key, value,
 	); err != nil {
-		t.Fatalf("seedSession(%q in %q/%q): %v", sessionID, namespace, client, err)
+		t.Fatalf("seedSessionLabel(session=%d, %q=%q): %v", sessionID, key, value, err)
 	}
 }
 
-func seedSessionWithActivity(t *testing.T, sqlDB *sql.DB, namespace, client, sessionID string, ttlMinutes int, lastActivity time.Time) {
-	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO sessions (session_id, namespace, client, ttl_minutes, last_activity) VALUES ($1, $2, $3, $4, $5)`,
-		sessionID, namespace, client, ttlMinutes, lastActivity,
-	); err != nil {
-		t.Fatalf("seedSessionWithActivity(%q): %v", sessionID, err)
-	}
-}
-
-func seedSessionLabel(t *testing.T, sqlDB *sql.DB, namespace, sessionID, key, value string) {
-	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO session_labels (namespace, session_id, key, value) VALUES ($1, $2, $3, $4)`,
-		namespace, sessionID, key, value,
-	); err != nil {
-		t.Fatalf("seedSessionLabel(%q/%q[%q]=%q): %v", namespace, sessionID, key, value, err)
-	}
-}
-
-func seedSource(t *testing.T, sqlDB *sql.DB, namespace, sessionID, label string) int64 {
+func seedSource(t *testing.T, sqlDB *sql.DB, sessionID int64, label string) int64 {
 	t.Helper()
 	var id int64
 	if err := sqlDB.QueryRowContext(context.Background(),
-		`INSERT INTO sources (namespace, session_id, label) VALUES ($1, $2, $3) RETURNING id`,
-		namespace, sessionID, label,
+		`INSERT INTO sources (session_id, label) VALUES ($1, $2) RETURNING id`,
+		sessionID, label,
 	).Scan(&id); err != nil {
-		t.Fatalf("seedSource(%q in %q/%q): %v", label, namespace, sessionID, err)
+		t.Fatalf("seedSource(session=%d, label=%q): %v", sessionID, label, err)
 	}
 	return id
 }
@@ -76,24 +112,24 @@ func seedChunk(t *testing.T, sqlDB *sql.DB, sourceID int64, title, content, cont
 	}
 }
 
-func seedEvent(t *testing.T, sqlDB *sql.DB, namespace, sessionID, eventType string, priority int, data []byte) {
+func seedEvent(t *testing.T, sqlDB *sql.DB, sessionID int64, eventType string, priority int, data []byte) {
 	t.Helper()
 	h := sha256.Sum256(append([]byte(eventType), data...))
 	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO session_events (namespace, session_id, type, priority, data, data_hash) VALUES ($1, $2, $3, $4, $5, $6)`,
-		namespace, sessionID, eventType, priority, data, h[:],
+		`INSERT INTO session_events (session_id, type, priority, data, data_hash) VALUES ($1, $2, $3, $4, $5)`,
+		sessionID, eventType, priority, data, h[:],
 	); err != nil {
-		t.Fatalf("seedEvent(%q/%q type=%q): %v", namespace, sessionID, eventType, err)
+		t.Fatalf("seedEvent(session=%d, type=%q): %v", sessionID, eventType, err)
 	}
 }
 
-func seedVocab(t *testing.T, sqlDB *sql.DB, namespace, sessionID, word string, docFreq int) {
+func seedVocab(t *testing.T, sqlDB *sql.DB, sessionID int64, word string, docFreq int) {
 	t.Helper()
 	if _, err := sqlDB.ExecContext(context.Background(),
-		`INSERT INTO vocabulary (namespace, session_id, word, doc_freq) VALUES ($1, $2, $3, $4)`,
-		namespace, sessionID, word, docFreq,
+		`INSERT INTO vocabulary (session_id, word, doc_freq) VALUES ($1, $2, $3)`,
+		sessionID, word, docFreq,
 	); err != nil {
-		t.Fatalf("seedVocab(%q/%q word=%q): %v", namespace, sessionID, word, err)
+		t.Fatalf("seedVocab(session=%d, word=%q): %v", sessionID, word, err)
 	}
 }
 

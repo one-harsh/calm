@@ -27,27 +27,27 @@ func (_m *MockexpirySource) EXPECT() *MockexpirySource_Expecter {
 	return &MockexpirySource_Expecter{mock: &_m.Mock}
 }
 
-// Delete provides a mock function with given fields: ctx, namespace, id
-func (_m *MockexpirySource) Delete(ctx context.Context, namespace string, id string) (db.DeleteSessionResult, error) {
-	ret := _m.Called(ctx, namespace, id)
+// DeleteByID provides a mock function with given fields: ctx, namespace, sessionID
+func (_m *MockexpirySource) DeleteByID(ctx context.Context, namespace string, sessionID int64) (db.DeleteSessionResult, error) {
+	ret := _m.Called(ctx, namespace, sessionID)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Delete")
+		panic("no return value specified for DeleteByID")
 	}
 
 	var r0 db.DeleteSessionResult
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) (db.DeleteSessionResult, error)); ok {
-		return rf(ctx, namespace, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64) (db.DeleteSessionResult, error)); ok {
+		return rf(ctx, namespace, sessionID)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) db.DeleteSessionResult); ok {
-		r0 = rf(ctx, namespace, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64) db.DeleteSessionResult); ok {
+		r0 = rf(ctx, namespace, sessionID)
 	} else {
 		r0 = ret.Get(0).(db.DeleteSessionResult)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
-		r1 = rf(ctx, namespace, id)
+	if rf, ok := ret.Get(1).(func(context.Context, string, int64) error); ok {
+		r1 = rf(ctx, namespace, sessionID)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -55,32 +55,32 @@ func (_m *MockexpirySource) Delete(ctx context.Context, namespace string, id str
 	return r0, r1
 }
 
-// MockexpirySource_Delete_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Delete'
-type MockexpirySource_Delete_Call struct {
+// MockexpirySource_DeleteByID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteByID'
+type MockexpirySource_DeleteByID_Call struct {
 	*mock.Call
 }
 
-// Delete is a helper method to define mock.On call
+// DeleteByID is a helper method to define mock.On call
 //   - ctx context.Context
 //   - namespace string
-//   - id string
-func (_e *MockexpirySource_Expecter) Delete(ctx interface{}, namespace interface{}, id interface{}) *MockexpirySource_Delete_Call {
-	return &MockexpirySource_Delete_Call{Call: _e.mock.On("Delete", ctx, namespace, id)}
+//   - sessionID int64
+func (_e *MockexpirySource_Expecter) DeleteByID(ctx interface{}, namespace interface{}, sessionID interface{}) *MockexpirySource_DeleteByID_Call {
+	return &MockexpirySource_DeleteByID_Call{Call: _e.mock.On("DeleteByID", ctx, namespace, sessionID)}
 }
 
-func (_c *MockexpirySource_Delete_Call) Run(run func(ctx context.Context, namespace string, id string)) *MockexpirySource_Delete_Call {
+func (_c *MockexpirySource_DeleteByID_Call) Run(run func(ctx context.Context, namespace string, sessionID int64)) *MockexpirySource_DeleteByID_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].(int64))
 	})
 	return _c
 }
 
-func (_c *MockexpirySource_Delete_Call) Return(_a0 db.DeleteSessionResult, _a1 error) *MockexpirySource_Delete_Call {
+func (_c *MockexpirySource_DeleteByID_Call) Return(_a0 db.DeleteSessionResult, _a1 error) *MockexpirySource_DeleteByID_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockexpirySource_Delete_Call) RunAndReturn(run func(context.Context, string, string) (db.DeleteSessionResult, error)) *MockexpirySource_Delete_Call {
+func (_c *MockexpirySource_DeleteByID_Call) RunAndReturn(run func(context.Context, string, int64) (db.DeleteSessionResult, error)) *MockexpirySource_DeleteByID_Call {
 	_c.Call.Return(run)
 	return _c
 }

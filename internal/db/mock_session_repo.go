@@ -129,9 +129,9 @@ func (_c *MockSessionRepo_Create_Call) RunAndReturn(run func(context.Context, *S
 	return _c
 }
 
-// Delete provides a mock function with given fields: ctx, namespace, id
-func (_m *MockSessionRepo) Delete(ctx context.Context, namespace string, id string) (DeleteSessionResult, error) {
-	ret := _m.Called(ctx, namespace, id)
+// Delete provides a mock function with given fields: ctx, namespace, sessionTokenHash
+func (_m *MockSessionRepo) Delete(ctx context.Context, namespace string, sessionTokenHash []byte) (DeleteSessionResult, error) {
+	ret := _m.Called(ctx, namespace, sessionTokenHash)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Delete")
@@ -139,17 +139,17 @@ func (_m *MockSessionRepo) Delete(ctx context.Context, namespace string, id stri
 
 	var r0 DeleteSessionResult
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) (DeleteSessionResult, error)); ok {
-		return rf(ctx, namespace, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) (DeleteSessionResult, error)); ok {
+		return rf(ctx, namespace, sessionTokenHash)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) DeleteSessionResult); ok {
-		r0 = rf(ctx, namespace, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) DeleteSessionResult); ok {
+		r0 = rf(ctx, namespace, sessionTokenHash)
 	} else {
 		r0 = ret.Get(0).(DeleteSessionResult)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
-		r1 = rf(ctx, namespace, id)
+	if rf, ok := ret.Get(1).(func(context.Context, string, []byte) error); ok {
+		r1 = rf(ctx, namespace, sessionTokenHash)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -165,14 +165,14 @@ type MockSessionRepo_Delete_Call struct {
 // Delete is a helper method to define mock.On call
 //   - ctx context.Context
 //   - namespace string
-//   - id string
-func (_e *MockSessionRepo_Expecter) Delete(ctx interface{}, namespace interface{}, id interface{}) *MockSessionRepo_Delete_Call {
-	return &MockSessionRepo_Delete_Call{Call: _e.mock.On("Delete", ctx, namespace, id)}
+//   - sessionTokenHash []byte
+func (_e *MockSessionRepo_Expecter) Delete(ctx interface{}, namespace interface{}, sessionTokenHash interface{}) *MockSessionRepo_Delete_Call {
+	return &MockSessionRepo_Delete_Call{Call: _e.mock.On("Delete", ctx, namespace, sessionTokenHash)}
 }
 
-func (_c *MockSessionRepo_Delete_Call) Run(run func(ctx context.Context, namespace string, id string)) *MockSessionRepo_Delete_Call {
+func (_c *MockSessionRepo_Delete_Call) Run(run func(ctx context.Context, namespace string, sessionTokenHash []byte)) *MockSessionRepo_Delete_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].([]byte))
 	})
 	return _c
 }
@@ -182,7 +182,7 @@ func (_c *MockSessionRepo_Delete_Call) Return(_a0 DeleteSessionResult, _a1 error
 	return _c
 }
 
-func (_c *MockSessionRepo_Delete_Call) RunAndReturn(run func(context.Context, string, string) (DeleteSessionResult, error)) *MockSessionRepo_Delete_Call {
+func (_c *MockSessionRepo_Delete_Call) RunAndReturn(run func(context.Context, string, []byte) (DeleteSessionResult, error)) *MockSessionRepo_Delete_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -244,9 +244,67 @@ func (_c *MockSessionRepo_DeleteAll_Call) RunAndReturn(run func(context.Context,
 	return _c
 }
 
-// Get provides a mock function with given fields: ctx, namespace, id
-func (_m *MockSessionRepo) Get(ctx context.Context, namespace string, id string) (Session, error) {
-	ret := _m.Called(ctx, namespace, id)
+// DeleteByID provides a mock function with given fields: ctx, namespace, sessionID
+func (_m *MockSessionRepo) DeleteByID(ctx context.Context, namespace string, sessionID int64) (DeleteSessionResult, error) {
+	ret := _m.Called(ctx, namespace, sessionID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteByID")
+	}
+
+	var r0 DeleteSessionResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64) (DeleteSessionResult, error)); ok {
+		return rf(ctx, namespace, sessionID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64) DeleteSessionResult); ok {
+		r0 = rf(ctx, namespace, sessionID)
+	} else {
+		r0 = ret.Get(0).(DeleteSessionResult)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, int64) error); ok {
+		r1 = rf(ctx, namespace, sessionID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockSessionRepo_DeleteByID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteByID'
+type MockSessionRepo_DeleteByID_Call struct {
+	*mock.Call
+}
+
+// DeleteByID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - sessionID int64
+func (_e *MockSessionRepo_Expecter) DeleteByID(ctx interface{}, namespace interface{}, sessionID interface{}) *MockSessionRepo_DeleteByID_Call {
+	return &MockSessionRepo_DeleteByID_Call{Call: _e.mock.On("DeleteByID", ctx, namespace, sessionID)}
+}
+
+func (_c *MockSessionRepo_DeleteByID_Call) Run(run func(ctx context.Context, namespace string, sessionID int64)) *MockSessionRepo_DeleteByID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(int64))
+	})
+	return _c
+}
+
+func (_c *MockSessionRepo_DeleteByID_Call) Return(_a0 DeleteSessionResult, _a1 error) *MockSessionRepo_DeleteByID_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockSessionRepo_DeleteByID_Call) RunAndReturn(run func(context.Context, string, int64) (DeleteSessionResult, error)) *MockSessionRepo_DeleteByID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Get provides a mock function with given fields: ctx, namespace, sessionTokenHash
+func (_m *MockSessionRepo) Get(ctx context.Context, namespace string, sessionTokenHash []byte) (Session, error) {
+	ret := _m.Called(ctx, namespace, sessionTokenHash)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Get")
@@ -254,17 +312,17 @@ func (_m *MockSessionRepo) Get(ctx context.Context, namespace string, id string)
 
 	var r0 Session
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) (Session, error)); ok {
-		return rf(ctx, namespace, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) (Session, error)); ok {
+		return rf(ctx, namespace, sessionTokenHash)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) Session); ok {
-		r0 = rf(ctx, namespace, id)
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) Session); ok {
+		r0 = rf(ctx, namespace, sessionTokenHash)
 	} else {
 		r0 = ret.Get(0).(Session)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
-		r1 = rf(ctx, namespace, id)
+	if rf, ok := ret.Get(1).(func(context.Context, string, []byte) error); ok {
+		r1 = rf(ctx, namespace, sessionTokenHash)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -280,14 +338,14 @@ type MockSessionRepo_Get_Call struct {
 // Get is a helper method to define mock.On call
 //   - ctx context.Context
 //   - namespace string
-//   - id string
-func (_e *MockSessionRepo_Expecter) Get(ctx interface{}, namespace interface{}, id interface{}) *MockSessionRepo_Get_Call {
-	return &MockSessionRepo_Get_Call{Call: _e.mock.On("Get", ctx, namespace, id)}
+//   - sessionTokenHash []byte
+func (_e *MockSessionRepo_Expecter) Get(ctx interface{}, namespace interface{}, sessionTokenHash interface{}) *MockSessionRepo_Get_Call {
+	return &MockSessionRepo_Get_Call{Call: _e.mock.On("Get", ctx, namespace, sessionTokenHash)}
 }
 
-func (_c *MockSessionRepo_Get_Call) Run(run func(ctx context.Context, namespace string, id string)) *MockSessionRepo_Get_Call {
+func (_c *MockSessionRepo_Get_Call) Run(run func(ctx context.Context, namespace string, sessionTokenHash []byte)) *MockSessionRepo_Get_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string))
+		run(args[0].(context.Context), args[1].(string), args[2].([]byte))
 	})
 	return _c
 }
@@ -297,7 +355,7 @@ func (_c *MockSessionRepo_Get_Call) Return(_a0 Session, _a1 error) *MockSessionR
 	return _c
 }
 
-func (_c *MockSessionRepo_Get_Call) RunAndReturn(run func(context.Context, string, string) (Session, error)) *MockSessionRepo_Get_Call {
+func (_c *MockSessionRepo_Get_Call) RunAndReturn(run func(context.Context, string, []byte) (Session, error)) *MockSessionRepo_Get_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -420,17 +478,17 @@ func (_c *MockSessionRepo_ScanExpired_Call) RunAndReturn(run func(context.Contex
 	return _c
 }
 
-// Touch provides a mock function with given fields: ctx, namespace, id, lastActivity
-func (_m *MockSessionRepo) Touch(ctx context.Context, namespace string, id string, lastActivity time.Time) error {
-	ret := _m.Called(ctx, namespace, id, lastActivity)
+// Touch provides a mock function with given fields: ctx, namespace, sessionTokenHash, lastActivity
+func (_m *MockSessionRepo) Touch(ctx context.Context, namespace string, sessionTokenHash []byte, lastActivity time.Time) error {
+	ret := _m.Called(ctx, namespace, sessionTokenHash, lastActivity)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Touch")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string, time.Time) error); ok {
-		r0 = rf(ctx, namespace, id, lastActivity)
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte, time.Time) error); ok {
+		r0 = rf(ctx, namespace, sessionTokenHash, lastActivity)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -446,15 +504,15 @@ type MockSessionRepo_Touch_Call struct {
 // Touch is a helper method to define mock.On call
 //   - ctx context.Context
 //   - namespace string
-//   - id string
+//   - sessionTokenHash []byte
 //   - lastActivity time.Time
-func (_e *MockSessionRepo_Expecter) Touch(ctx interface{}, namespace interface{}, id interface{}, lastActivity interface{}) *MockSessionRepo_Touch_Call {
-	return &MockSessionRepo_Touch_Call{Call: _e.mock.On("Touch", ctx, namespace, id, lastActivity)}
+func (_e *MockSessionRepo_Expecter) Touch(ctx interface{}, namespace interface{}, sessionTokenHash interface{}, lastActivity interface{}) *MockSessionRepo_Touch_Call {
+	return &MockSessionRepo_Touch_Call{Call: _e.mock.On("Touch", ctx, namespace, sessionTokenHash, lastActivity)}
 }
 
-func (_c *MockSessionRepo_Touch_Call) Run(run func(ctx context.Context, namespace string, id string, lastActivity time.Time)) *MockSessionRepo_Touch_Call {
+func (_c *MockSessionRepo_Touch_Call) Run(run func(ctx context.Context, namespace string, sessionTokenHash []byte, lastActivity time.Time)) *MockSessionRepo_Touch_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(time.Time))
+		run(args[0].(context.Context), args[1].(string), args[2].([]byte), args[3].(time.Time))
 	})
 	return _c
 }
@@ -464,7 +522,7 @@ func (_c *MockSessionRepo_Touch_Call) Return(_a0 error) *MockSessionRepo_Touch_C
 	return _c
 }
 
-func (_c *MockSessionRepo_Touch_Call) RunAndReturn(run func(context.Context, string, string, time.Time) error) *MockSessionRepo_Touch_Call {
+func (_c *MockSessionRepo_Touch_Call) RunAndReturn(run func(context.Context, string, []byte, time.Time) error) *MockSessionRepo_Touch_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func uniqueSessionID(t *testing.T) string {
+func uniqueSessionToken(t *testing.T) string {
 	t.Helper()
 	suffix := uuid.NewString()[:8]
 	name := strings.ReplaceAll(t.Name(), "/", "-")

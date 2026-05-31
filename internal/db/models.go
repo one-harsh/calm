@@ -15,20 +15,29 @@ type ClientSummary struct {
 	LastActivity *time.Time
 }
 
+// Session carries three distinct identifiers that the code must keep separate:
+//
+//   - ID — the BIGSERIAL surrogate. Non-secret. The only "session id" anywhere
+//     in code. Safe to log. Returned by Create (from RETURNING id) and Get;
+//     also the value child tables FK on.
 type Session struct {
-	ID           string
-	Namespace    string
-	Client       string
-	CreatedAt    time.Time
-	LastActivity time.Time
+	ID               int64
+	SessionToken     string
+	SessionTokenHash []byte
+	Namespace        string
+	Client           string
+	CreatedAt        time.Time
+	LastActivity     time.Time
 	// ExpiresAt is maintained by the sessions_set_expires_at trigger; never set from Go.
 	ExpiresAt  time.Time
 	TTLMinutes int
 	Labels     map[string]string
 }
 
+func (s Session) SessionID() int64 { return s.ID }
+
 type ManagedSession struct {
-	ID           string
+	ID           int64
 	Namespace    string
 	Client       string
 	CreatedAt    time.Time
@@ -39,10 +48,8 @@ type ManagedSession struct {
 	EventCount   int
 }
 
-// SessionRef pairs (session_id, namespace) so the TTL scanner can call the
-// namespace-scoped DeleteSession with the namespace it learned from the row.
 type SessionRef struct {
-	SessionID string
+	ID        int64
 	Namespace string
 }
 
@@ -53,13 +60,13 @@ type Chunk struct {
 }
 
 type IndexInput struct {
-	SessionID string
+	SessionID int64
 	Source    string
 	Chunks    []Chunk
 }
 
 type SearchInput struct {
-	SessionID string
+	SessionID int64
 	Queries   []string
 	Source    string
 	Limit     int
@@ -79,7 +86,7 @@ type SearchResult struct {
 
 type Event struct {
 	ID        int64
-	SessionID string
+	SessionID int64
 	Type      string
 	Priority  int
 	Data      []byte
@@ -113,8 +120,8 @@ type CascadeCounts struct {
 }
 
 type DeleteSessionResult struct {
-	SessionID string
-	Cascaded  CascadeCounts
+	ID       int64
+	Cascaded CascadeCounts
 }
 
 type DeleteSessionsResult struct {

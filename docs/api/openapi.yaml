@@ -18,6 +18,13 @@ info:
     token issued by `POST /v1/clients/{name}`. Namespaces without the flag
     set ignore the Authorization header.
 
+    Session-touching operations (ingest, search, events, snapshot, sources,
+    delete) carry the session credential in `X-CALM-Session-Token`. The
+    server mints this token at `POST /v1/sessions` and returns it once in
+    the response; workloads persist it and present it on every subsequent
+    call. Lost tokens are unrecoverable — operationally equivalent to
+    losing the session.
+
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -131,17 +138,25 @@ paths:
       operationId: createSession
       summary: Create a session
       description: |
-        Session ID is workload-provided and opaque. Namespace is resolved
-        from the API key, never from the body. When the namespace does not
+        CALM mints the session token and returns it in the response —
+        workloads do not supply identifiers. Namespace is resolved from
+        the API key, never from the body. When the namespace does not
         require client credentials, `client` is workload-supplied and must
         reference a previously-registered client (auto-default to `default`
         when omitted). When it does, `client` is ignored — or, if present,
         must match the auth-resolved client; the session is bound to the
         client whose token was presented.
+
+        Idempotency: `Idempotency-Key` lets a workload safely retry a create
+        across transient failures and receive the same `session_token`. The
+        dedup window is server-configured (~1h default); retries beyond it
+        create a new session.
       tags: [sessions]
       security:
         - apiKey: []
           clientToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
       requestBody:
         required: true
         content:
@@ -156,10 +171,6 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
-
-  /v1/sessions/{session_id}:
-    parameters:
-      - $ref: '#/components/parameters/SessionID'
     delete:
       operationId: deleteSession
       summary: Tear down a session and all its data
@@ -168,6 +179,8 @@ paths:
         Response carries cascade counts so workloads can audit what was removed
         without a follow-up read.
       tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/SessionTokenHeader'
       responses:
         '200':
           description: Session deleted
@@ -177,14 +190,14 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /v1/sessions/{session_id}/sources:
-    parameters:
-      - $ref: '#/components/parameters/SessionID'
+  /v1/sources:
     get:
       operationId: listSources
       summary: List ingested sources within a session
       description: End-of-work observability — what was indexed and how much.
       tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/SessionTokenHeader'
       responses:
         '200':
           description: Sources
@@ -194,13 +207,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /v1/sessions/{session_id}/snapshot:
-    parameters:
-      - $ref: '#/components/parameters/SessionID'
-      - in: query
-        name: budget_bytes
-        schema: { type: integer, minimum: 256, maximum: 8192, default: 2048 }
-        description: Byte budget for the snapshot. Server caps at 8KB.
+  /v1/snapshot:
     get:
       operationId: getSnapshot
       summary: Return session events ordered by priority and recency within a byte budget
@@ -210,6 +217,12 @@ paths:
         structured shapes build them in their own middleware from the returned
         event stream.
       tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/SessionTokenHeader'
+        - in: query
+          name: budget_bytes
+          schema: { type: integer, minimum: 256, maximum: 8192, default: 2048 }
+          description: Byte budget for the snapshot. Server caps at 8KB.
       responses:
         '200':
           description: Snapshot
@@ -228,6 +241,8 @@ paths:
         intent relevance via RRF. Same `source` label within a session
         replaces previous content idempotently (invariant #6).
       tags: [ingest]
+      parameters:
+        - $ref: '#/components/parameters/SessionTokenHeader'
       requestBody:
         required: true
         content:
@@ -256,6 +271,8 @@ paths:
         tokenization paths come back in one ranked list. Workload does not scope
         by content_type.
       tags: [search]
+      parameters:
+        - $ref: '#/components/parameters/SessionTokenHeader'
       requestBody:
         required: true
         content:
@@ -280,6 +297,8 @@ paths:
         is required (1=critical, 4=noise). `data` is opaque to CALM. Generic
         event store — CALM persists and serves; workloads interpret.
       tags: [events]
+      parameters:
+        - $ref: '#/components/parameters/SessionTokenHeader'
       requestBody:
         required: true
         content:
@@ -294,30 +313,28 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-
-  /v1/events/{session_id}:
-    parameters:
-      - $ref: '#/components/parameters/SessionID'
-      - in: query
-        name: types
-        schema:
-          type: array
-          items: { type: string }
-        style: form
-        explode: false
-        description: Comma-separated list of event types to filter by.
-      - in: query
-        name: min_priority
-        schema: { type: integer, minimum: 1, maximum: 4 }
-        description: Return only events with priority ≤ this value (lower = more important).
-      - in: query
-        name: limit
-        schema: { type: integer, minimum: 1, maximum: 1000 }
     get:
       operationId: readEvents
       summary: Read events for a session
-      description: Supports filtering by `type` and `min_priority`.
+      description: Supports filtering by `types` and `min_priority`.
       tags: [events]
+      parameters:
+        - $ref: '#/components/parameters/SessionTokenHeader'
+        - in: query
+          name: types
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: false
+          description: Comma-separated list of event types to filter by.
+        - in: query
+          name: min_priority
+          schema: { type: integer, minimum: 1, maximum: 4 }
+          description: Return only events with priority ≤ this value (lower = more important).
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000 }
       responses:
         '200':
           description: Events
@@ -437,11 +454,25 @@ components:
         POST /v1/clients/{name} time and on rotation; not recoverable post-mint.
 
   parameters:
-    SessionID:
-      in: path
-      name: session_id
+    SessionTokenHeader:
+      in: header
+      name: X-CALM-Session-Token
       required: true
+      schema: { type: string, minLength: 1 }
+      description: |
+        Session credential. Treat as secret. Obtained once from the
+        createSession response and presented on every session-touching call.
+        Lost tokens are unrecoverable.
+    IdempotencyKeyHeader:
+      in: header
+      name: Idempotency-Key
+      required: false
       schema: { type: string, minLength: 1, maxLength: 256 }
+      description: |
+        Opaque per-request key. When present, the server returns the same
+        `session_token` for retries with the same key within the dedup
+        window (~1h default). Use a fresh key per intended distinct session;
+        reusing a key collapses retries into one session.
     ClientName:
       in: path
       name: name
@@ -516,24 +547,27 @@ components:
 
     Session:
       description: |
-        Session as echoed in the createSession response. Minimal
-        confirmation of what CALM committed, after namespace resolution, client
-        auto-registration, and operator-ceiling clamping on `ttl_minutes`.
+        Created session, returned once. `session_token` is the secret
+        credential the workload must persist and present via
+        `X-CALM-Session-Token` on every subsequent call. Other fields
+        confirm what CALM committed after namespace resolution, client
+        binding, and operator-ceiling clamping on `ttl_minutes`.
       type: object
-      required: [session_id, namespace, client, ttl_minutes, created_at]
+      required: [session_token, namespace, client, ttl_minutes, created_at]
       properties:
-        session_id: { type: string }
+        session_token: { type: string, description: One-time secret credential. Lost tokens are unrecoverable. }
         namespace: { type: string }
         client: { type: string }
         ttl_minutes: { type: integer }
         created_at: { type: string, format: date-time }
 
     ManagedSession:
-      description: Session shape returned by the management API. Adds last_activity, labels, and event_count to the core Session fields.
+      description: |
+        Session shape returned by the management API. Session credentials
+        are not surfaced — operators correlate by client and labels.
       type: object
-      required: [session_id, namespace, client, ttl_minutes, created_at, last_activity, event_count]
+      required: [namespace, client, ttl_minutes, created_at, last_activity, event_count]
       properties:
-        session_id: { type: string }
         namespace: { type: string }
         client: { type: string }
         ttl_minutes: { type: integer }
@@ -546,17 +580,12 @@ components:
 
     CreateSessionRequest:
       type: object
-      required: [session_id]
       properties:
-        session_id:
-          type: string
-          minLength: 1
-          maxLength: 256
         client:
           type: string
           minLength: 1
           maxLength: 256
-          description: Workload identifier. Auto-registers on first reference. Omitted attributes to `default`.
+          description: Workload identifier. Must reference a previously-registered client. Omitted attributes to `default`.
         labels:
           type: object
           additionalProperties: { type: string }
@@ -578,9 +607,8 @@ components:
 
     DeleteSessionResult:
       type: object
-      required: [deleted_session_id, cascaded]
+      required: [cascaded]
       properties:
-        deleted_session_id: { type: string }
         cascaded: { $ref: '#/components/schemas/CascadeCounts' }
 
     SectionPreview:
@@ -599,9 +627,8 @@ components:
 
     IngestRequest:
       type: object
-      required: [session_id, content, source]
+      required: [content, source]
       properties:
-        session_id: { type: string, minLength: 1 }
         content: { type: string }
         source:
           type: string
@@ -651,9 +678,8 @@ components:
 
     SearchRequest:
       type: object
-      required: [session_id, queries]
+      required: [queries]
       properties:
-        session_id: { type: string }
         queries:
           type: array
           minItems: 1
@@ -719,9 +745,8 @@ components:
 
     WriteEventsRequest:
       type: object
-      required: [session_id, events]
+      required: [events]
       properties:
-        session_id: { type: string }
         events:
           type: array
           minItems: 1
@@ -784,9 +809,8 @@ components:
         accumulated until `byte_budget_used` approaches the requested
         `budget_bytes`. CALM does not synthesize state — workloads do.
       type: object
-      required: [session_id, byte_budget_used, budget_exceeded, events]
+      required: [byte_budget_used, budget_exceeded, events]
       properties:
-        session_id: { type: string }
         byte_budget_used: { type: integer }
         budget_exceeded:
           type: boolean

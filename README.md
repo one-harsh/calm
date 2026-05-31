@@ -12,32 +12,45 @@ is the operator-facing landing page.
 
 ## Status
 
-Foundation in place; HTTP routes still return `501 Not Implemented`.
-Concretely working today:
+Foundation, auth model, and session lifecycle are wired end-to-end; the
+content-handling layer (ingest / search / events / snapshot) is the
+remaining surface.
+
+Working today:
 
 - YAML-config loader with env-var override and bracketed secret references
-- Namespace registry built from operator config; bearer-auth middleware
-- Postgres storage open + embedded migrations + per-namespace client seed
+- Three credential layers: namespace API key (`X-CALM-API-Key`), optional
+  per-client bearer token (`Authorization: Bearer`) in credentialed
+  namespaces, and server-minted session token (`X-CALM-Session-Token`)
+- Three-tier rate limiting: per-IP (pre-auth), per-namespace, and global
+- Postgres storage open + embedded migrations
+- **Clients** — first-class registered entities: `POST /v1/clients/{name}`
+  with optional one-time bearer token in credentialed namespaces;
+  `POST /v1/clients/{name}/rotate-token`; cascade-counted delete via the
+  management API
+- **Sessions** — server-minted credential, hashed at rest
+  (`sha256(namespace || 0x00 || token)`), surrogate `BIGSERIAL` primary
+  key; child tables FK on the surrogate. Create / Delete handlers live;
+  monotonic touch, cascade-counted delete, bulk delete, TTL scan all
+  through the service layer
+- **Idempotency-Key** on `POST /v1/sessions` — bounded LRU dedup
+  (default 1h, 10K entries), singleflight serialization so a retry storm
+  with the same key collapses to one INSERT
+- **Session-metadata LRU cache** keyed on `(namespace, session_token)`,
+  invalidated on Delete and namespace-purged on bulk paths
+- **TTL scanner** — periodic background reaper, scanner-triggered deletes
+  go through the same DAL cascade as explicit close
 - Server lifecycle (graceful shutdown, OpenAPI request validation,
-  per-namespace rate limiting wired through the middleware chain)
-- **Clients DAL** (register, list, count-sessions, cascade-counted delete)
-- **Sessions DAL** (create with atomic client auto-registration via
-  `Store.WithTx`, get, monotonic touch, cascade-counted delete + bulk
-  delete, TTL scan); namespace-scoped composite `(namespace, session_id)`
-  PK; per-entity sub-repos via `Store.Clients()` / `Store.Sessions()`
-- **Service layer** (`internal/client`, `internal/session`) — handlers
-  and the future TTL scanner go through these; cache invalidation,
-  metrics, and audit hooks land here as they come online
-- **Session-metadata LRU cache** (process-local; per-pod) so the
-  per-request session-existence check stays off the DB hot path
+  core-dump disabled at startup to keep credentials out of process memory
+  dumps)
 - MCP adapter binary skeleton (`cmd/calm-adapter`) that creates a session
-  and falls through to raw output on any CALM failure (the `never-worse`
-  invariant)
+  on startup, captures the server-minted token, and falls through to raw
+  output on any CALM failure (the `never-worse` invariant)
 
-Still stubbed: content/events DAL methods (`Index`, `Search`, `ListSources`,
-`WriteEvents`, `ReadEvents`) and every HTTP handler — Phase B/C/D WIs
-fill these in. The binary boots, authenticates, and migrates the schema;
-end-to-end ingest/search/snapshot flows aren't routed yet.
+Still stubbed: `POST /v1/ingest`, `POST /v1/search`, `POST/GET /v1/events`,
+`GET /v1/snapshot`, `GET /v1/sources`, and the `/v1/manage/*` handlers.
+The binary boots, authenticates, mints + deletes sessions, and migrates
+the schema; content ingest/search/event flows aren't routed yet.
 
 ## What problem this addresses
 
@@ -64,7 +77,9 @@ state behind a DAL backed by Postgres.
 - **Three core primitives** (ingest, search, session state) — see HLD's
   primitives section.
 - **Workload patterns** identified by `namespace` (server-resolved from
-  the bearer API key) and an optional `client` identifier — see DL01.
+  the `X-CALM-API-Key`) and a `client` identifier (workload-supplied
+  metadata or server-verified bearer credential, depending on namespace
+  config) — see DL01.
 - **Six design invariants** — `never-worse`, `workload-agnostic`, the
   two-layer isolation invariant (`namespace-isolation` for the
   security/trust boundary + `session-isolation` for the content/scope
@@ -102,7 +117,12 @@ curl -i http://localhost:8080/v1/health
 ```
 
 The auth middleware is wired and runs before everything: requests
-without `Authorization: Bearer $CALM_DEFAULT_KEY` get a 401.
+without `X-CALM-API-Key: $CALM_DEFAULT_KEY` get a 401. Health and
+version endpoints are exempt. In a credentialed namespace, the
+session-touching endpoints additionally require
+`Authorization: Bearer <client-token>` (issued at `POST /v1/clients/{name}`)
+and `X-CALM-Session-Token: <session-token>` (issued at
+`POST /v1/sessions`).
 
 ## Configuration
 
@@ -129,35 +149,45 @@ Any scalar field can also be overridden by an environment variable:
 `CALM_<PATH_IN_UPPERCASE>` with `.` and `-` replaced by `_`. Examples:
 `CALM_SERVER_ADDRESS=":9090"`, `CALM_STORAGE_DSN="postgres://..."`,
 `CALM_SESSIONS_CACHE_SIZE=20000` (per-pod LRU cap for the session-metadata
-cache; default 10,000; `0` disables). Slice fields under `namespaces` are
-not env-overridable.
+cache; default 10,000; `0` disables),
+`CALM_SESSIONS_IDEMPOTENCY_KEY_TTL=1h` and
+`CALM_SESSIONS_IDEMPOTENCY_KEY_SIZE=10000` (per-pod dedup window + cap
+for `Idempotency-Key` on `POST /v1/sessions`; `0` size disables dedup).
+Slice fields under `namespaces` are not env-overridable.
 
 ## API
 
 The HTTP contract is generated from
-[`docs/api/openapi.yaml`](docs/api/openapi.yaml). The full surface (most
-of it currently stubbed):
+[`docs/api/openapi.yaml`](docs/api/openapi.yaml). The full surface
+(content endpoints currently stubbed):
 
 ```
 GET    /v1/health
 GET    /v1/version
+POST   /v1/clients/{name}
+POST   /v1/clients/{name}/rotate-token
 POST   /v1/sessions
-DELETE /v1/sessions/{session_id}
-GET    /v1/sessions/{session_id}/sources
-GET    /v1/sessions/{session_id}/snapshot
+DELETE /v1/sessions
+GET    /v1/sources
+GET    /v1/snapshot
 POST   /v1/ingest
 POST   /v1/search
 POST   /v1/events
-GET    /v1/events/{session_id}
+GET    /v1/events
 GET    /v1/manage/sessions
+DELETE /v1/manage/sessions
 GET    /v1/manage/clients
 DELETE /v1/manage/clients/{client}
 ```
 
-Every request needs `Authorization: Bearer <key>`. Namespace is
+Every request carries `X-CALM-API-Key: <namespace-key>`. Namespace is
 server-resolved from the key — clients never send a namespace in the
 request body. Cross-namespace mismatches return **404, not 403**
 (invisibility, not denial — encoded in the OpenAPI spec).
+
+Session-touching endpoints carry `X-CALM-Session-Token` (the credential
+returned by `POST /v1/sessions`). In credentialed namespaces, they also
+carry `Authorization: Bearer <client-token>`.
 
 ## Building and testing
 
@@ -186,16 +216,19 @@ cmd/
   calm-adapter/     MCP adapter binary
 internal/
   api/              generated handler interface + thin handlers + DTOs
-  auth/             API-key registry, namespace resolver
-  client/           client-entity orchestration service
+  auth/             API-key registry, namespace resolver, shared
+                    token mint/hash helpers, wire-header constants
+  clientreg/        client-entity orchestration (register, rotate, resolve)
   config/           YAML config loader (Viper + struct binding)
   db/               Postgres DAL — per-entity files (pg_clients.go,
                     pg_sessions.go, ...), errors, models, tx primitive,
                     embedded migrations
   obs/              context-bound logging + field helpers
   secrets/          [scheme:payload] secret-reference resolver
-  server/           HTTP lifecycle + middleware chain
-  session/          session-lifecycle orchestration service + LRU cache
+  server/           HTTP lifecycle + middleware chain (recovery, context,
+                    logging, rate-limit, auth, body-size, timeout, OpenAPI)
+  session/          session-lifecycle orchestration service + LRU metadata
+                    cache + Idempotency-Key dedup + TTL scanner
 adapter/            MCP-only packages (consumed by cmd/calm-adapter)
 docs/
   HLD.md            canonical design document

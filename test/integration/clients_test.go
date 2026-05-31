@@ -140,9 +140,9 @@ func TestListClients_ClientWithSessions(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", "alice")
 	newest := time.Now().UTC().Truncate(time.Microsecond)
-	seedSessionWithActivity(t, sqlDB, "ns-a", "alice", "s1", 60, newest.Add(-2*time.Hour))
-	seedSessionWithActivity(t, sqlDB, "ns-a", "alice", "s2", 60, newest.Add(-time.Hour))
-	seedSessionWithActivity(t, sqlDB, "ns-a", "alice", "s3", 60, newest)
+	seedSessionWithActivity(t, sqlDB, "ns-a", "alice", 60, newest.Add(-2*time.Hour))
+	seedSessionWithActivity(t, sqlDB, "ns-a", "alice", 60, newest.Add(-time.Hour))
+	seedSessionWithActivity(t, sqlDB, "ns-a", "alice", 60, newest)
 
 	got, err := store.Clients().List(context.Background(), "ns-a")
 	if err != nil {
@@ -191,7 +191,7 @@ func TestListClients_CrossNamespaceIsolation(t *testing.T) {
 	defer teardown()
 
 	seedClient(t, sqlDB, "ns-a", "alice")
-	seedSession(t, sqlDB, "ns-a", "alice", "s1", 60)
+	seedSession(t, sqlDB, "ns-a", "alice", 60)
 	seedClient(t, sqlDB, "ns-b", "alice")
 	// no sessions in ns-b
 
@@ -235,7 +235,7 @@ func TestCountClientSessions_Multiple(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", "alice")
 	for i := 0; i < 5; i++ {
-		seedSession(t, sqlDB, "ns-a", "alice", randHex(8), 60)
+		seedSession(t, sqlDB, "ns-a", "alice", 60)
 	}
 
 	n, err := store.Clients().CountSessions(context.Background(), "ns-a", "alice")
@@ -330,21 +330,23 @@ func TestDeleteClient_HappyPathFullCascade(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", "alice")
 
 	// Two sessions, each with 2 labels, 2 sources × 3 chunks, 4 events, vocab entries.
-	for _, sid := range []string{"s1", "s2"} {
-		seedSession(t, sqlDB, "ns-a", "alice", sid, 60)
-		seedSessionLabel(t, sqlDB, "ns-a", sid, "env", "prod")
-		seedSessionLabel(t, sqlDB, "ns-a", sid, "team", "ml")
+	sessionIDs := make([]int64, 0, 2)
+	for i := 0; i < 2; i++ {
+		s := seedSession(t, sqlDB, "ns-a", "alice", 60)
+		sessionIDs = append(sessionIDs, s.ID)
+		seedSessionLabel(t, sqlDB, s.ID, "env", "prod")
+		seedSessionLabel(t, sqlDB, s.ID, "team", "ml")
 		for _, src := range []string{"src-a", "src-b"} {
-			sourceID := seedSource(t, sqlDB, "ns-a", sid, src)
+			sourceID := seedSource(t, sqlDB, s.ID, src)
 			for j := 0; j < 3; j++ {
 				seedChunk(t, sqlDB, sourceID, "title", "content", "prose")
 			}
 		}
 		for j := 0; j < 4; j++ {
-			seedEvent(t, sqlDB, "ns-a", sid, "tool_invocation"+string(rune('0'+j)), 3, []byte(`{}`))
+			seedEvent(t, sqlDB, s.ID, "tool_invocation"+string(rune('0'+j)), 3, []byte(`{}`))
 		}
-		seedVocab(t, sqlDB, "ns-a", sid, "alpha", 1)
-		seedVocab(t, sqlDB, "ns-a", sid, "beta", 2)
+		seedVocab(t, sqlDB, s.ID, "alpha", 1)
+		seedVocab(t, sqlDB, s.ID, "beta", 2)
 	}
 
 	res, err := store.Clients().Delete(context.Background(), "ns-a", "alice")
@@ -361,18 +363,21 @@ func TestDeleteClient_HappyPathFullCascade(t *testing.T) {
 		t.Errorf("result: got %+v; want %+v", res, want)
 	}
 
-	// Verify cascade actually fired across every dependent table.
+	// Verify cascade actually fired across every dependent table. The id-list
+	// is inlined as a literal because pgx stdlib doesn't auto-bind []int64 to
+	// an array placeholder and these ids are server-minted, not workload input.
+	idList := fmt.Sprintf("(%d,%d)", sessionIDs[0], sessionIDs[1])
 	tables := []struct {
 		name  string
 		query string
 	}{
 		{"clients", `SELECT COUNT(*) FROM clients WHERE namespace = 'ns-a' AND name = 'alice'`},
 		{"sessions", `SELECT COUNT(*) FROM sessions WHERE namespace = 'ns-a' AND client = 'alice'`},
-		{"session_labels", `SELECT COUNT(*) FROM session_labels WHERE session_id IN ('s1','s2')`},
-		{"sources", `SELECT COUNT(*) FROM sources WHERE session_id IN ('s1','s2')`},
-		{"chunks", `SELECT COUNT(*) FROM chunks WHERE source_id IN (SELECT id FROM sources WHERE session_id IN ('s1','s2'))`},
-		{"session_events", `SELECT COUNT(*) FROM session_events WHERE session_id IN ('s1','s2')`},
-		{"vocabulary", `SELECT COUNT(*) FROM vocabulary WHERE session_id IN ('s1','s2')`},
+		{"session_labels", `SELECT COUNT(*) FROM session_labels WHERE session_id IN ` + idList},
+		{"sources", `SELECT COUNT(*) FROM sources WHERE session_id IN ` + idList},
+		{"chunks", `SELECT COUNT(*) FROM chunks WHERE source_id IN (SELECT id FROM sources WHERE session_id IN ` + idList + `)`},
+		{"session_events", `SELECT COUNT(*) FROM session_events WHERE session_id IN ` + idList},
+		{"vocabulary", `SELECT COUNT(*) FROM vocabulary WHERE session_id IN ` + idList},
 	}
 	for _, tbl := range tables {
 		if n := countRows(t, sqlDB, tbl.query); n != 0 {
@@ -387,9 +392,9 @@ func TestDeleteClient_NegativeIsolation(t *testing.T) {
 
 	seedClient(t, sqlDB, "ns-a", "alice")
 	seedClient(t, sqlDB, "ns-a", "bob")
-	seedSession(t, sqlDB, "ns-a", "alice", "alice-1", 60)
-	seedSession(t, sqlDB, "ns-a", "bob", "bob-1", 60)
-	bobSource := seedSource(t, sqlDB, "ns-a", "bob-1", "bob-src")
+	seedSession(t, sqlDB, "ns-a", "alice", 60)
+	bob := seedSession(t, sqlDB, "ns-a", "bob", 60)
+	bobSource := seedSource(t, sqlDB, bob.ID, "bob-src")
 	seedChunk(t, sqlDB, bobSource, "bob", "content", "prose")
 
 	if _, err := store.Clients().Delete(context.Background(), "ns-a", "alice"); err != nil {
@@ -400,7 +405,7 @@ func TestDeleteClient_NegativeIsolation(t *testing.T) {
 	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM clients WHERE namespace = 'ns-a' AND name = 'bob'`); n != 1 {
 		t.Errorf("bob client row: want 1, got %d", n)
 	}
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sessions WHERE session_id = 'bob-1'`); n != 1 {
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sessions WHERE id = $1`, bob.ID); n != 1 {
 		t.Errorf("bob session: want 1, got %d", n)
 	}
 	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM chunks WHERE source_id = $1`, bobSource); n != 1 {
@@ -413,9 +418,9 @@ func TestDeleteClient_CrossNamespaceIsolation(t *testing.T) {
 	defer teardown()
 
 	seedClient(t, sqlDB, "ns-a", "alice")
-	seedSession(t, sqlDB, "ns-a", "alice", "a-s1", 60)
+	seedSession(t, sqlDB, "ns-a", "alice", 60)
 	seedClient(t, sqlDB, "ns-b", "alice")
-	seedSession(t, sqlDB, "ns-b", "alice", "b-s1", 60)
+	bSess := seedSession(t, sqlDB, "ns-b", "alice", 60)
 
 	if _, err := store.Clients().Delete(context.Background(), "ns-a", "alice"); err != nil {
 		t.Fatalf("DeleteClient ns-a alice: %v", err)
@@ -425,41 +430,43 @@ func TestDeleteClient_CrossNamespaceIsolation(t *testing.T) {
 	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM clients WHERE namespace = 'ns-b' AND name = 'alice'`); n != 1 {
 		t.Errorf("ns-b alice row: want 1, got %d", n)
 	}
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sessions WHERE session_id = 'b-s1'`); n != 1 {
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sessions WHERE id = $1`, bSess.ID); n != 1 {
 		t.Errorf("ns-b session: want 1, got %d", n)
 	}
 }
 
-// Regression: child subqueries must scope by namespace. A session_id that
-// collides with one in another namespace must not pull foreign-namespace
-// children into the cascade counts.
+// Regression: deleting a client in one namespace must not touch a
+// same-named client (with its own sessions and dependents) in another
+// namespace. Session ids are now globally-unique surrogates so the original
+// "shared session_id" collision is unrepresentable; the namespace-isolation
+// invariant the test guards remains worth pinning.
 func TestDeleteClient_CascadeCountsScopedByNamespace(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
 	seedClient(t, sqlDB, "ns-a", "alice")
 	seedClient(t, sqlDB, "ns-b", "alice")
-	seedSession(t, sqlDB, "ns-a", "alice", "shared", 60)
-	seedSession(t, sqlDB, "ns-b", "alice", "shared", 60)
+	sessA := seedSession(t, sqlDB, "ns-a", "alice", 60)
+	sessB := seedSession(t, sqlDB, "ns-b", "alice", 60)
 
-	// ns-a alice/shared: small footprint.
-	seedSessionLabel(t, sqlDB, "ns-a", "shared", "side", "a")
-	srcA := seedSource(t, sqlDB, "ns-a", "shared", "src")
+	// ns-a alice: small footprint.
+	seedSessionLabel(t, sqlDB, sessA.ID, "side", "a")
+	srcA := seedSource(t, sqlDB, sessA.ID, "src")
 	seedChunk(t, sqlDB, srcA, "t", "c", "prose")
-	seedEvent(t, sqlDB, "ns-a", "shared", "evt", 3, []byte(`{}`))
+	seedEvent(t, sqlDB, sessA.ID, "evt", 3, []byte(`{}`))
 
-	// ns-b alice/shared: larger footprint with the same session_id.
+	// ns-b alice: larger footprint.
 	for _, k := range []string{"side", "env", "team", "region", "tier"} {
-		seedSessionLabel(t, sqlDB, "ns-b", "shared", k, "v")
+		seedSessionLabel(t, sqlDB, sessB.ID, k, "v")
 	}
 	for i := 0; i < 5; i++ {
-		srcB := seedSource(t, sqlDB, "ns-b", "shared", fmt.Sprintf("src-%d", i))
+		srcB := seedSource(t, sqlDB, sessB.ID, fmt.Sprintf("src-%d", i))
 		for j := 0; j < 5; j++ {
 			seedChunk(t, sqlDB, srcB, "t", "c", "prose")
 		}
 	}
 	for i := 0; i < 5; i++ {
-		seedEvent(t, sqlDB, "ns-b", "shared", fmt.Sprintf("evt-%d", i), 3, []byte(`{}`))
+		seedEvent(t, sqlDB, sessB.ID, fmt.Sprintf("evt-%d", i), 3, []byte(`{}`))
 	}
 
 	res, err := store.Clients().Delete(context.Background(), "ns-a", "alice")
@@ -475,16 +482,16 @@ func TestDeleteClient_CascadeCountsScopedByNamespace(t *testing.T) {
 		t.Errorf("ns-a cascade counts leaked from ns-b: got %+v; want %+v", res, want)
 	}
 
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sessions WHERE namespace = 'ns-b' AND session_id = 'shared'`); n != 1 {
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sessions WHERE id = $1`, sessB.ID); n != 1 {
 		t.Errorf("ns-b session lost: want 1, got %d", n)
 	}
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sources WHERE namespace = 'ns-b' AND session_id = 'shared'`); n != 5 {
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sources WHERE session_id = $1`, sessB.ID); n != 5 {
 		t.Errorf("ns-b sources lost: want 5, got %d", n)
 	}
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM session_events WHERE namespace = 'ns-b' AND session_id = 'shared'`); n != 5 {
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM session_events WHERE session_id = $1`, sessB.ID); n != 5 {
 		t.Errorf("ns-b events lost: want 5, got %d", n)
 	}
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM session_labels WHERE namespace = 'ns-b' AND session_id = 'shared'`); n != 5 {
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM session_labels WHERE session_id = $1`, sessB.ID); n != 5 {
 		t.Errorf("ns-b labels lost: want 5, got %d", n)
 	}
 }

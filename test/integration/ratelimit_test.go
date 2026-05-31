@@ -63,7 +63,7 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
 			Clients:  clientreg.New(env.store),
-			Sessions: session.New(env.store, 10_000),
+			Sessions: session.New(env.store, session.Config{CacheSize: 10_000}),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,
@@ -91,7 +91,7 @@ func TestRateLimit_NamespaceHammeredReturns429AfterBurst(t *testing.T) {
 
 	// Burst = 2 × 5 = 10. First 10 return 404 (handler reached); 11th → 429.
 	for i := 0; i < 10; i++ {
-		resp, err := def.DeleteSessionWithResponse(context.Background(), "never-existed")
+		resp, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 		if err != nil {
 			t.Fatalf("req %d: %v", i+1, err)
 		}
@@ -99,7 +99,7 @@ func TestRateLimit_NamespaceHammeredReturns429AfterBurst(t *testing.T) {
 			t.Fatalf("req %d: status=%d; want 404", i+1, resp.StatusCode())
 		}
 	}
-	resp, err := def.DeleteSessionWithResponse(context.Background(), "never-existed")
+	resp, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	if err != nil {
 		t.Fatalf("11th: %v", err)
 	}
@@ -113,8 +113,8 @@ func TestRateLimit_NamespaceHammeredReturns429AfterBurst(t *testing.T) {
 	if body["error"] != "rate_limited" {
 		t.Errorf("body.error=%v; want rate_limited", body["error"])
 	}
-	if body["endpoint"] != "/v1/sessions/never-existed" {
-		t.Errorf("body.endpoint=%v; want /v1/sessions/never-existed", body["endpoint"])
+	if body["endpoint"] != "/v1/sessions" {
+		t.Errorf("body.endpoint=%v; want /v1/sessions", body["endpoint"])
 	}
 	if detail, _ := body["detail"].(string); !strings.Contains(detail, "namespace") {
 		t.Errorf("body.detail=%q; want substring \"namespace\"", detail)
@@ -127,14 +127,14 @@ func TestRateLimit_OtherNamespaceUnaffected(t *testing.T) {
 
 	// Exhaust default's burst (10) + one 429.
 	for i := 0; i < 10; i++ {
-		_, _ = def.DeleteSessionWithResponse(context.Background(), "never-existed")
+		_, _ = def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	}
-	if resp, err := def.DeleteSessionWithResponse(context.Background(), "never-existed"); err != nil || resp.StatusCode() != http.StatusTooManyRequests {
+	if resp, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"}); err != nil || resp.StatusCode() != http.StatusTooManyRequests {
 		t.Fatalf("default should be throttled: status=%d err=%v", resp.StatusCode(), err)
 	}
 
 	// tenant-a's first request must reach the handler.
-	resp, err := tenA.DeleteSessionWithResponse(context.Background(), "never-existed")
+	resp, err := tenA.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	if err != nil {
 		t.Fatalf("tenant-a: %v", err)
 	}
@@ -152,12 +152,12 @@ func TestRateLimit_PerNamespaceOverrideHonored(t *testing.T) {
 	defer teardown()
 
 	for i := 0; i < 4; i++ {
-		resp, err := tenA.DeleteSessionWithResponse(context.Background(), "never-existed")
+		resp, err := tenA.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 		if err != nil || resp.StatusCode() != http.StatusNotFound {
 			t.Fatalf("tenant-a req %d: status=%d err=%v", i+1, resp.StatusCode(), err)
 		}
 	}
-	resp, err := tenA.DeleteSessionWithResponse(context.Background(), "never-existed")
+	resp, err := tenA.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	if err != nil {
 		t.Fatalf("tenant-a 5th: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRateLimit_PerNamespaceOverrideHonored(t *testing.T) {
 	}
 
 	// default unaffected by the per-NS override.
-	respD, err := def.DeleteSessionWithResponse(context.Background(), "never-existed")
+	respD, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	if err != nil {
 		t.Fatalf("default: %v", err)
 	}
@@ -184,12 +184,12 @@ func TestRateLimit_GlobalCapTrips(t *testing.T) {
 	defer teardown()
 
 	for i := 0; i < 6; i++ {
-		resp, err := def.DeleteSessionWithResponse(context.Background(), "never-existed")
+		resp, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 		if err != nil || resp.StatusCode() != http.StatusNotFound {
 			t.Fatalf("req %d: status=%d err=%v", i+1, resp.StatusCode(), err)
 		}
 	}
-	resp, err := def.DeleteSessionWithResponse(context.Background(), "never-existed")
+	resp, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	if err != nil {
 		t.Fatalf("7th: %v", err)
 	}
@@ -210,12 +210,12 @@ func TestRateLimit_PerIPCapTrips(t *testing.T) {
 	defer teardown()
 
 	for i := 0; i < 6; i++ {
-		resp, err := def.DeleteSessionWithResponse(context.Background(), "never-existed")
+		resp, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 		if err != nil || resp.StatusCode() != http.StatusNotFound {
 			t.Fatalf("req %d: status=%d err=%v", i+1, resp.StatusCode(), err)
 		}
 	}
-	resp, err := def.DeleteSessionWithResponse(context.Background(), "never-existed")
+	resp, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	if err != nil {
 		t.Fatalf("7th: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestRateLimit_PerIPTrumpsAuthFailure(t *testing.T) {
 	defer teardown()
 
 	mkInvalidReq := func() *http.Request {
-		req, err := http.NewRequest(http.MethodDelete, serverURL+"/v1/sessions/x", nil)
+		req, err := http.NewRequest(http.MethodDelete, serverURL+"/v1/sessions", nil)
 		if err != nil {
 			t.Fatalf("build req: %v", err)
 		}
@@ -281,9 +281,9 @@ func TestRateLimit_RecoversAfterCooldown(t *testing.T) {
 
 	// Exhaust burst.
 	for i := 0; i < 10; i++ {
-		_, _ = def.DeleteSessionWithResponse(context.Background(), "never-existed")
+		_, _ = def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	}
-	resp, err := def.DeleteSessionWithResponse(context.Background(), "never-existed")
+	resp, err := def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	if err != nil {
 		t.Fatalf("post-burst: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestRateLimit_RecoversAfterCooldown(t *testing.T) {
 	// Wait just over one token's refill interval (5/sec → 200ms per token).
 	time.Sleep(1200 * time.Millisecond)
 
-	resp, err = def.DeleteSessionWithResponse(context.Background(), "never-existed")
+	resp, err = def.DeleteSessionWithResponse(context.Background(), &genapi.DeleteSessionParams{XCALMSessionToken: "never-existed"})
 	if err != nil {
 		t.Fatalf("post-cooldown: %v", err)
 	}

@@ -58,12 +58,14 @@ type ServerConfig struct {
 }
 
 type SessionsConfig struct {
-	DefaultTTLMinutes    int `mapstructure:"default_ttl_minutes"`
-	MaxTTLMinutes        int `mapstructure:"max_ttl_minutes"`
-	SnapshotMaxBudgetKB  int `mapstructure:"snapshot_max_budget_kb"`
-	TTLScannerIntervalMS int `mapstructure:"ttl_scanner_interval_ms"`
-	TTLScannerJitterMS   int `mapstructure:"ttl_scanner_jitter_ms"`
-	CacheSize            int `mapstructure:"cache_size"`
+	DefaultTTLMinutes    int           `mapstructure:"default_ttl_minutes"`
+	MaxTTLMinutes        int           `mapstructure:"max_ttl_minutes"`
+	SnapshotMaxBudgetKB  int           `mapstructure:"snapshot_max_budget_kb"`
+	TTLScannerIntervalMS int           `mapstructure:"ttl_scanner_interval_ms"`
+	TTLScannerJitterMS   int           `mapstructure:"ttl_scanner_jitter_ms"`
+	CacheSize            int           `mapstructure:"cache_size"`
+	IdempotencyKeyTTL    time.Duration `mapstructure:"idempotency_key_ttl"`
+	IdempotencyKeySize   int           `mapstructure:"idempotency_key_size"`
 }
 
 // StorageConfig carries Postgres connection details and the migration
@@ -139,6 +141,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sessions.ttl_scanner_interval_ms", 60_000)
 	v.SetDefault("sessions.ttl_scanner_jitter_ms", 10_000)
 	v.SetDefault("sessions.cache_size", 10_000)
+	v.SetDefault("sessions.idempotency_key_ttl", time.Hour)
+	v.SetDefault("sessions.idempotency_key_size", 10_000)
 
 	v.SetDefault("storage.migrate_on_startup", true)
 }
@@ -183,6 +187,12 @@ func validate(cfg *Config) error {
 	if cfg.Sessions.TTLScannerIntervalMS > 0 && cfg.Sessions.TTLScannerJitterMS >= cfg.Sessions.TTLScannerIntervalMS {
 		return fmt.Errorf("sessions.ttl_scanner_jitter_ms (%d) must be < sessions.ttl_scanner_interval_ms (%d)",
 			cfg.Sessions.TTLScannerJitterMS, cfg.Sessions.TTLScannerIntervalMS)
+	}
+	if cfg.Sessions.IdempotencyKeyTTL <= 0 {
+		return fmt.Errorf("sessions.idempotency_key_ttl must be > 0; got %v", cfg.Sessions.IdempotencyKeyTTL)
+	}
+	if cfg.Sessions.IdempotencyKeySize < 0 {
+		return fmt.Errorf("sessions.idempotency_key_size must be >= 0 (0 disables dedup); got %d", cfg.Sessions.IdempotencyKeySize)
 	}
 
 	seenNames := map[string]int{}

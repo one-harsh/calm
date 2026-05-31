@@ -34,6 +34,12 @@ func main() {
 }
 
 func run() error {
+	// Disable core dumps — raw tokens live transiently in handler/dedup
+	// memory and a core dump would persist them to disk.
+	if err := syscall.Setrlimit(syscall.RLIMIT_CORE, &syscall.Rlimit{Cur: 0, Max: 0}); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: setrlimit(RLIMIT_CORE, 0) failed: %v\n", err)
+	}
+
 	cfg, err := config.Load(os.Getenv("CALM_CONFIG_FILE"))
 	if err != nil {
 		return err
@@ -65,7 +71,11 @@ func run() error {
 	defer func() { _ = store.Close() }()
 
 	clientSvc := clientreg.New(store)
-	sessionSvc := session.New(store, cfg.Sessions.CacheSize)
+	sessionSvc := session.New(store, session.Config{
+		CacheSize:          cfg.Sessions.CacheSize,
+		IdempotencyKeyTTL:  cfg.Sessions.IdempotencyKeyTTL,
+		IdempotencyKeySize: cfg.Sessions.IdempotencyKeySize,
+	})
 	if err := clientSvc.SeedDefaults(openCtx, uncredentialedNamespaceNames(cfg.Namespaces)); err != nil {
 		return fmt.Errorf("seed clients: %w", err)
 	}

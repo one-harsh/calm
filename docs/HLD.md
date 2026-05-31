@@ -147,7 +147,7 @@ Format-hinted (workload passes an optional `format` field):
 
 If no hint is provided, auto-detection handles the basics. New format-aware chunkers slot in behind the same interface.
 
-Workloads can pass `intents` (up to 3) alongside content to shape the compact summary's ordering. When intents are provided and content exceeds a configurable size threshold, CALM runs a search per intent against the just-indexed content and fuses the per-intent rankings via Reciprocal Rank Fusion (RRF) to order `summary`. The per-intent search uses the same three-layer fallback as workload-issued `/v1/search` queries — one `Search()` semantics, no carve-out for the ingest path. Each section in the summary declares which intents it addresses through a `matches` array — derived from the section's rank in each intent's individual top-K results, not from raw scores (see Decision Log [DL05](#dl05)).
+Workloads can pass `intents` (up to 3) alongside content to shape the compact summary's ordering. When intents are provided and content exceeds a configurable size threshold, CALM runs a search per intent against the just-indexed content and fuses the per-intent rankings via Reciprocal Rank Fusion (RRF) to order `summary`. The per-intent search uses the same three-layer fallback as workload-issued `/v1/search` queries — one search semantics, no carve-out for the ingest path. Each section in the summary declares which intents it addresses through a `matches` array — derived from the section's rank in each intent's individual top-K results, not from raw scores (see Decision Log [DL05](#dl05)).
 
 The summary always contains all indexed section titles; intents shape *ordering*, not inclusion. There is no binary match-or-fallback semantics — sections matching no intents simply appear lower in the ordering with empty `matches`. Without `intents`, the summary is in document order and `matches` is omitted per section.
 
@@ -259,7 +259,7 @@ Six rules. Non-negotiable.
 │  ┌────────────────────────────────────────────────────────┐   │
 │  │                      HTTP API                          │   │
 │  │  /v1/sessions  /v1/ingest  /v1/search  /v1/events      │   │
-│  │  /v1/sessions/{id}/snapshot      /v1/manage/*          │   │
+│  │  /v1/snapshot  /v1/sources       /v1/manage/*          │   │
 │  └────────┬──────────┬─────────┬──────────┬───────────────┘   │
 │           │          │         │          │                   │
 │  ┌────────▼──────────▼───┐  ┌──▼──────────▼───────────────┐   │
@@ -297,7 +297,7 @@ The workload boxes are illustrative — three common patterns, not three privile
 
 **CALM is a single HTTP service.** It exposes a REST API over JSON. Any workload that can make HTTP calls is a candidate consumer — there is no special integration contract per workload type (see Decision Log [DL01](#dl01)). The service is stateless; all state lives in the Postgres backend.
 
-**The MCP Adapter is one workload's integration shim.** It is a separate binary that a coding agent (Claude Code, Cursor, Codex, similar) spawns as a child process on the developer's machine. It speaks MCP over stdio on the agent side and HTTP on the CALM side, translating between the two so the coding agent doesn't need to know CALM exists as a service. It generates a session ID on startup, closes the session on shutdown, and inspects tool calls passing through it to derive structured events (the same `/v1/events` surface any workload would use). Internal LLM applications and pipelines bypass the adapter entirely and call CALM's HTTP API directly.
+**The MCP Adapter is one workload's integration shim.** It is a separate binary that a coding agent (Claude Code, Cursor, Codex, similar) spawns as a child process on the developer's machine. It speaks MCP over stdio on the agent side and HTTP on the CALM side, translating between the two so the coding agent doesn't need to know CALM exists as a service. It calls `POST /v1/sessions` on startup, persists the returned session token, closes the session on shutdown, and inspects tool calls passing through it to derive structured events (the same `/v1/events` surface any workload would use). Internal LLM applications and pipelines bypass the adapter entirely and call CALM's HTTP API directly.
 
 When the agent wants to run code, the adapter runs it locally as a subprocess — it has access to the project directory, filesystem, git, local CLIs. It captures stdout and sends the output to CALM's `/v1/ingest`. CALM never sees or runs the code; it only receives the text output (see Decision Log [DL02](#dl02)).
 
@@ -313,7 +313,7 @@ Platform hooks (PreToolUse, PostToolUse) on the coding-agent side fire on tool c
 
 ```
 Slackbot's tool handler executes a ClickHouse query, gets 50 KB of results
-  → POST /v1/ingest { session_id, content, format: "log", intents: ["connection errors"] }
+  → POST /v1/ingest (X-CALM-Session-Token) { content, format: "log", intents: ["connection errors"] }
   → CALM chunks by log format, indexes into knowledge store
   → Runs per-intent search against just-indexed content; orders summary by RRF
   → Returns compact summary (~2 KB) with sections matching "connection errors" ranked first
@@ -324,27 +324,28 @@ Slackbot's tool handler executes a ClickHouse query, gets 50 KB of results
 
 ```
 Pipeline workflow enters agent step
-  → Middleware creates CALM session (session_id = workflow_run_id + step_index)
+  → Middleware POST /v1/sessions (labels.run = workflow_run_id + step_index)
+  → CALM returns session_token; middleware persists it for the step's lifetime
   → Middleware injects search_prior_output tool into the agent's tool set
 
   Agent loop, tool call 1:
     → LLM requests web search tool
     → Tool handler executes web search, gets 30 KB of results
-    → Handler: POST /v1/ingest { session_id, content, source: "web_search" }
+    → Handler: POST /v1/ingest (X-CALM-Session-Token) { content, source: "web_search" }
     → CALM returns compact representation (1 KB)
     → Handler returns compact version (placed in message history instead of raw output)
-    → POST /v1/events { session_id, type: "tool_invocation", priority: 3, data: { tool_name: "web_search" } }
+    → POST /v1/events (X-CALM-Session-Token) { events: [{type: "tool_invocation", priority: 3, data: { tool_name: "web_search" }}] }
 
   Agent loop, tool call 2:
     → LLM wants more detail from the earlier search
     → LLM calls search_prior_output { query: "specific topic", source: "web_search" }
-    → Tool handler: POST /v1/search { session_id, queries: ["specific topic"] }
+    → Tool handler: POST /v1/search (X-CALM-Session-Token) { queries: ["specific topic"] }
     → CALM returns matching chunks from the indexed content
     → Handler returns search results to the agent
     → Continue...
 
   Loop ends
-  → Middleware: DELETE /v1/sessions/{session_id}
+  → Middleware: DELETE /v1/sessions (X-CALM-Session-Token)
 ```
 
 ### Coding agent via MCP adapter
@@ -352,32 +353,32 @@ Pipeline workflow enters agent step
 ```
 Developer starts Claude Code session
   → Claude Code spawns MCP Adapter as child process on dev's machine
-  → Adapter generates session_id, calls POST /v1/sessions to create it
+  → Adapter POST /v1/sessions; persists returned session_token in process memory
 
   Developer asks agent to analyze a log file
   → Agent calls a CALM MCP tool (e.g., calm_ingest_file)
   → Adapter runs the code locally (has access to project dir, filesystem, git)
   → Captures stdout
-  → Adapter calls POST /v1/ingest { session_id, content, format: "log" }
+  → Adapter POST /v1/ingest (X-CALM-Session-Token) { content, format: "log" }
   → CALM returns compact representation
   → Adapter returns it as MCP tool response
 
   Agent also calls native Bash tool to run git log
   → PostToolUse hook fires
-  → Hook calls POST /v1/ingest { session_id, content, content_type: "prose" }
-  → Hook calls POST /v1/events { session_id, type: "git_operation", priority: 2, data: { command: "git log" } }
+  → Hook POST /v1/ingest (X-CALM-Session-Token) { content, content_type: "prose" }
+  → Hook POST /v1/events (X-CALM-Session-Token) { events: [{type: "git_operation", priority: 2, data: { command: "git log" }}] }
   → Raw git output is replaced with compact version in context
 
   Context compacts
   → Platform fires SessionStart hook
-  → Hook calls GET /v1/sessions/{session_id}/snapshot
+  → Hook GET /v1/snapshot (X-CALM-Session-Token)
   → CALM returns priority-tiered state snapshot
   → Hook injects snapshot into refreshed context
   → Agent continues from where it left off
 
   Developer ends session
   → Claude Code kills MCP Adapter process
-  → Adapter's shutdown hook calls DELETE /v1/sessions/{session_id}
+  → Adapter's shutdown hook: DELETE /v1/sessions (X-CALM-Session-Token)
   → If adapter crashes without cleanup, inactivity TTL handles it
 ```
 
@@ -400,19 +401,19 @@ Every workload that uses CALM follows the same six-obligation pattern. The shape
 
 0. **Register the workload's client at install time.** `POST /v1/clients/{name}` once per workload-deployment. Establishes the client as a first-class entity in the namespace. Returns 409 if the name is already taken; workloads that intend restart-safety catch 409 and treat as success. In namespaces configured with `require_client_credentials: true`, registration returns a one-time client token that the workload must persist and present via `Authorization: Bearer <token>` on subsequent operations — providing real per-workload isolation within a shared namespace. Lost tokens require `POST /v1/clients/{name}/rotate-token` (requires the current token) or operator intervention via the management API.
 
-1. **Create the session at the start of work.** `POST /v1/sessions` with a workload-chosen session ID (opaque to CALM), optional `client` identifier (when the namespace doesn't require client credentials, the client name in the body must reference a previously-registered client; when it does require them, the body's `client` is ignored — the session is bound to the client whose token was presented), optional `ttl_minutes` (bounded by an operator ceiling). The session lives for the duration of the workload's unit of work — one conversation, one pipeline step, one batch job.
+1. **Create the session at the start of work.** `POST /v1/sessions` with optional `client` identifier (when the namespace doesn't require client credentials, the client name in the body must reference a previously-registered client; when it does require them, the body's `client` is ignored — the session is bound to the client whose token was presented), optional `ttl_minutes` (bounded by an operator ceiling). CALM mints the session credential server-side and returns it once as `session_token` in the response. The workload persists this token and presents it on every subsequent session-touching call via the `X-CALM-Session-Token` header. Lost tokens are unrecoverable — operationally equivalent to losing the session. Workloads that want a human-readable handle attach it as a label (e.g., `labels.run: "pipeline-step-2"`). The session lives for the duration of the workload's unit of work — one conversation, one pipeline step, one batch job.
 
 2. **Execute tools normally.** Raw output is the workload's responsibility. CALM never runs tools — it receives the output after the workload has produced it.
 
-3. **Ingest tool output before it enters the LLM context.** `POST /v1/ingest` with the raw content, a `source` label (for idempotent re-indexing), and optional `format` / `content_type` hints. CALM returns a compact representation; the workload uses the compact form in place of the raw output in the LLM message stream.
+3. **Ingest tool output before it enters the LLM context.** `POST /v1/ingest` (carrying `X-CALM-Session-Token: <token>`) with the raw content, a `source` label (for idempotent re-indexing), and optional `format` / `content_type` hints. CALM returns a compact representation; the workload uses the compact form in place of the raw output in the LLM message stream.
    - **On CALM success:** use the compact representation.
    - **On CALM timeout or error:** fall back to the raw output. Never fail the LLM call because CALM is unavailable (see Decision Log [DL04](#dl04), invariant #1).
 
-4. **Capture structured events as work progresses.** `POST /v1/events` for state-relevant events (files edited, errors observed, user decisions). Each event has a workload-chosen `type`, a `priority` in P1–P4, and a `data` JSON payload. CALM does not interpret event content; it categorizes by priority for snapshot triage.
+4. **Capture structured events as work progresses.** `POST /v1/events` (with `X-CALM-Session-Token`) for state-relevant events (files edited, errors observed, user decisions). Each event has a workload-chosen `type`, a `priority` in P1–P4, and a `data` JSON payload. CALM does not interpret event content; it categorizes by priority for snapshot triage.
 
-5. **Tear down explicitly when work completes.** `DELETE /v1/sessions/{id}` at end of work. If the workload crashes or disconnects, inactivity TTL handles the cleanup.
+5. **Tear down explicitly when work completes.** `DELETE /v1/sessions` (with `X-CALM-Session-Token`) at end of work. If the workload crashes or disconnects, inactivity TTL handles the cleanup.
 
-The MCP adapter implements this contract on behalf of the coding agent it serves — generating the session ID, calling ingest as tool calls pass through, posting events derived from the tool calls, deleting the session on shutdown. Internal LLM applications and automated pipelines implement the same five obligations directly from their own middleware. Any HTTP client in any language that satisfies these obligations is CALM-compatible. CALM ships reference middleware as working examples of the contract, not as libraries to take a hard dependency on.
+The MCP adapter implements this contract on behalf of the coding agent it serves — calling createSession, persisting the returned session_token, calling ingest as tool calls pass through, posting events derived from the tool calls, deleting the session on shutdown. Internal LLM applications and automated pipelines implement the same five obligations directly from their own middleware. Any HTTP client in any language that satisfies these obligations is CALM-compatible. CALM ships reference middleware as working examples of the contract, not as libraries to take a hard dependency on.
 
 ---
 
@@ -420,30 +421,29 @@ The MCP adapter implements this contract on behalf of the coding agent it serves
 
 ### `POST /v1/sessions`
 
-Creates a session. The workload provides the session ID — CALM treats it as an opaque string. The namespace is resolved from the API key, not from the request body. Accepts an optional `client` identifier (auto-registered on first reference), optional metadata labels, and optional `ttl_minutes`.
+Creates a session. CALM mints the session credential server-side. The namespace is resolved from the API key. Accepts an optional `client` identifier (must reference a previously-registered client; defaults to `default`), optional metadata labels, and optional `ttl_minutes`. Optionally carries an `Idempotency-Key` header so retries return the same `session_token`.
 
 ```json
 {
-  "session_id": "pipeline-run-abc-step-2",
   "client": "factory-pipeline",
   "labels": {
     "env": "production",
     "workflow": "report-generator",
-    "user": "alice"
+    "run": "pipeline-step-2"
   },
   "ttl_minutes": 30
 }
 ```
 
-- `client` — optional. Identifies which workload is creating the session. Auto-registers on first reference if not already known. If omitted, the session attributes to the `default` client.
-- `labels` — arbitrary key/value metadata; queryable via the management API.
+- `client` — optional. Identifies which workload is creating the session. Must reference a previously-registered client. If omitted, the session attributes to the `default` client.
+- `labels` — arbitrary key/value metadata; queryable via the management API. Workloads that want a human-readable handle for a session attach it here (e.g., `run: pipeline-step-2`).
 - `ttl_minutes` — inactivity timeout. CALM clamps to the operator-configured maximum if the workload requests longer (rather than rejecting with 4xx). The clamp choice is deliberate: CALM's consumers are LLM-orchestration glue layers — coding-agent harnesses, pipeline runners, MCP adapters — that typically fall back to no-CALM mode when they see a 4xx on session create. For a context-management service, *absent CALM* is a worse outcome than *degraded CALM* (shorter session than requested). Clamping keeps CALM useful for the work unit; the response echoes the committed value so workloads that do check can detect the clamp. Server emits a WARN per clamp event so operators can see when workloads consistently hit the ceiling and decide whether to raise it.
 
 **Response (201):**
 
 ```json
 {
-  "session_id": "pipeline-run-abc-step-2",
+  "session_token": "rTxN3kP4...",
   "namespace": "factory-prod",
   "client": "factory-pipeline",
   "ttl_minutes": 30,
@@ -451,17 +451,16 @@ Creates a session. The workload provides the session ID — CALM treats it as an
 }
 ```
 
-The response echoes the persisted session — `namespace` resolved from the API key, `client` resolved (or auto-registered) from the request, and `ttl_minutes` after operator-ceiling clamping. The workload uses the echoed values to confirm what CALM actually committed.
+`session_token` is the secret credential the workload must persist and present via `X-CALM-Session-Token` on every subsequent session-touching call. Returned once; lost tokens are unrecoverable. The remaining fields echo what CALM committed — `namespace` resolved from the API key, `client` resolved from the request, and `ttl_minutes` after operator-ceiling clamping. The workload uses the echoed values to confirm what CALM actually committed.
 
-### `DELETE /v1/sessions/{session_id}`
+### `DELETE /v1/sessions`
 
-Tears down a session. All indexed content and events for this session are deleted (cascading via FK). If the workload doesn't call this, inactivity TTL handles cleanup.
+Tears down a session. The target session is identified by `X-CALM-Session-Token`. All indexed content and events for this session are deleted (cascading via FK). If the workload doesn't call this, inactivity TTL handles cleanup.
 
 **Response (200):**
 
 ```json
 {
-  "deleted_session_id": "pipeline-run-abc-step-2",
   "cascaded": {
     "sources": 12,
     "chunks": 84,
@@ -477,9 +476,10 @@ The cascade counts let the workload (and any audit logging) record what was remo
 
 The primary endpoint. Takes raw content, chunks it, indexes it, returns a compact representation. The workload puts the compact version into the LLM's context instead of the raw content.
 
+Requires the `X-CALM-Session-Token` header.
+
 ```json
 {
-  "session_id": "pipeline-run-abc-step-2",
   "content": "<raw tool output>",
   "source": "web-search-results",
   "format": "log",
@@ -555,9 +555,10 @@ The primary endpoint. Takes raw content, chunks it, indexes it, returns a compac
 
 Queries indexed content within a session. Supports multiple queries in a single call.
 
+Requires the `X-CALM-Session-Token` header.
+
 ```json
 {
-  "session_id": "pipeline-run-abc-step-2",
   "queries": ["connection timeout", "retry configuration"],
   "source": "web-search-results",
   "limit": 3
@@ -596,9 +597,9 @@ Search is not scoped by `content_type`. A session that has indexed a mix of pros
 
 `match_layer` is one of `primary`, `trigram`, `fuzzy` — indicating which fallback layer produced the match. `primary` covers both the prose and code FTS indexes (which are RRF-fused at layer 1, per [§7](#7-data-model--storage)) — the workload does not see, and does not need to disambiguate, which tokenizer the underlying chunk was indexed with. Operators use `match_layer` to spot quality issues (frequent `fuzzy` matches suggest the indexed vocabulary doesn't match what workloads search for).
 
-### `GET /v1/sessions/{session_id}/sources`
+### `GET /v1/sources`
 
-Lists everything indexed in this session.
+Lists everything indexed in this session. Requires the `X-CALM-Session-Token` header.
 
 ```json
 {
@@ -615,9 +616,10 @@ Useful for end-of-work observability — what was indexed and how much.
 
 Records session events. Workloads send `type`, `priority` (integer 1–4, **required**), and `data`. CALM persists each event with `(type, priority, data, created_at)`. CALM validates the priority range (400 on missing or out-of-range) but does not validate `type` against a fixed set, does not interpret `data`, and does not validate the priority distribution.
 
+Requires the `X-CALM-Session-Token` header.
+
 ```json
 {
-  "session_id": "debug-conv-xyz",
   "events": [
     { "type": "tool_invocation", "priority": 3, "data": { "tool_name": "clickhouse_query", "last_input_summary": "SELECT * FROM traces WHERE ..." } },
     { "type": "error_observed", "priority": 2, "data": { "message": "connection pool exhausted", "source": "clickhouse", "exit_code": 1 } }
@@ -627,27 +629,26 @@ Records session events. Workloads send `type`, `priority` (integer 1–4, **requ
 
 Priority semantics are defined in §4 — workloads classify events into the four-tier scheme so the snapshot endpoint can triage by importance.
 
-### `GET /v1/events/{session_id}`
+### `GET /v1/events`
 
-Reads events for a session. Supports filtering by `type` and `min_priority` via query parameters.
+Reads events for a session. Supports filtering by `types` and `min_priority` via query parameters. Requires the `X-CALM-Session-Token` header.
 
 ```
-GET /v1/events/debug-conv-xyz?type=error_observed,user_decision&min_priority=1
+GET /v1/events?types=error_observed,user_decision&min_priority=1
 ```
 
 The workload can read events before session close to extract anything worth persisting to its own long-term storage.
 
-### `GET /v1/sessions/{session_id}/snapshot`
+### `GET /v1/snapshot`
 
-Returns the session's events ordered by priority and recency, accumulating until a byte budget is reached. Generic event store — CALM does not interpret event content or build a structured state representation (see Decision Log [DL08](#dl08)). Workloads needing structured shapes build them in their own middleware from the returned event stream.
+Returns the session's events ordered by priority and recency, accumulating until a byte budget is reached. Generic event store — CALM does not interpret event content or build a structured state representation (see Decision Log [DL08](#dl08)). Workloads needing structured shapes build them in their own middleware from the returned event stream. Requires the `X-CALM-Session-Token` header.
 
 ```
-GET /v1/sessions/debug-conv-xyz/snapshot?budget_bytes=2048
+GET /v1/snapshot?budget_bytes=2048
 ```
 
 ```json
 {
-  "session_id": "debug-conv-xyz",
   "byte_budget_used": 1893,
   "events": [
     { "type": "user_decision", "priority": 1, "data": {}, "created_at": "..." },
@@ -670,7 +671,7 @@ Lists sessions in the API key's namespace. Supports filtering by client and arbi
 GET /v1/manage/sessions?client=factory-pipeline&labels.env=production
 ```
 
-Returns session IDs, labels, the client they belong to, creation time, last activity time, event counts.
+Returns session metadata — labels, the client they belong to, creation time, last activity time, event counts. Session credentials are not surfaced; operators correlate by `client` and labels.
 
 ### `DELETE /v1/manage/sessions`
 
@@ -767,22 +768,24 @@ The namespace registry itself lives in service configuration, not in the databas
 
 ### Sessions
 
-The root entity for everything below. Created by the workload with an opaque string ID, optional `client` identifier, optional metadata labels, optional `ttl_minutes`.
+The root entity for everything below. Created by the workload with optional `client` identifier, optional metadata labels, optional `ttl_minutes`. CALM mints the session credential server-side; only its sha256 hash is stored. The surrogate `id` (a BIGSERIAL) is the FK target for all child tables.
 
 ```
 sessions
-  session_id     TEXT PRIMARY KEY      -- workload-provided, opaque
-  namespace      TEXT NOT NULL         -- resolved from API key, server-enforced
-  client         TEXT NOT NULL         -- defaults to 'default' if workload omits it
-  created_at     TIMESTAMP
-  last_activity  TIMESTAMP             -- updated on every request, drives TTL
-  ttl_minutes    INTEGER               -- workload-set, clamped to operator ceiling
+  id                  BIGSERIAL PRIMARY KEY  -- surrogate; namespace-stamped at creation
+  namespace           TEXT NOT NULL          -- resolved from API key, server-enforced
+  session_token_hash  BYTEA NOT NULL         -- sha256(namespace || 0x00 || raw_token)
+  client              TEXT NOT NULL          -- defaults to 'default' if workload omits it
+  created_at          TIMESTAMP
+  last_activity       TIMESTAMP              -- updated on every request, drives TTL
+  ttl_minutes         INTEGER                -- workload-set, clamped to operator ceiling
+  UNIQUE (namespace, session_token_hash)     -- auth-side lookup index
   FOREIGN KEY (namespace, client) → clients(namespace, name)
   INDEX (namespace, client)
-  INDEX (last_activity)                -- supports TTL scanner
+  INDEX (last_activity)                      -- supports TTL scanner
 ```
 
-Every operation that touches a session validates that the session belongs to the requesting namespace. If it doesn't, the response is 404 — not 403; from the caller's perspective, the session doesn't exist. All downstream entities (sources, chunks, events, vocabulary, labels) inherit isolation through the session boundary.
+Every operation that touches a session validates that the session belongs to the requesting namespace. If it doesn't, the response is 404 — not 403; from the caller's perspective, the session doesn't exist. All downstream entities (sources, chunks, events, vocabulary, labels) inherit isolation through the FK chain back to `sessions.id`.
 
 ### Session Labels
 
@@ -790,7 +793,7 @@ Key-value metadata attached at session creation. Indexed for management API quer
 
 ```
 session_labels
-  session_id     TEXT                  -- FK to sessions
+  session_id     BIGINT                -- FK to sessions(id) ON DELETE CASCADE
   key            TEXT
   value          TEXT
   PRIMARY KEY (session_id, key)
@@ -803,8 +806,8 @@ Tracks what's been ingested into a session. Each ingest call creates or replaces
 
 ```
 sources
-  id             INTEGER PRIMARY KEY
-  session_id     TEXT                  -- FK to sessions
+  id             BIGSERIAL PRIMARY KEY
+  session_id     BIGINT                -- FK to sessions(id) ON DELETE CASCADE
   label          TEXT                  -- workload-provided, e.g. "web-search-results"
   indexed_at     TIMESTAMP
   UNIQUE (session_id, label)           -- enforces idempotent re-indexing
@@ -842,7 +845,7 @@ Distinct terms extracted from ingested content per session. Powers the distincti
 
 ```
 vocabulary
-  session_id     TEXT                  -- FK to sessions
+  session_id     BIGINT                -- FK to sessions(id) ON DELETE CASCADE
   word           TEXT
   doc_freq       INTEGER               -- chunks in this session containing this word
   PRIMARY KEY (session_id, word)
@@ -858,17 +861,17 @@ Structured events captured during a session. Used for state reconstruction via t
 
 ```
 session_events
-  id             INTEGER PRIMARY KEY
-  session_id     TEXT                  -- FK to sessions
+  id             BIGSERIAL PRIMARY KEY
+  session_id     BIGINT                -- FK to sessions(id) ON DELETE CASCADE
   type           TEXT                  -- workload-chosen
   priority       INTEGER               -- 1 (critical) to 4 (noise); workload-set
-  data           TEXT                  -- JSON payload, workload-structured
-  data_hash      TEXT                  -- SHA-256 of (type, data), for dedup
+  data           JSONB                 -- workload-structured payload
+  data_hash      BYTEA                 -- SHA-256 of (type, data), for dedup
   created_at     TIMESTAMP
   INDEX (session_id, priority, created_at)   -- supports snapshot ordering
 ```
 
-`namespace` and `client` are not denormalized onto events; they inherit through the `session_id` FK. Cross-session queries that need either dimension JOIN through `sessions`.
+`namespace` and `client` are not denormalized onto events; they inherit through the FK chain to `sessions`. Cross-session queries that need either dimension JOIN through `sessions`.
 
 Deduplication: before inserting, the last N events in the session (configurable, default 5) are checked for matching `data_hash`. Prevents duplicate events from repeated tool calls against the same resource.
 
@@ -878,7 +881,7 @@ FIFO eviction: max events per session is capped (default 1000). When exceeded, t
 
 Two paths, whichever fires first:
 
-- **Explicit close.** Workload calls `DELETE /v1/sessions/{id}`. Everything under that session — sources, chunks, vocabulary, events, labels — is deleted via cascade. The `clients.last_activity_at` for the session's client is updated.
+- **Explicit close.** Workload calls `DELETE /v1/sessions` with `X-CALM-Session-Token`. Everything under that session — sources, chunks, vocabulary, events, labels — is deleted via cascade. The `clients.last_activity_at` for the session's client is updated.
 - **Inactivity TTL.** A background scanner finds sessions where `now() - last_activity > ttl_minutes` and deletes them. Same cascade as explicit close. Catches workloads that crash or disconnect without calling DELETE.
 
 The TTL scan interval is configurable; default 60 seconds.
@@ -895,29 +898,31 @@ This is deferred as premature optimization. CALM's typical content — logs, met
 
 # 8. Session Lifecycle
 
-Sessions are explicit. Created by the workload, used during the workload's unit of work, torn down when done. CALM does not auto-create sessions — a request against a nonexistent session ID returns 404 (see Decision Log [DL03](#dl03)). This catches misconfigurations early rather than silently creating orphaned sessions.
+Sessions are explicit. Created by the workload, used during the workload's unit of work, torn down when done. CALM does not auto-create sessions — a request bearing an unknown `X-CALM-Session-Token` returns 404 (see Decision Log [DL03](#dl03)). The token is server-minted; presenting one CALM didn't issue (or one whose session has been deleted or TTL-expired) is structurally distinguishable from a fresh create request.
 
 ## Creation
 
-The workload calls `POST /v1/sessions` with a session ID, API key, optional `client` identifier, optional labels, and optional `ttl_minutes`. CALM resolves the namespace from the API key, creates the session (auto-registering the client if new — see Decision Log [DL01](#dl01)), and returns 201.
+The workload calls `POST /v1/sessions` with the namespace API key, optional `client` identifier, optional labels, and optional `ttl_minutes`. CALM resolves the namespace from the API key, mints a fresh session credential server-side, persists only its hash, and returns 201 with the raw `session_token` (shown once). The workload persists the token and presents it as `X-CALM-Session-Token` on every subsequent call. The `client` must reference a previously-registered client (`POST /v1/clients/{name}`) or be omitted to attribute to `default` — see Decision Log [DL01](#dl01).
+
+Workloads that want a human-readable handle for a session attach it as a label (e.g., `labels.run: "wf-abc-step-2"`) rather than encoding it into the credential.
 
 Example patterns:
 
-- **Automated pipeline:** middleware creates a session when an agent step begins; session ID is constructed from the workflow run ID and step index (e.g., `wf-abc-step-2`). API key is in the pipeline's service config.
-- **Internal LLM application:** the application creates a session when a user starts a new conversation; session ID is the conversation ID. API key is in the application's server config.
-- **MCP adapter:** the adapter creates a session on startup when the coding agent spawns it; session ID is a generated UUID. API key is in the adapter's config file.
+- **Automated pipeline:** middleware calls createSession when an agent step begins and tags the session with `labels.run` derived from the workflow run ID and step index. API key is in the pipeline's service config; the returned token lives for the step's duration.
+- **Internal LLM application:** the application calls createSession when a user starts a new conversation and tags the session with `labels.conversation` set to the conversation ID. API key is in the application's server config.
+- **MCP adapter:** the adapter calls createSession on startup when the coding agent spawns it and holds the returned token in process memory. API key is in the adapter's config file.
 
-In each case, the namespace API key is configured in the workload's deploy artifact (config file, env var, service account secret).
+In each case, the namespace API key is configured in the workload's deploy artifact (config file, env var, service account secret). The session token is ephemeral and per-session; the workload never picks it.
 
 ## Active State
 
 Every request (ingest, search, events) updates `last_activity` on the session. This drives the TTL clock — the inactivity timer resets on every interaction.
 
-During the active phase, content is ingested and indexed, search queries run against the session's indexed content, and events are captured. All operations are scoped to the session ID and validated against the API key's namespace.
+During the active phase, content is ingested and indexed, search queries run against the session's indexed content, and events are captured. All operations carry `X-CALM-Session-Token`; CALM hashes it and looks the session up by `(namespace, session_token_hash)`.
 
 ## State Reconstruction
 
-When a workload needs to recover state — after platform compaction in a coding-agent session, after a crash-and-replay in an automated pipeline, on resume from a paused conversation — it calls `GET /v1/sessions/{id}/snapshot`.
+When a workload needs to recover state — after platform compaction in a coding-agent session, after a crash-and-replay in an automated pipeline, on resume from a paused conversation — it calls `GET /v1/snapshot` (with `X-CALM-Session-Token`).
 
 CALM reads the session's events, sorts them by `(priority asc, created_at desc)` — recall that priority `1` is critical and `4` is noise (HLD §4), so ascending priority means most-important-first — and accumulates into the response until a configurable byte budget is reached. The endpoint returns a generic event list — no merging, no deduplication, no per-event-type synthesis. Workloads that want structured state representations (e.g., "active files" extracted from `file_touched` events, "open decisions" extracted from `user_decision` events) build them in their own middleware from the returned events. See Decision Log [DL08](#dl08).
 
@@ -935,7 +940,7 @@ The snapshot is built on demand from current events, not pre-computed and stored
 
 Two paths, whichever fires first.
 
-**Explicit close.** Workload calls `DELETE /v1/sessions/{id}`. Everything under that session — sources, chunks, vocabulary, events, labels — is deleted via cascade. The workload is done and says so.
+**Explicit close.** Workload calls `DELETE /v1/sessions` with `X-CALM-Session-Token`. Everything under that session — sources, chunks, vocabulary, events, labels — is deleted via cascade. The workload is done and says so.
 
 **Inactivity TTL.** A background scanner finds sessions where `now() - last_activity > ttl_minutes` and deletes them. Same cascade as explicit close. Catches workloads that crashed, disconnected, or didn't clean up.
 
@@ -964,7 +969,7 @@ TTL is configurable per session at creation time (clamped to an operator-set cei
                            │
               ┌────────────┼────────────┐
               │                         │
-    DELETE /v1/sessions/{id}     TTL expires
+    DELETE /v1/sessions          TTL expires
               │                         │
               ▼                         ▼
         ┌─────────────────────────────────┐
@@ -1086,7 +1091,7 @@ Cost metrics tell you CALM is saving tokens. These tell you whether the model is
 
 - `ingest.reingest_rate` — how often the same source label is re-indexed within a session. A workload re-ingesting a source it already indexed is a signal that the compact representation wasn't sufficient.
 - `search.after_ingest_rate` — how often a `/v1/search` call follows a `/v1/ingest` on the same source within the same session turn. Expected behavior for iterative workflows; elevated rates on first turns suggest compact summaries aren't landing.
-- `snapshot.injection_count` — how often `/v1/sessions/{id}/snapshot` is called. Tracks how frequently session continuity is actually exercised, not just available.
+- `snapshot.injection_count` — how often `/v1/snapshot` is called. Tracks how frequently session continuity is actually exercised, not just available.
 - `ingest.intent.zero_match_rate` — when intents are provided, the percentage of ingest calls where every section ended up with an empty `matches` array (no section was addressed by any intent). High rates suggest the intents don't align with the content's vocabulary — a signal to revisit either the intent phrasing or the workload's chunking strategy for that content type.
 
 ### Service health
@@ -1105,7 +1110,7 @@ Traces help diagnose latency — is it the database, the chunking, or the search
 
 ## Structured Logging
 
-JSON-formatted logs to stdout. Each log entry includes: timestamp, level, session ID (when applicable), namespace, client, endpoint, and request-specific fields. No unstructured string messages.
+JSON-formatted logs to stdout. Each log entry includes: timestamp, level, namespace, client, session id (when applicable — the surrogate id; raw session tokens are credentials and never logged), endpoint, and request-specific fields. No unstructured string messages.
 
 Key events at INFO level:
 
@@ -1139,7 +1144,7 @@ CALM adds a round trip to every tool call it manages. The tool call itself takes
 
 **Ingest (no intents):** 50–100 ms in practice. The hottest path — every managed tool call hits it. Involves chunking and indexing into FTS.
 
-**Ingest (with intents):** `base + 30–50 ms per intent` for the per-intent search and RRF aggregation. With 1–3 intents at typical payload sizes, this lands in the 80–250 ms range. The per-intent cost is the same `Search()` call workload-issued `/v1/search` queries make — full three-layer fallback (see [DL05](#dl05)). Linear in intent count, not in content size or vocabulary. The upper end may exceed the workload's 200 ms middleware timeout, in which case the workload falls back to raw context per invariant #1 (see [DL04](#dl04)) — correct behavior, not failure. Workloads needing guaranteed intent ordering should size intent count and payload accordingly.
+**Ingest (with intents):** `base + 30–50 ms per intent` for the per-intent search and RRF aggregation. With 1–3 intents at typical payload sizes, this lands in the 80–250 ms range. The per-intent cost is the same search workload-issued `/v1/search` queries make — full three-layer fallback (see [DL05](#dl05)). Linear in intent count, not in content size or vocabulary. The upper end may exceed the workload's 200 ms middleware timeout, in which case the workload falls back to raw context per invariant #1 (see [DL04](#dl04)) — correct behavior, not failure. Workloads needing guaranteed intent ordering should size intent count and payload accordingly.
 
 **Search:** 50–100 ms in practice. Called on follow-up queries against previously indexed content.
 
@@ -1153,19 +1158,19 @@ Two in-memory caches help CALM stay within budget. Both are process-local — no
 
 ### Session metadata cache
 
-Every request validates the session ID against the namespace. Without caching, that's a database read on every call.
+Every request validates the session token against the namespace. Without caching, that's a database read on every call.
 
-The cache maps session ID → namespace + client + TTL config. LRU with a size cap (e.g., 10,000 entries). Explicitly invalidated when a session is deleted. No time-based TTL — the mapping is correct until the session is closed, so time-based expiry would be arbitrary. Active sessions stay hot naturally because they're accessed on every request. Abandoned sessions drift to the LRU tail and get evicted.
+The cache is keyed by `(namespace, session_token)` jointly — the raw token, not the hash, because the cache sits at the service-API surface above the hashing boundary. Value is `(session_id surrogate, client, TTL config, created_at)`. LRU with a size cap (e.g., 10,000 entries). Explicitly invalidated when a session is deleted. No time-based TTL — the mapping is correct until the session is closed, so time-based expiry would be arbitrary. Active sessions stay hot naturally because they're accessed on every request. Abandoned sessions drift to the LRU tail and get evicted.
 
 ### Search result cache (deferred to v2)
 
-A per-session LRU cache of search results — keyed by `(session_id, query, source)`, invalidated on ingest into the session — was specified for v1 but is **deferred to v2 pending a multi-pod topology decision**.
+A per-session LRU cache of search results — keyed by `(namespace, session_token, query, source)`, invalidated on ingest into the session — was specified for v1 but is **deferred to v2 pending a multi-pod topology decision**.
 
 The gap: cache invalidation works within a single pod. Under multi-pod deployment with round-robin load balancing, ingest may land on pod A while a subsequent search hits pod B; pod B's cache for that session is stale until LRU eviction, and *serves stale results* in the meantime. Unlike the session-metadata cache, search-result staleness doesn't self-heal (the cached result is returned, not re-validated against the DB).
 
 For v1, cold-search latency targets (50–100 ms) are met without the cache — it was a perf optimization for repeat-query patterns, not a load-bearing budget mechanism. Removing it from v1 is the simplest correct option in any deployment topology.
 
-When the cache returns in v2, the most likely shape is: workloads set `X-Session-ID` on body-carrying endpoints, LB hashes on that header to pin a session to a pod, cache invalidation stays in-process. The header-on-API-contract change is the price for the perf gain — worth paying when measurement justifies it.
+When the cache returns in v2, the most likely shape is: the LB hashes on `X-CALM-Session-Token` (already on every session-touching request) to pin a session to a pod, and cache invalidation stays in-process. No new wire-contract change is needed; the header is already there for auth.
 
 ## What the targets assume
 
@@ -1270,9 +1275,9 @@ This makes it a capability of the MCP adapter, not a CALM component. The adapter
 
 **Explicit session creation over auto-create**
 
-With namespace scoping, every session must be tagged with the correct namespace at creation time. Auto-creation on first ingest would silently create orphaned sessions when a workload sends a typo'd session ID. In an automated pipeline running thousands of iterations per day, that's thousands of orphaned sessions consuming storage until TTL cleans them up.
+With namespace scoping, every session must be tagged with the correct namespace at creation time. Auto-creation on first ingest would silently create orphaned sessions and remove a meaningful invariant — that the lifecycle of a session is bookended by explicit workload action.
 
-Explicit creation catches misconfigurations immediately — wrong session ID returns 404 on the first call.
+Because the session credential is server-minted, "wrong session token" is a security concern rather than a config-typo concern: presenting a bogus, expired, or someone-else's `X-CALM-Session-Token` returns 404. Explicit creation forces the workload to acknowledge it's starting a unit of work; the 404-on-unknown-token surface protects against credential misuse.
 
 ### DL04
 
@@ -1302,15 +1307,15 @@ Alternatives considered:
 
 The per-section `matches` array is the minimum useful per-intent signal — it tells the caller which intents a section addresses without exposing scoring machinery that would muddle the ordering semantics.
 
-**Layer behavior on intent search.** Intent search reuses the same `Search()` implementation as workload-issued `/v1/search` queries — full three-layer fallback: layer 1 RRF fusion across the prose and code FTS indexes, layer 2 trigram fallback via `pg_trgm` if layer 1 underfills the limit, layer 3 Levenshtein correction against the session's `vocabulary` table if layers 1+2 return zero hits. One call signature, one set of observable behaviors, one mental model.
+**Layer behavior on intent search.** Intent search uses the same search semantics as workload-issued `/v1/search` queries — full three-layer fallback: layer 1 RRF fusion across the prose and code FTS indexes, layer 2 trigram fallback via `pg_trgm` if layer 1 underfills the limit, layer 3 Levenshtein correction against the session's `vocabulary` table if layers 1+2 return zero hits. One operation, one set of observable behaviors, one mental model.
 
 Considered alternative: skip layer 3 for intent search, since intents are workload-provided (typo-free in the common case) and Levenshtein-against-vocabulary scales with session vocabulary size. Rejected because:
 
-- **Two `Search()` semantics is a bug surface.** One semantics for `/v1/search`, another for the intent path — every DAL caller has to decide which path to use, and every future feature that calls `Search()` from a new code path has to think about which it wants. Single semantics is simpler and harder to misuse.
-- **No measurement justifies the carve-out yet.** v1's latency budget (§11) accommodates the full three-layer cost via the per-intent budget increment. A code-path split today is speculative optimization without data.
+- **Two search semantics is a contract surface.** One behavior for `/v1/search`, another for the intent path means every consumer of the search primitive has to choose which behavior they want. Single semantics is simpler and harder to misuse.
+- **No measurement justifies the carve-out yet.** v1's latency budget (§11) accommodates the full three-layer cost via the per-intent budget increment. Splitting the semantics today is speculative optimization without data.
 - **Marginal value of layer 3 remains for vocabulary-adjacent terms.** Intent term `timeout` against chunk vocabulary `timeouts` / `timeouted`, where porter stemming doesn't bridge and trigram similarity falls below threshold, can still be caught by layer 3. Not common, but not zero.
 
-The optimization remains available as a one-line `Search()` flag follow-up if measurement shows layer 3 cost dominating intent-ingest latency in production. v1 ships the simpler path; perf tuning is a follow-up exercise grounded in measurement, not pre-stamped in the architecture.
+The optimization remains available as a follow-up if measurement shows layer 3 cost dominating intent-ingest latency in production. v1 ships the simpler path; perf tuning is a follow-up exercise grounded in measurement, not pre-stamped in the architecture.
 
 ### DL06
 
@@ -1362,7 +1367,7 @@ CALM has a handful of workloads per deployment — a slackbot, an eval harness, 
 
 **Secret-reference URI dialect.** Each row's secret value is a bracketed reference: `[text:<literal>]`, `[env:<VAR>]`, or `[file:<path>]`. The keys file itself contains no secret material — it's a manifest of where each namespace's credential lives. Operators wire CALM into their platform's existing secret-management tooling (k8s Secrets, Vault Agent, External Secrets Operator, ECS task secrets) by populating env vars or rendering files; CALM consumes via the bracket dialect without linking any provider SDK. Resolution happens at startup; failures are Fatal.
 
-The same dialect is reusable for any future operator-facing secret-bearing config (Postgres DSN, TLS certs, OTel exporter tokens, etc.) via `internal/secrets`.
+The same dialect is reusable for any future operator-facing secret-bearing config (Postgres DSN, TLS certs, OTel exporter tokens, etc.).
 
 Rejected dialect entries:
 
@@ -1375,19 +1380,19 @@ Rejected dialect entries:
 
 "Tenant" implies a specific organizational hierarchy. CALM doesn't interpret what a namespace means. It partitions on it. A namespace can represent an org, a team, a user, or a deployment environment — the deployer decides. Same mechanism at any granularity, same as Kubernetes namespaces.
 
-Per-user isolation within a namespace (e.g., user foo can't see user bar's debug sessions) is the workload's responsibility. CALM prevents cross-namespace leakage. Within a namespace, the workload controls access by managing which session IDs are visible to which users.
+Per-user isolation within a namespace (e.g., user foo can't see user bar's debug sessions) is the workload's responsibility. CALM prevents cross-namespace leakage. Within a namespace, the workload controls access by managing which session tokens are visible to which users.
 
 ### DL12
 
 **Postgres as sole storage backend**
 
-The DAL interface exists for unit-test mocking via mockery, not for portability across backends. There is one production storage backend: Postgres.
+The data-access layer is abstracted as a port boundary to enable testing in isolation from storage, not to enable swapping storage backends. There is one production storage backend: Postgres.
 
 Rejected alternatives:
 
 - **SQLite** — limited FTS5 (no real BM25/IDF), single-writer, no `pg_trgm` equivalent for trigram indexing, no `fuzzystrmatch` for Levenshtein.
 - **MySQL / MariaDB** — InnoDB FTS isn't BM25 and isn't configurable. No trigram-index equivalent of `pg_trgm`. No native Levenshtein. No partial indexes (which CALM uses to route prose vs. code chunks into separate FTS indexes per [DL06](#dl06)). JSON support is less mature than JSONB. Delivering the three-layer search architecture would require bolting Elasticsearch or Tantivy on the side, breaking the "single store, no external search system" property.
-- **Portable DAL with multiple backend impls** — false flexibility. Doubles maintenance surface (every DAL method needs N implementations + parity tests) for a portability story with no concrete demand.
+- **Portable data-access layer with multiple backend implementations** — false flexibility. Doubles maintenance surface (every storage operation needs N implementations + parity tests) for a portability story with no concrete demand.
 - **Embedded KV (BoltDB / BadgerDB)** — no full-text search, no relational queries for the management API, no way to express FTS partial indexes.
 - **Distributed SQL (CockroachDB, TiDB)** — Postgres-wire-compatible but lacks the BM25 extensions; operational complexity exceeds what the use case demands.
 

@@ -139,10 +139,9 @@ type ClientSummary struct {
 
 // CreateSessionRequest defines model for CreateSessionRequest.
 type CreateSessionRequest struct {
-	// Client Workload identifier. Auto-registers on first reference. Omitted attributes to `default`.
-	Client    *string            `json:"client,omitempty"`
-	Labels    *map[string]string `json:"labels,omitempty"`
-	SessionId string             `json:"session_id"`
+	// Client Workload identifier. Must reference a previously-registered client. Omitted attributes to `default`.
+	Client *string            `json:"client,omitempty"`
+	Labels *map[string]string `json:"labels,omitempty"`
 
 	// TtlMinutes Inactivity timeout. Clamped to the operator-configured ceiling.
 	TtlMinutes *int `json:"ttl_minutes,omitempty"`
@@ -170,8 +169,7 @@ type DeleteManagedSessionsResult struct {
 // DeleteSessionResult defines model for DeleteSessionResult.
 type DeleteSessionResult struct {
 	// Cascaded Counts of dependent rows removed by a cascading delete.
-	Cascaded         CascadeCounts `json:"cascaded"`
-	DeletedSessionId string        `json:"deleted_session_id"`
+	Cascaded CascadeCounts `json:"cascaded"`
 }
 
 // Error defines model for Error.
@@ -239,8 +237,7 @@ type IngestRequest struct {
 	// Intents Up to 3 intent strings. When provided and content exceeds
 	// the configured size threshold, `summary` is ordered by RRF across
 	// per-intent rankings and each section carries a `matches` array.
-	Intents   *[]string `json:"intents,omitempty"`
-	SessionId string    `json:"session_id"`
+	Intents *[]string `json:"intents,omitempty"`
 
 	// Source Label identifying this content within the session. Re-ingesting with the same source replaces prior content (invariant
 	Source string `json:"source"`
@@ -285,7 +282,8 @@ type ListSourcesResult struct {
 	Sources []SourceSummary `json:"sources"`
 }
 
-// ManagedSession Session shape returned by the management API. Adds last_activity, labels, and event_count to the core Session fields.
+// ManagedSession Session shape returned by the management API. Session credentials
+// are not surfaced — operators correlate by client and labels.
 type ManagedSession struct {
 	Client       string             `json:"client"`
 	CreatedAt    time.Time          `json:"created_at"`
@@ -293,7 +291,6 @@ type ManagedSession struct {
 	Labels       *map[string]string `json:"labels,omitempty"`
 	LastActivity time.Time          `json:"last_activity"`
 	Namespace    string             `json:"namespace"`
-	SessionId    string             `json:"session_id"`
 	TtlMinutes   int                `json:"ttl_minutes"`
 }
 
@@ -347,9 +344,8 @@ type SearchHitMatchLayer string
 
 // SearchRequest defines model for SearchRequest.
 type SearchRequest struct {
-	Limit     *int     `json:"limit,omitempty"`
-	Queries   []string `json:"queries"`
-	SessionId string   `json:"session_id"`
+	Limit   *int     `json:"limit,omitempty"`
+	Queries []string `json:"queries"`
 
 	// Source Scopes the search to a specific source label.
 	Source *string `json:"source,omitempty"`
@@ -371,15 +367,19 @@ type SectionPreview struct {
 	Title   string    `json:"title"`
 }
 
-// Session Session as echoed in the createSession response. Minimal
-// confirmation of what CALM committed, after namespace resolution, client
-// auto-registration, and operator-ceiling clamping on `ttl_minutes`.
+// Session Created session, returned once. `session_token` is the secret
+// credential the workload must persist and present via
+// `X-CALM-Session-Token` on every subsequent call. Other fields
+// confirm what CALM committed after namespace resolution, client
+// binding, and operator-ceiling clamping on `ttl_minutes`.
 type Session struct {
-	Client     string    `json:"client"`
-	CreatedAt  time.Time `json:"created_at"`
-	Namespace  string    `json:"namespace"`
-	SessionId  string    `json:"session_id"`
-	TtlMinutes int       `json:"ttl_minutes"`
+	Client    string    `json:"client"`
+	CreatedAt time.Time `json:"created_at"`
+	Namespace string    `json:"namespace"`
+
+	// SessionToken One-time secret credential. Lost tokens are unrecoverable.
+	SessionToken string `json:"session_token"`
+	TtlMinutes   int    `json:"ttl_minutes"`
 }
 
 // SnapshotResult Generic event list ordered by (priority asc, created_at desc) and
@@ -393,7 +393,6 @@ type SnapshotResult struct {
 	BudgetExceeded bool    `json:"budget_exceeded"`
 	ByteBudgetUsed int     `json:"byte_budget_used"`
 	Events         []Event `json:"events"`
-	SessionId      string  `json:"session_id"`
 }
 
 // SourceSummary defines model for SourceSummary.
@@ -417,8 +416,7 @@ type VersionResult struct {
 
 // WriteEventsRequest defines model for WriteEventsRequest.
 type WriteEventsRequest struct {
-	Events    []EventInput `json:"events"`
-	SessionId string       `json:"session_id"`
+	Events []EventInput `json:"events"`
 }
 
 // WriteEventsResult defines model for WriteEventsResult.
@@ -433,8 +431,11 @@ type WriteEventsResult struct {
 // ClientName defines model for ClientName.
 type ClientName = string
 
-// SessionID defines model for SessionID.
-type SessionID = string
+// IdempotencyKeyHeader defines model for IdempotencyKeyHeader.
+type IdempotencyKeyHeader = string
+
+// SessionTokenHeader defines model for SessionTokenHeader.
+type SessionTokenHeader = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
@@ -468,6 +469,27 @@ type ReadEventsParams struct {
 	// MinPriority Return only events with priority ≤ this value (lower = more important).
 	MinPriority *int `form:"min_priority,omitempty" json:"min_priority,omitempty"`
 	Limit       *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// XCALMSessionToken Session credential. Treat as secret. Obtained once from the
+	// createSession response and presented on every session-touching call.
+	// Lost tokens are unrecoverable.
+	XCALMSessionToken SessionTokenHeader `json:"X-CALM-Session-Token"`
+}
+
+// WriteEventsParams defines parameters for WriteEvents.
+type WriteEventsParams struct {
+	// XCALMSessionToken Session credential. Treat as secret. Obtained once from the
+	// createSession response and presented on every session-touching call.
+	// Lost tokens are unrecoverable.
+	XCALMSessionToken SessionTokenHeader `json:"X-CALM-Session-Token"`
+}
+
+// IngestParams defines parameters for Ingest.
+type IngestParams struct {
+	// XCALMSessionToken Session credential. Treat as secret. Obtained once from the
+	// createSession response and presented on every session-touching call.
+	// Lost tokens are unrecoverable.
+	XCALMSessionToken SessionTokenHeader `json:"X-CALM-Session-Token"`
 }
 
 // ManageDeleteClientParams defines parameters for ManageDeleteClient.
@@ -497,10 +519,48 @@ type ManageListSessionsParams struct {
 	Labels *map[string]string `json:"labels,omitempty"`
 }
 
+// SearchParams defines parameters for Search.
+type SearchParams struct {
+	// XCALMSessionToken Session credential. Treat as secret. Obtained once from the
+	// createSession response and presented on every session-touching call.
+	// Lost tokens are unrecoverable.
+	XCALMSessionToken SessionTokenHeader `json:"X-CALM-Session-Token"`
+}
+
+// DeleteSessionParams defines parameters for DeleteSession.
+type DeleteSessionParams struct {
+	// XCALMSessionToken Session credential. Treat as secret. Obtained once from the
+	// createSession response and presented on every session-touching call.
+	// Lost tokens are unrecoverable.
+	XCALMSessionToken SessionTokenHeader `json:"X-CALM-Session-Token"`
+}
+
+// CreateSessionParams defines parameters for CreateSession.
+type CreateSessionParams struct {
+	// IdempotencyKey Opaque per-request key. When present, the server returns the same
+	// `session_token` for retries with the same key within the dedup
+	// window (~1h default). Use a fresh key per intended distinct session;
+	// reusing a key collapses retries into one session.
+	IdempotencyKey *IdempotencyKeyHeader `json:"Idempotency-Key,omitempty"`
+}
+
 // GetSnapshotParams defines parameters for GetSnapshot.
 type GetSnapshotParams struct {
 	// BudgetBytes Byte budget for the snapshot. Server caps at 8KB.
 	BudgetBytes *int `form:"budget_bytes,omitempty" json:"budget_bytes,omitempty"`
+
+	// XCALMSessionToken Session credential. Treat as secret. Obtained once from the
+	// createSession response and presented on every session-touching call.
+	// Lost tokens are unrecoverable.
+	XCALMSessionToken SessionTokenHeader `json:"X-CALM-Session-Token"`
+}
+
+// ListSourcesParams defines parameters for ListSources.
+type ListSourcesParams struct {
+	// XCALMSessionToken Session credential. Treat as secret. Obtained once from the
+	// createSession response and presented on every session-touching call.
+	// Lost tokens are unrecoverable.
+	XCALMSessionToken SessionTokenHeader `json:"X-CALM-Session-Token"`
 }
 
 // WriteEventsJSONRequestBody defines body for WriteEvents for application/json ContentType.
@@ -594,21 +654,21 @@ type ClientInterface interface {
 	// RotateClientToken request
 	RotateClientToken(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// WriteEventsWithBody request with any body
-	WriteEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	WriteEvents(ctx context.Context, body WriteEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ReadEvents request
-	ReadEvents(ctx context.Context, sessionId SessionID, params *ReadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ReadEvents(ctx context.Context, params *ReadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WriteEventsWithBody request with any body
+	WriteEventsWithBody(ctx context.Context, params *WriteEventsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	WriteEvents(ctx context.Context, params *WriteEventsParams, body WriteEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth request
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestWithBody request with any body
-	IngestWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	IngestWithBody(ctx context.Context, params *IngestParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	Ingest(ctx context.Context, body IngestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	Ingest(ctx context.Context, params *IngestParams, body IngestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ManageListClients request
 	ManageListClients(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -623,23 +683,23 @@ type ClientInterface interface {
 	ManageListSessions(ctx context.Context, params *ManageListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SearchWithBody request with any body
-	SearchWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	SearchWithBody(ctx context.Context, params *SearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	Search(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateSessionWithBody request with any body
-	CreateSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	CreateSession(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	Search(ctx context.Context, params *SearchParams, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteSession request
-	DeleteSession(ctx context.Context, sessionId SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteSession(ctx context.Context, params *DeleteSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSessionWithBody request with any body
+	CreateSessionWithBody(ctx context.Context, params *CreateSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateSession(ctx context.Context, params *CreateSessionParams, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSnapshot request
-	GetSnapshot(ctx context.Context, sessionId SessionID, params *GetSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSnapshot(ctx context.Context, params *GetSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSources request
-	ListSources(ctx context.Context, sessionId SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListSources(ctx context.Context, params *ListSourcesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetVersion request
 	GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -669,8 +729,8 @@ func (c *Client) RotateClientToken(ctx context.Context, name ClientName, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) WriteEventsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewWriteEventsRequestWithBody(c.Server, contentType, body)
+func (c *Client) ReadEvents(ctx context.Context, params *ReadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadEventsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -681,8 +741,8 @@ func (c *Client) WriteEventsWithBody(ctx context.Context, contentType string, bo
 	return c.Client.Do(req)
 }
 
-func (c *Client) WriteEvents(ctx context.Context, body WriteEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewWriteEventsRequest(c.Server, body)
+func (c *Client) WriteEventsWithBody(ctx context.Context, params *WriteEventsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWriteEventsRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -693,8 +753,8 @@ func (c *Client) WriteEvents(ctx context.Context, body WriteEventsJSONRequestBod
 	return c.Client.Do(req)
 }
 
-func (c *Client) ReadEvents(ctx context.Context, sessionId SessionID, params *ReadEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReadEventsRequest(c.Server, sessionId, params)
+func (c *Client) WriteEvents(ctx context.Context, params *WriteEventsParams, body WriteEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWriteEventsRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -717,8 +777,8 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
-func (c *Client) IngestWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestRequestWithBody(c.Server, contentType, body)
+func (c *Client) IngestWithBody(ctx context.Context, params *IngestParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -729,8 +789,8 @@ func (c *Client) IngestWithBody(ctx context.Context, contentType string, body io
 	return c.Client.Do(req)
 }
 
-func (c *Client) Ingest(ctx context.Context, body IngestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewIngestRequest(c.Server, body)
+func (c *Client) Ingest(ctx context.Context, params *IngestParams, body IngestJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -789,8 +849,8 @@ func (c *Client) ManageListSessions(ctx context.Context, params *ManageListSessi
 	return c.Client.Do(req)
 }
 
-func (c *Client) SearchWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchRequestWithBody(c.Server, contentType, body)
+func (c *Client) SearchWithBody(ctx context.Context, params *SearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -801,8 +861,8 @@ func (c *Client) SearchWithBody(ctx context.Context, contentType string, body io
 	return c.Client.Do(req)
 }
 
-func (c *Client) Search(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSearchRequest(c.Server, body)
+func (c *Client) Search(ctx context.Context, params *SearchParams, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -813,8 +873,8 @@ func (c *Client) Search(ctx context.Context, body SearchJSONRequestBody, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateSessionRequestWithBody(c.Server, contentType, body)
+func (c *Client) DeleteSession(ctx context.Context, params *DeleteSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSessionRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -825,8 +885,8 @@ func (c *Client) CreateSessionWithBody(ctx context.Context, contentType string, 
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateSessionRequest(c.Server, body)
+func (c *Client) CreateSessionWithBody(ctx context.Context, params *CreateSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSessionRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -837,8 +897,8 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteSession(ctx context.Context, sessionId SessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteSessionRequest(c.Server, sessionId)
+func (c *Client) CreateSession(ctx context.Context, params *CreateSessionParams, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSessionRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -849,8 +909,8 @@ func (c *Client) DeleteSession(ctx context.Context, sessionId SessionID, reqEdit
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetSnapshot(ctx context.Context, sessionId SessionID, params *GetSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSnapshotRequest(c.Server, sessionId, params)
+func (c *Client) GetSnapshot(ctx context.Context, params *GetSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSnapshotRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -861,8 +921,8 @@ func (c *Client) GetSnapshot(ctx context.Context, sessionId SessionID, params *G
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListSources(ctx context.Context, sessionId SessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSourcesRequest(c.Server, sessionId)
+func (c *Client) ListSources(ctx context.Context, params *ListSourcesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSourcesRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -953,19 +1013,8 @@ func NewRotateClientTokenRequest(server string, name ClientName) (*http.Request,
 	return req, nil
 }
 
-// NewWriteEventsRequest calls the generic WriteEvents builder with application/json body
-func NewWriteEventsRequest(server string, body WriteEventsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewWriteEventsRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewWriteEventsRequestWithBody generates requests for WriteEvents with any type of body
-func NewWriteEventsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewReadEventsRequest generates requests for ReadEvents
+func NewReadEventsRequest(server string, params *ReadEventsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -974,42 +1023,6 @@ func NewWriteEventsRequestWithBody(server string, contentType string, body io.Re
 	}
 
 	operationPath := fmt.Sprintf("/v1/events")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewReadEventsRequest generates requests for ReadEvents
-func NewReadEventsRequest(server string, sessionId SessionID, params *ReadEventsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/events/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1075,6 +1088,72 @@ func NewReadEventsRequest(server string, sessionId SessionID, params *ReadEvents
 		return nil, err
 	}
 
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CALM-Session-Token", params.XCALMSessionToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-CALM-Session-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewWriteEventsRequest calls the generic WriteEvents builder with application/json body
+func NewWriteEventsRequest(server string, params *WriteEventsParams, body WriteEventsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewWriteEventsRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewWriteEventsRequestWithBody generates requests for WriteEvents with any type of body
+func NewWriteEventsRequestWithBody(server string, params *WriteEventsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/events")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CALM-Session-Token", params.XCALMSessionToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-CALM-Session-Token", headerParam0)
+
+	}
+
 	return req, nil
 }
 
@@ -1106,18 +1185,18 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 }
 
 // NewIngestRequest calls the generic Ingest builder with application/json body
-func NewIngestRequest(server string, body IngestJSONRequestBody) (*http.Request, error) {
+func NewIngestRequest(server string, params *IngestParams, body IngestJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewIngestRequestWithBody(server, "application/json", bodyReader)
+	return NewIngestRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewIngestRequestWithBody generates requests for Ingest with any type of body
-func NewIngestRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewIngestRequestWithBody(server string, params *IngestParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1141,6 +1220,19 @@ func NewIngestRequestWithBody(server string, contentType string, body io.Reader)
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CALM-Session-Token", params.XCALMSessionToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-CALM-Session-Token", headerParam0)
+
+	}
 
 	return req, nil
 }
@@ -1378,18 +1470,18 @@ func NewManageListSessionsRequest(server string, params *ManageListSessionsParam
 }
 
 // NewSearchRequest calls the generic Search builder with application/json body
-func NewSearchRequest(server string, body SearchJSONRequestBody) (*http.Request, error) {
+func NewSearchRequest(server string, params *SearchParams, body SearchJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewSearchRequestWithBody(server, "application/json", bodyReader)
+	return NewSearchRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewSearchRequestWithBody generates requests for Search with any type of body
-func NewSearchRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewSearchRequestWithBody(server string, params *SearchParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1414,22 +1506,75 @@ func NewSearchRequestWithBody(server string, contentType string, body io.Reader)
 
 	req.Header.Add("Content-Type", contentType)
 
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CALM-Session-Token", params.XCALMSessionToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-CALM-Session-Token", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteSessionRequest generates requests for DeleteSession
+func NewDeleteSessionRequest(server string, params *DeleteSessionParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CALM-Session-Token", params.XCALMSessionToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-CALM-Session-Token", headerParam0)
+
+	}
+
 	return req, nil
 }
 
 // NewCreateSessionRequest calls the generic CreateSession builder with application/json body
-func NewCreateSessionRequest(server string, body CreateSessionJSONRequestBody) (*http.Request, error) {
+func NewCreateSessionRequest(server string, params *CreateSessionParams, body CreateSessionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateSessionRequestWithBody(server, "application/json", bodyReader)
+	return NewCreateSessionRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewCreateSessionRequestWithBody generates requests for CreateSession with any type of body
-func NewCreateSessionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateSessionRequestWithBody(server string, params *CreateSessionParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -1454,60 +1599,34 @@ func NewCreateSessionRequestWithBody(server string, contentType string, body io.
 
 	req.Header.Add("Content-Type", contentType)
 
-	return req, nil
-}
+	if params != nil {
 
-// NewDeleteSessionRequest generates requests for DeleteSession
-func NewDeleteSessionRequest(server string, sessionId SessionID) (*http.Request, error) {
-	var err error
+		if params.IdempotencyKey != nil {
+			var headerParam0 string
 
-	var pathParam0 string
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", *params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
+			req.Header.Set("Idempotency-Key", headerParam0)
+		}
 
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/sessions/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
 	}
 
 	return req, nil
 }
 
 // NewGetSnapshotRequest generates requests for GetSnapshot
-func NewGetSnapshotRequest(server string, sessionId SessionID, params *GetSnapshotParams) (*http.Request, error) {
+func NewGetSnapshotRequest(server string, params *GetSnapshotParams) (*http.Request, error) {
 	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
 
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/sessions/%s/snapshot", pathParam0)
+	operationPath := fmt.Sprintf("/v1/snapshot")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1549,26 +1668,32 @@ func NewGetSnapshotRequest(server string, sessionId SessionID, params *GetSnapsh
 		return nil, err
 	}
 
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CALM-Session-Token", params.XCALMSessionToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-CALM-Session-Token", headerParam0)
+
+	}
+
 	return req, nil
 }
 
 // NewListSourcesRequest generates requests for ListSources
-func NewListSourcesRequest(server string, sessionId SessionID) (*http.Request, error) {
+func NewListSourcesRequest(server string, params *ListSourcesParams) (*http.Request, error) {
 	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
 
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/sessions/%s/sources", pathParam0)
+	operationPath := fmt.Sprintf("/v1/sources")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1581,6 +1706,19 @@ func NewListSourcesRequest(server string, sessionId SessionID) (*http.Request, e
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CALM-Session-Token", params.XCALMSessionToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-CALM-Session-Token", headerParam0)
+
 	}
 
 	return req, nil
@@ -1662,21 +1800,21 @@ type ClientWithResponsesInterface interface {
 	// RotateClientTokenWithResponse request
 	RotateClientTokenWithResponse(ctx context.Context, name ClientName, reqEditors ...RequestEditorFn) (*RotateClientTokenResponse, error)
 
-	// WriteEventsWithBodyWithResponse request with any body
-	WriteEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error)
-
-	WriteEventsWithResponse(ctx context.Context, body WriteEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error)
-
 	// ReadEventsWithResponse request
-	ReadEventsWithResponse(ctx context.Context, sessionId SessionID, params *ReadEventsParams, reqEditors ...RequestEditorFn) (*ReadEventsResponse, error)
+	ReadEventsWithResponse(ctx context.Context, params *ReadEventsParams, reqEditors ...RequestEditorFn) (*ReadEventsResponse, error)
+
+	// WriteEventsWithBodyWithResponse request with any body
+	WriteEventsWithBodyWithResponse(ctx context.Context, params *WriteEventsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error)
+
+	WriteEventsWithResponse(ctx context.Context, params *WriteEventsParams, body WriteEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error)
 
 	// GetHealthWithResponse request
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
 
 	// IngestWithBodyWithResponse request with any body
-	IngestWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestResponse, error)
+	IngestWithBodyWithResponse(ctx context.Context, params *IngestParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestResponse, error)
 
-	IngestWithResponse(ctx context.Context, body IngestJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestResponse, error)
+	IngestWithResponse(ctx context.Context, params *IngestParams, body IngestJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestResponse, error)
 
 	// ManageListClientsWithResponse request
 	ManageListClientsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ManageListClientsResponse, error)
@@ -1691,23 +1829,23 @@ type ClientWithResponsesInterface interface {
 	ManageListSessionsWithResponse(ctx context.Context, params *ManageListSessionsParams, reqEditors ...RequestEditorFn) (*ManageListSessionsResponse, error)
 
 	// SearchWithBodyWithResponse request with any body
-	SearchWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchResponse, error)
+	SearchWithBodyWithResponse(ctx context.Context, params *SearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchResponse, error)
 
-	SearchWithResponse(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchResponse, error)
-
-	// CreateSessionWithBodyWithResponse request with any body
-	CreateSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
-
-	CreateSessionWithResponse(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
+	SearchWithResponse(ctx context.Context, params *SearchParams, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchResponse, error)
 
 	// DeleteSessionWithResponse request
-	DeleteSessionWithResponse(ctx context.Context, sessionId SessionID, reqEditors ...RequestEditorFn) (*DeleteSessionResponse, error)
+	DeleteSessionWithResponse(ctx context.Context, params *DeleteSessionParams, reqEditors ...RequestEditorFn) (*DeleteSessionResponse, error)
+
+	// CreateSessionWithBodyWithResponse request with any body
+	CreateSessionWithBodyWithResponse(ctx context.Context, params *CreateSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
+
+	CreateSessionWithResponse(ctx context.Context, params *CreateSessionParams, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
 
 	// GetSnapshotWithResponse request
-	GetSnapshotWithResponse(ctx context.Context, sessionId SessionID, params *GetSnapshotParams, reqEditors ...RequestEditorFn) (*GetSnapshotResponse, error)
+	GetSnapshotWithResponse(ctx context.Context, params *GetSnapshotParams, reqEditors ...RequestEditorFn) (*GetSnapshotResponse, error)
 
 	// ListSourcesWithResponse request
-	ListSourcesWithResponse(ctx context.Context, sessionId SessionID, reqEditors ...RequestEditorFn) (*ListSourcesResponse, error)
+	ListSourcesWithResponse(ctx context.Context, params *ListSourcesParams, reqEditors ...RequestEditorFn) (*ListSourcesResponse, error)
 
 	// GetVersionWithResponse request
 	GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionResponse, error)
@@ -1778,6 +1916,38 @@ func (r RotateClientTokenResponse) ContentType() string {
 	return ""
 }
 
+type ReadEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ReadEventsResult
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type WriteEventsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1805,38 +1975,6 @@ func (r WriteEventsResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r WriteEventsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ReadEventsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *ReadEventsResult
-	JSON401      *Unauthorized
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r ReadEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReadEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReadEventsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2068,6 +2206,38 @@ func (r SearchResponse) ContentType() string {
 	return ""
 }
 
+type DeleteSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *DeleteSessionResult
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreateSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2095,38 +2265,6 @@ func (r CreateSessionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateSessionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DeleteSessionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *DeleteSessionResult
-	JSON401      *Unauthorized
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteSessionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteSessionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DeleteSessionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2245,30 +2383,30 @@ func (c *ClientWithResponses) RotateClientTokenWithResponse(ctx context.Context,
 	return ParseRotateClientTokenResponse(rsp)
 }
 
-// WriteEventsWithBodyWithResponse request with arbitrary body returning *WriteEventsResponse
-func (c *ClientWithResponses) WriteEventsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error) {
-	rsp, err := c.WriteEventsWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseWriteEventsResponse(rsp)
-}
-
-func (c *ClientWithResponses) WriteEventsWithResponse(ctx context.Context, body WriteEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error) {
-	rsp, err := c.WriteEvents(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseWriteEventsResponse(rsp)
-}
-
 // ReadEventsWithResponse request returning *ReadEventsResponse
-func (c *ClientWithResponses) ReadEventsWithResponse(ctx context.Context, sessionId SessionID, params *ReadEventsParams, reqEditors ...RequestEditorFn) (*ReadEventsResponse, error) {
-	rsp, err := c.ReadEvents(ctx, sessionId, params, reqEditors...)
+func (c *ClientWithResponses) ReadEventsWithResponse(ctx context.Context, params *ReadEventsParams, reqEditors ...RequestEditorFn) (*ReadEventsResponse, error) {
+	rsp, err := c.ReadEvents(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseReadEventsResponse(rsp)
+}
+
+// WriteEventsWithBodyWithResponse request with arbitrary body returning *WriteEventsResponse
+func (c *ClientWithResponses) WriteEventsWithBodyWithResponse(ctx context.Context, params *WriteEventsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error) {
+	rsp, err := c.WriteEventsWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWriteEventsResponse(rsp)
+}
+
+func (c *ClientWithResponses) WriteEventsWithResponse(ctx context.Context, params *WriteEventsParams, body WriteEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*WriteEventsResponse, error) {
+	rsp, err := c.WriteEvents(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWriteEventsResponse(rsp)
 }
 
 // GetHealthWithResponse request returning *GetHealthResponse
@@ -2281,16 +2419,16 @@ func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEdit
 }
 
 // IngestWithBodyWithResponse request with arbitrary body returning *IngestResponse
-func (c *ClientWithResponses) IngestWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestResponse, error) {
-	rsp, err := c.IngestWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) IngestWithBodyWithResponse(ctx context.Context, params *IngestParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestResponse, error) {
+	rsp, err := c.IngestWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseIngestResponse(rsp)
 }
 
-func (c *ClientWithResponses) IngestWithResponse(ctx context.Context, body IngestJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestResponse, error) {
-	rsp, err := c.Ingest(ctx, body, reqEditors...)
+func (c *ClientWithResponses) IngestWithResponse(ctx context.Context, params *IngestParams, body IngestJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestResponse, error) {
+	rsp, err := c.Ingest(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -2334,51 +2472,51 @@ func (c *ClientWithResponses) ManageListSessionsWithResponse(ctx context.Context
 }
 
 // SearchWithBodyWithResponse request with arbitrary body returning *SearchResponse
-func (c *ClientWithResponses) SearchWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchResponse, error) {
-	rsp, err := c.SearchWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) SearchWithBodyWithResponse(ctx context.Context, params *SearchParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchResponse, error) {
+	rsp, err := c.SearchWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseSearchResponse(rsp)
 }
 
-func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchResponse, error) {
-	rsp, err := c.Search(ctx, body, reqEditors...)
+func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, params *SearchParams, body SearchJSONRequestBody, reqEditors ...RequestEditorFn) (*SearchResponse, error) {
+	rsp, err := c.Search(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseSearchResponse(rsp)
-}
-
-// CreateSessionWithBodyWithResponse request with arbitrary body returning *CreateSessionResponse
-func (c *ClientWithResponses) CreateSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error) {
-	rsp, err := c.CreateSessionWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateSessionResponse(rsp)
-}
-
-func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error) {
-	rsp, err := c.CreateSession(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateSessionResponse(rsp)
 }
 
 // DeleteSessionWithResponse request returning *DeleteSessionResponse
-func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, sessionId SessionID, reqEditors ...RequestEditorFn) (*DeleteSessionResponse, error) {
-	rsp, err := c.DeleteSession(ctx, sessionId, reqEditors...)
+func (c *ClientWithResponses) DeleteSessionWithResponse(ctx context.Context, params *DeleteSessionParams, reqEditors ...RequestEditorFn) (*DeleteSessionResponse, error) {
+	rsp, err := c.DeleteSession(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseDeleteSessionResponse(rsp)
 }
 
+// CreateSessionWithBodyWithResponse request with arbitrary body returning *CreateSessionResponse
+func (c *ClientWithResponses) CreateSessionWithBodyWithResponse(ctx context.Context, params *CreateSessionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error) {
+	rsp, err := c.CreateSessionWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSessionResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, params *CreateSessionParams, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error) {
+	rsp, err := c.CreateSession(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSessionResponse(rsp)
+}
+
 // GetSnapshotWithResponse request returning *GetSnapshotResponse
-func (c *ClientWithResponses) GetSnapshotWithResponse(ctx context.Context, sessionId SessionID, params *GetSnapshotParams, reqEditors ...RequestEditorFn) (*GetSnapshotResponse, error) {
-	rsp, err := c.GetSnapshot(ctx, sessionId, params, reqEditors...)
+func (c *ClientWithResponses) GetSnapshotWithResponse(ctx context.Context, params *GetSnapshotParams, reqEditors ...RequestEditorFn) (*GetSnapshotResponse, error) {
+	rsp, err := c.GetSnapshot(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -2386,8 +2524,8 @@ func (c *ClientWithResponses) GetSnapshotWithResponse(ctx context.Context, sessi
 }
 
 // ListSourcesWithResponse request returning *ListSourcesResponse
-func (c *ClientWithResponses) ListSourcesWithResponse(ctx context.Context, sessionId SessionID, reqEditors ...RequestEditorFn) (*ListSourcesResponse, error) {
-	rsp, err := c.ListSources(ctx, sessionId, reqEditors...)
+func (c *ClientWithResponses) ListSourcesWithResponse(ctx context.Context, params *ListSourcesParams, reqEditors ...RequestEditorFn) (*ListSourcesResponse, error) {
+	rsp, err := c.ListSources(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -2490,6 +2628,46 @@ func ParseRotateClientTokenResponse(rsp *http.Response) (*RotateClientTokenRespo
 	return response, nil
 }
 
+// ParseReadEventsResponse parses an HTTP response from a ReadEventsWithResponse call
+func ParseReadEventsResponse(rsp *http.Response) (*ReadEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReadEventsResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseWriteEventsResponse parses an HTTP response from a WriteEventsWithResponse call
 func ParseWriteEventsResponse(rsp *http.Response) (*WriteEventsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2517,46 +2695,6 @@ func ParseWriteEventsResponse(rsp *http.Response) (*WriteEventsResponse, error) 
 			return nil, err
 		}
 		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseReadEventsResponse parses an HTTP response from a ReadEventsWithResponse call
-func ParseReadEventsResponse(rsp *http.Response) (*ReadEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReadEventsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ReadEventsResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
@@ -2864,6 +3002,46 @@ func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
 	return response, nil
 }
 
+// ParseDeleteSessionResponse parses an HTTP response from a DeleteSessionWithResponse call
+func ParseDeleteSessionResponse(rsp *http.Response) (*DeleteSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DeleteSessionResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateSessionResponse parses an HTTP response from a CreateSessionWithResponse call
 func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2905,46 +3083,6 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 			return nil, err
 		}
 		response.JSON409 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteSessionResponse parses an HTTP response from a DeleteSessionWithResponse call
-func ParseDeleteSessionResponse(rsp *http.Response) (*DeleteSessionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteSessionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DeleteSessionResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	}
 
@@ -3065,18 +3203,18 @@ type ServerInterface interface {
 	// Rotate the client's bearer token (credentialed namespaces only)
 	// (POST /v1/clients/{name}/rotate-token)
 	RotateClientToken(w http.ResponseWriter, r *http.Request, name ClientName)
+	// Read events for a session
+	// (GET /v1/events)
+	ReadEvents(w http.ResponseWriter, r *http.Request, params ReadEventsParams)
 	// Record session events
 	// (POST /v1/events)
-	WriteEvents(w http.ResponseWriter, r *http.Request)
-	// Read events for a session
-	// (GET /v1/events/{session_id})
-	ReadEvents(w http.ResponseWriter, r *http.Request, sessionId SessionID, params ReadEventsParams)
+	WriteEvents(w http.ResponseWriter, r *http.Request, params WriteEventsParams)
 	// Service health
 	// (GET /v1/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
 	// Ingest raw content; return a compact representation
 	// (POST /v1/ingest)
-	Ingest(w http.ResponseWriter, r *http.Request)
+	Ingest(w http.ResponseWriter, r *http.Request, params IngestParams)
 	// List clients in the API key's namespace
 	// (GET /v1/manage/clients)
 	ManageListClients(w http.ResponseWriter, r *http.Request)
@@ -3091,19 +3229,19 @@ type ServerInterface interface {
 	ManageListSessions(w http.ResponseWriter, r *http.Request, params ManageListSessionsParams)
 	// Query indexed content within a session
 	// (POST /v1/search)
-	Search(w http.ResponseWriter, r *http.Request)
+	Search(w http.ResponseWriter, r *http.Request, params SearchParams)
+	// Tear down a session and all its data
+	// (DELETE /v1/sessions)
+	DeleteSession(w http.ResponseWriter, r *http.Request, params DeleteSessionParams)
 	// Create a session
 	// (POST /v1/sessions)
-	CreateSession(w http.ResponseWriter, r *http.Request)
-	// Tear down a session and all its data
-	// (DELETE /v1/sessions/{session_id})
-	DeleteSession(w http.ResponseWriter, r *http.Request, sessionId SessionID)
+	CreateSession(w http.ResponseWriter, r *http.Request, params CreateSessionParams)
 	// Return session events ordered by priority and recency within a byte budget
-	// (GET /v1/sessions/{session_id}/snapshot)
-	GetSnapshot(w http.ResponseWriter, r *http.Request, sessionId SessionID, params GetSnapshotParams)
+	// (GET /v1/snapshot)
+	GetSnapshot(w http.ResponseWriter, r *http.Request, params GetSnapshotParams)
 	// List ingested sources within a session
-	// (GET /v1/sessions/{session_id}/sources)
-	ListSources(w http.ResponseWriter, r *http.Request, sessionId SessionID)
+	// (GET /v1/sources)
+	ListSources(w http.ResponseWriter, r *http.Request, params ListSourcesParams)
 	// Service version
 	// (GET /v1/version)
 	GetVersion(w http.ResponseWriter, r *http.Request)
@@ -3125,15 +3263,15 @@ func (_ Unimplemented) RotateClientToken(w http.ResponseWriter, r *http.Request,
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Record session events
-// (POST /v1/events)
-func (_ Unimplemented) WriteEvents(w http.ResponseWriter, r *http.Request) {
+// Read events for a session
+// (GET /v1/events)
+func (_ Unimplemented) ReadEvents(w http.ResponseWriter, r *http.Request, params ReadEventsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Read events for a session
-// (GET /v1/events/{session_id})
-func (_ Unimplemented) ReadEvents(w http.ResponseWriter, r *http.Request, sessionId SessionID, params ReadEventsParams) {
+// Record session events
+// (POST /v1/events)
+func (_ Unimplemented) WriteEvents(w http.ResponseWriter, r *http.Request, params WriteEventsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3145,7 +3283,7 @@ func (_ Unimplemented) GetHealth(w http.ResponseWriter, r *http.Request) {
 
 // Ingest raw content; return a compact representation
 // (POST /v1/ingest)
-func (_ Unimplemented) Ingest(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) Ingest(w http.ResponseWriter, r *http.Request, params IngestParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3175,31 +3313,31 @@ func (_ Unimplemented) ManageListSessions(w http.ResponseWriter, r *http.Request
 
 // Query indexed content within a session
 // (POST /v1/search)
-func (_ Unimplemented) Search(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) Search(w http.ResponseWriter, r *http.Request, params SearchParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Tear down a session and all its data
+// (DELETE /v1/sessions)
+func (_ Unimplemented) DeleteSession(w http.ResponseWriter, r *http.Request, params DeleteSessionParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Create a session
 // (POST /v1/sessions)
-func (_ Unimplemented) CreateSession(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// Tear down a session and all its data
-// (DELETE /v1/sessions/{session_id})
-func (_ Unimplemented) DeleteSession(w http.ResponseWriter, r *http.Request, sessionId SessionID) {
+func (_ Unimplemented) CreateSession(w http.ResponseWriter, r *http.Request, params CreateSessionParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // Return session events ordered by priority and recency within a byte budget
-// (GET /v1/sessions/{session_id}/snapshot)
-func (_ Unimplemented) GetSnapshot(w http.ResponseWriter, r *http.Request, sessionId SessionID, params GetSnapshotParams) {
+// (GET /v1/snapshot)
+func (_ Unimplemented) GetSnapshot(w http.ResponseWriter, r *http.Request, params GetSnapshotParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
 // List ingested sources within a session
-// (GET /v1/sessions/{session_id}/sources)
-func (_ Unimplemented) ListSources(w http.ResponseWriter, r *http.Request, sessionId SessionID) {
+// (GET /v1/sources)
+func (_ Unimplemented) ListSources(w http.ResponseWriter, r *http.Request, params ListSourcesParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3284,40 +3422,11 @@ func (siw *ServerInterfaceWrapper) RotateClientToken(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
-// WriteEvents operation middleware
-func (siw *ServerInterfaceWrapper) WriteEvents(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.WriteEvents(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ReadEvents operation middleware
 func (siw *ServerInterfaceWrapper) ReadEvents(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
-
-	// ------------- Path parameter "session_id" -------------
-	var sessionId SessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", chi.URLParam(r, "session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
-		return
-	}
 
 	ctx := r.Context()
 
@@ -3367,8 +3476,84 @@ func (siw *ServerInterfaceWrapper) ReadEvents(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	headers := r.Header
+
+	// ------------- Required header parameter "X-CALM-Session-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CALM-Session-Token")]; found {
+		var XCALMSessionToken SessionTokenHeader
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CALM-Session-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CALM-Session-Token", valueList[0], &XCALMSessionToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CALM-Session-Token", Err: err})
+			return
+		}
+
+		params.XCALMSessionToken = XCALMSessionToken
+
+	} else {
+		err := fmt.Errorf("Header parameter X-CALM-Session-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-CALM-Session-Token", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReadEvents(w, r, sessionId, params)
+		siw.Handler.ReadEvents(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WriteEvents operation middleware
+func (siw *ServerInterfaceWrapper) WriteEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params WriteEventsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-CALM-Session-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CALM-Session-Token")]; found {
+		var XCALMSessionToken SessionTokenHeader
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CALM-Session-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CALM-Session-Token", valueList[0], &XCALMSessionToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CALM-Session-Token", Err: err})
+			return
+		}
+
+		params.XCALMSessionToken = XCALMSessionToken
+
+	} else {
+		err := fmt.Errorf("Header parameter X-CALM-Session-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-CALM-Session-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WriteEvents(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3395,14 +3580,45 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 // Ingest operation middleware
 func (siw *ServerInterfaceWrapper) Ingest(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params IngestParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-CALM-Session-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CALM-Session-Token")]; found {
+		var XCALMSessionToken SessionTokenHeader
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CALM-Session-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CALM-Session-Token", valueList[0], &XCALMSessionToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CALM-Session-Token", Err: err})
+			return
+		}
+
+		params.XCALMSessionToken = XCALMSessionToken
+
+	} else {
+		err := fmt.Errorf("Header parameter X-CALM-Session-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-CALM-Session-Token", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.Ingest(w, r)
+		siw.Handler.Ingest(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3600,36 +3816,45 @@ func (siw *ServerInterfaceWrapper) ManageListSessions(w http.ResponseWriter, r *
 // Search operation middleware
 func (siw *ServerInterfaceWrapper) Search(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.Search(w, r)
-	}))
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchParams
 
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
+	headers := r.Header
+
+	// ------------- Required header parameter "X-CALM-Session-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CALM-Session-Token")]; found {
+		var XCALMSessionToken SessionTokenHeader
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CALM-Session-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CALM-Session-Token", valueList[0], &XCALMSessionToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CALM-Session-Token", Err: err})
+			return
+		}
+
+		params.XCALMSessionToken = XCALMSessionToken
+
+	} else {
+		err := fmt.Errorf("Header parameter X-CALM-Session-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-CALM-Session-Token", Err: err})
+		return
 	}
 
-	handler.ServeHTTP(w, r)
-}
-
-// CreateSession operation middleware
-func (siw *ServerInterfaceWrapper) CreateSession(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, ClientTokenScopes, []string{})
-
-	r = r.WithContext(ctx)
-
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateSession(w, r)
+		siw.Handler.Search(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3645,23 +3870,91 @@ func (siw *ServerInterfaceWrapper) DeleteSession(w http.ResponseWriter, r *http.
 	var err error
 	_ = err
 
-	// ------------- Path parameter "session_id" -------------
-	var sessionId SessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", chi.URLParam(r, "session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
-		return
-	}
-
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteSessionParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-CALM-Session-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CALM-Session-Token")]; found {
+		var XCALMSessionToken SessionTokenHeader
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CALM-Session-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CALM-Session-Token", valueList[0], &XCALMSessionToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CALM-Session-Token", Err: err})
+			return
+		}
+
+		params.XCALMSessionToken = XCALMSessionToken
+
+	} else {
+		err := fmt.Errorf("Header parameter X-CALM-Session-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-CALM-Session-Token", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteSession(w, r, sessionId)
+		siw.Handler.DeleteSession(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, ClientTokenScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateSessionParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKeyHeader
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSession(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3676,15 +3969,6 @@ func (siw *ServerInterfaceWrapper) GetSnapshot(w http.ResponseWriter, r *http.Re
 
 	var err error
 	_ = err
-
-	// ------------- Path parameter "session_id" -------------
-	var sessionId SessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", chi.URLParam(r, "session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
-		return
-	}
 
 	ctx := r.Context()
 
@@ -3708,8 +3992,33 @@ func (siw *ServerInterfaceWrapper) GetSnapshot(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	headers := r.Header
+
+	// ------------- Required header parameter "X-CALM-Session-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CALM-Session-Token")]; found {
+		var XCALMSessionToken SessionTokenHeader
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CALM-Session-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CALM-Session-Token", valueList[0], &XCALMSessionToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CALM-Session-Token", Err: err})
+			return
+		}
+
+		params.XCALMSessionToken = XCALMSessionToken
+
+	} else {
+		err := fmt.Errorf("Header parameter X-CALM-Session-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-CALM-Session-Token", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetSnapshot(w, r, sessionId, params)
+		siw.Handler.GetSnapshot(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3725,23 +4034,42 @@ func (siw *ServerInterfaceWrapper) ListSources(w http.ResponseWriter, r *http.Re
 	var err error
 	_ = err
 
-	// ------------- Path parameter "session_id" -------------
-	var sessionId SessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", chi.URLParam(r, "session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
-		return
-	}
-
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSourcesParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-CALM-Session-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CALM-Session-Token")]; found {
+		var XCALMSessionToken SessionTokenHeader
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CALM-Session-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CALM-Session-Token", valueList[0], &XCALMSessionToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CALM-Session-Token", Err: err})
+			return
+		}
+
+		params.XCALMSessionToken = XCALMSessionToken
+
+	} else {
+		err := fmt.Errorf("Header parameter X-CALM-Session-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-CALM-Session-Token", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListSources(w, r, sessionId)
+		siw.Handler.ListSources(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3885,10 +4213,10 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/v1/clients/{name}/rotate-token", wrapper.RotateClientToken)
 	})
 	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/v1/events", wrapper.WriteEvents)
+		r.Get(options.BaseURL+"/v1/events", wrapper.ReadEvents)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/v1/events/{session_id}", wrapper.ReadEvents)
+		r.Post(options.BaseURL+"/v1/events", wrapper.WriteEvents)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/v1/health", wrapper.GetHealth)
@@ -3912,16 +4240,16 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/v1/search", wrapper.Search)
 	})
 	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/v1/sessions", wrapper.DeleteSession)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/v1/sessions", wrapper.CreateSession)
 	})
 	r.Group(func(r chi.Router) {
-		r.Delete(options.BaseURL+"/v1/sessions/{session_id}", wrapper.DeleteSession)
+		r.Get(options.BaseURL+"/v1/snapshot", wrapper.GetSnapshot)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/v1/sessions/{session_id}/snapshot", wrapper.GetSnapshot)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/v1/sessions/{session_id}/sources", wrapper.ListSources)
+		r.Get(options.BaseURL+"/v1/sources", wrapper.ListSources)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/v1/version", wrapper.GetVersion)
@@ -4056,8 +4384,59 @@ func (response RotateClientToken404JSONResponse) VisitRotateClientTokenResponse(
 	return err
 }
 
+type ReadEventsRequestObject struct {
+	Params ReadEventsParams
+}
+
+type ReadEventsResponseObject interface {
+	VisitReadEventsResponse(w http.ResponseWriter) error
+}
+
+type ReadEvents200JSONResponse ReadEventsResult
+
+func (response ReadEvents200JSONResponse) VisitReadEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadEvents401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ReadEvents401JSONResponse) VisitReadEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadEvents404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ReadEvents404JSONResponse) VisitReadEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type WriteEventsRequestObject struct {
-	Body *WriteEventsJSONRequestBody
+	Params WriteEventsParams
+	Body   *WriteEventsJSONRequestBody
 }
 
 type WriteEventsResponseObject interface {
@@ -4120,57 +4499,6 @@ func (response WriteEvents404JSONResponse) VisitWriteEventsResponse(w http.Respo
 	return err
 }
 
-type ReadEventsRequestObject struct {
-	SessionId SessionID `json:"session_id"`
-	Params    ReadEventsParams
-}
-
-type ReadEventsResponseObject interface {
-	VisitReadEventsResponse(w http.ResponseWriter) error
-}
-
-type ReadEvents200JSONResponse ReadEventsResult
-
-func (response ReadEvents200JSONResponse) VisitReadEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ReadEvents401JSONResponse struct{ UnauthorizedJSONResponse }
-
-func (response ReadEvents401JSONResponse) VisitReadEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ReadEvents404JSONResponse struct{ NotFoundJSONResponse }
-
-func (response ReadEvents404JSONResponse) VisitReadEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetHealthRequestObject struct {
 }
 
@@ -4207,7 +4535,8 @@ func (response GetHealth503JSONResponse) VisitGetHealthResponse(w http.ResponseW
 }
 
 type IngestRequestObject struct {
-	Body *IngestJSONRequestBody
+	Params IngestParams
+	Body   *IngestJSONRequestBody
 }
 
 type IngestResponseObject interface {
@@ -4471,7 +4800,8 @@ func (response ManageListSessions401JSONResponse) VisitManageListSessionsRespons
 }
 
 type SearchRequestObject struct {
-	Body *SearchJSONRequestBody
+	Params SearchParams
+	Body   *SearchJSONRequestBody
 }
 
 type SearchResponseObject interface {
@@ -4534,8 +4864,59 @@ func (response Search404JSONResponse) VisitSearchResponse(w http.ResponseWriter)
 	return err
 }
 
+type DeleteSessionRequestObject struct {
+	Params DeleteSessionParams
+}
+
+type DeleteSessionResponseObject interface {
+	VisitDeleteSessionResponse(w http.ResponseWriter) error
+}
+
+type DeleteSession200JSONResponse DeleteSessionResult
+
+func (response DeleteSession200JSONResponse) VisitDeleteSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteSession401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteSession401JSONResponse) VisitDeleteSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteSession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteSession404JSONResponse) VisitDeleteSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateSessionRequestObject struct {
-	Body *CreateSessionJSONRequestBody
+	Params CreateSessionParams
+	Body   *CreateSessionJSONRequestBody
 }
 
 type CreateSessionResponseObject interface {
@@ -4598,59 +4979,8 @@ func (response CreateSession409JSONResponse) VisitCreateSessionResponse(w http.R
 	return err
 }
 
-type DeleteSessionRequestObject struct {
-	SessionId SessionID `json:"session_id"`
-}
-
-type DeleteSessionResponseObject interface {
-	VisitDeleteSessionResponse(w http.ResponseWriter) error
-}
-
-type DeleteSession200JSONResponse DeleteSessionResult
-
-func (response DeleteSession200JSONResponse) VisitDeleteSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DeleteSession401JSONResponse struct{ UnauthorizedJSONResponse }
-
-func (response DeleteSession401JSONResponse) VisitDeleteSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type DeleteSession404JSONResponse struct{ NotFoundJSONResponse }
-
-func (response DeleteSession404JSONResponse) VisitDeleteSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetSnapshotRequestObject struct {
-	SessionId SessionID `json:"session_id"`
-	Params    GetSnapshotParams
+	Params GetSnapshotParams
 }
 
 type GetSnapshotResponseObject interface {
@@ -4700,7 +5030,7 @@ func (response GetSnapshot404JSONResponse) VisitGetSnapshotResponse(w http.Respo
 }
 
 type ListSourcesRequestObject struct {
-	SessionId SessionID `json:"session_id"`
+	Params ListSourcesParams
 }
 
 type ListSourcesResponseObject interface {
@@ -4778,12 +5108,12 @@ type StrictServerInterface interface {
 	// Rotate the client's bearer token (credentialed namespaces only)
 	// (POST /v1/clients/{name}/rotate-token)
 	RotateClientToken(ctx context.Context, request RotateClientTokenRequestObject) (RotateClientTokenResponseObject, error)
+	// Read events for a session
+	// (GET /v1/events)
+	ReadEvents(ctx context.Context, request ReadEventsRequestObject) (ReadEventsResponseObject, error)
 	// Record session events
 	// (POST /v1/events)
 	WriteEvents(ctx context.Context, request WriteEventsRequestObject) (WriteEventsResponseObject, error)
-	// Read events for a session
-	// (GET /v1/events/{session_id})
-	ReadEvents(ctx context.Context, request ReadEventsRequestObject) (ReadEventsResponseObject, error)
 	// Service health
 	// (GET /v1/health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
@@ -4805,17 +5135,17 @@ type StrictServerInterface interface {
 	// Query indexed content within a session
 	// (POST /v1/search)
 	Search(ctx context.Context, request SearchRequestObject) (SearchResponseObject, error)
+	// Tear down a session and all its data
+	// (DELETE /v1/sessions)
+	DeleteSession(ctx context.Context, request DeleteSessionRequestObject) (DeleteSessionResponseObject, error)
 	// Create a session
 	// (POST /v1/sessions)
 	CreateSession(ctx context.Context, request CreateSessionRequestObject) (CreateSessionResponseObject, error)
-	// Tear down a session and all its data
-	// (DELETE /v1/sessions/{session_id})
-	DeleteSession(ctx context.Context, request DeleteSessionRequestObject) (DeleteSessionResponseObject, error)
 	// Return session events ordered by priority and recency within a byte budget
-	// (GET /v1/sessions/{session_id}/snapshot)
+	// (GET /v1/snapshot)
 	GetSnapshot(ctx context.Context, request GetSnapshotRequestObject) (GetSnapshotResponseObject, error)
 	// List ingested sources within a session
-	// (GET /v1/sessions/{session_id}/sources)
+	// (GET /v1/sources)
 	ListSources(ctx context.Context, request ListSourcesRequestObject) (ListSourcesResponseObject, error)
 	// Service version
 	// (GET /v1/version)
@@ -4903,9 +5233,37 @@ func (sh *strictHandler) RotateClientToken(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// ReadEvents operation middleware
+func (sh *strictHandler) ReadEvents(w http.ResponseWriter, r *http.Request, params ReadEventsParams) {
+	var request ReadEventsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReadEvents(ctx, request.(ReadEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReadEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReadEventsResponseObject); ok {
+		if err := validResponse.VisitReadEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // WriteEvents operation middleware
-func (sh *strictHandler) WriteEvents(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) WriteEvents(w http.ResponseWriter, r *http.Request, params WriteEventsParams) {
 	var request WriteEventsRequestObject
+
+	request.Params = params
 
 	var body WriteEventsJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -4927,33 +5285,6 @@ func (sh *strictHandler) WriteEvents(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(WriteEventsResponseObject); ok {
 		if err := validResponse.VisitWriteEventsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ReadEvents operation middleware
-func (sh *strictHandler) ReadEvents(w http.ResponseWriter, r *http.Request, sessionId SessionID, params ReadEventsParams) {
-	var request ReadEventsRequestObject
-
-	request.SessionId = sessionId
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ReadEvents(ctx, request.(ReadEventsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ReadEvents")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ReadEventsResponseObject); ok {
-		if err := validResponse.VisitReadEventsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -4986,8 +5317,10 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // Ingest operation middleware
-func (sh *strictHandler) Ingest(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) Ingest(w http.ResponseWriter, r *http.Request, params IngestParams) {
 	var request IngestRequestObject
+
+	request.Params = params
 
 	var body IngestJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -5120,8 +5453,10 @@ func (sh *strictHandler) ManageListSessions(w http.ResponseWriter, r *http.Reque
 }
 
 // Search operation middleware
-func (sh *strictHandler) Search(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) Search(w http.ResponseWriter, r *http.Request, params SearchParams) {
 	var request SearchRequestObject
+
+	request.Params = params
 
 	var body SearchJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -5150,9 +5485,37 @@ func (sh *strictHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// DeleteSession operation middleware
+func (sh *strictHandler) DeleteSession(w http.ResponseWriter, r *http.Request, params DeleteSessionParams) {
+	var request DeleteSessionRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteSession(ctx, request.(DeleteSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteSessionResponseObject); ok {
+		if err := validResponse.VisitDeleteSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // CreateSession operation middleware
-func (sh *strictHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) CreateSession(w http.ResponseWriter, r *http.Request, params CreateSessionParams) {
 	var request CreateSessionRequestObject
+
+	request.Params = params
 
 	var body CreateSessionJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -5181,37 +5544,10 @@ func (sh *strictHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DeleteSession operation middleware
-func (sh *strictHandler) DeleteSession(w http.ResponseWriter, r *http.Request, sessionId SessionID) {
-	var request DeleteSessionRequestObject
-
-	request.SessionId = sessionId
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteSession(ctx, request.(DeleteSessionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteSession")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteSessionResponseObject); ok {
-		if err := validResponse.VisitDeleteSessionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // GetSnapshot operation middleware
-func (sh *strictHandler) GetSnapshot(w http.ResponseWriter, r *http.Request, sessionId SessionID, params GetSnapshotParams) {
+func (sh *strictHandler) GetSnapshot(w http.ResponseWriter, r *http.Request, params GetSnapshotParams) {
 	var request GetSnapshotRequestObject
 
-	request.SessionId = sessionId
 	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
@@ -5235,10 +5571,10 @@ func (sh *strictHandler) GetSnapshot(w http.ResponseWriter, r *http.Request, ses
 }
 
 // ListSources operation middleware
-func (sh *strictHandler) ListSources(w http.ResponseWriter, r *http.Request, sessionId SessionID) {
+func (sh *strictHandler) ListSources(w http.ResponseWriter, r *http.Request, params ListSourcesParams) {
 	var request ListSourcesRequestObject
 
-	request.SessionId = sessionId
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.ListSources(ctx, request.(ListSourcesRequestObject))
@@ -5289,124 +5625,131 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"abPQJnh2cpLhAxvj/NlXs69mo5u3N/8/AAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

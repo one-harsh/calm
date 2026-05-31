@@ -32,6 +32,42 @@ HLD section numbers (`§3`, `§6`, `§11`) are positional — the moment the HLD
 
 Applies to CLAUDE.md, AGENTS.md, code comments, doc comments, Taskfile descs, anywhere. The OpenAPI spec is exempt — its descriptions ship as the public API contract and follow their own rev policy.
 
+### Canonical surfaces describe the design, not the history
+
+The HLD, OpenAPI spec, code, and CLAUDE.md discipline bullets describe **what CALM is** — in present tense, self-contained, reimplementable from scratch by a reader who knows none of the project history. They do not describe the sequence of changes that produced the current shape.
+
+Concretely, never write into these surfaces:
+
+- **Project-internal planning labels** — phase numbers, work-item IDs, milestone names, sprint labels. These are scaffolding for the work in flight; a reader picking up the HLD a year later has no map for them.
+- **Transition narratives** — "previously X, now Y", "since the auth rewrite", "after the schema flattening". The contract that survives is "Y"; the "previously X" rots into nostalgia.
+- **Cause-and-effect framings tied to historical events** — "because the WI-09 audit found...", "this was changed because of incident-2026-04". The discipline survives, the framing doesn't.
+
+Equivalent reasoning belongs in: commit messages (history of the diff), planning bookkeeping docs, PR descriptions (review context), plan files (in-flight design work). Those surfaces are explicitly historical — they're allowed to age out.
+
+When you'd otherwise write "Phase 2 reshaped X to Y", write "X is Y" (present-tense, no transition). If the *reason* X-is-Y matters to a reimplementer, write the reason ("X is Y because Z"). If the reason is just "we used to do it differently and changed our minds," it doesn't belong in canonical surfaces at all.
+
+### HLD describes the design, not the implementation
+
+The HLD is the **driver**; the code is the **passenger**. The HLD specifies what CALM is — its entities, contracts, primitives, invariants, storage shape — in language that a reimplementer in any stack could read and rebuild from. The code is one implementation that follows the HLD. The HLD doesn't know or care that the implementation happens to be Go.
+
+This means the HLD must not reference implementation artifacts:
+
+- **Code symbols** — package names (`internal/secrets`, `internal/db`), file paths, type names, method names (`Service.Create`, `Search()`), struct field identifiers as code.
+- **Language/stack-specific concepts** — Go interfaces, struct tags, build tags, generics, the word "interface" when meaning a Go interface rather than the design-level extensibility concept.
+- **Tooling and libraries** — `mockery`, `oapi-codegen`, `pgx`, `viper`, `chi`, `singleflight`, lint/format tool names.
+- **Implementation patterns named in code** — middleware function names, error sentinel names, mock generator outputs.
+
+The HLD **may** reference:
+
+- **External wire contract** — HTTP paths, headers, JSON field names, status codes. This is the customer contract; both HLD and code follow it by definition.
+- **Storage schema** — table/column names, SQL types, indexes, constraints. The data model is part of the design; the SQL is one precise notation for it (an ERD would do equally well).
+- **External standards and dependencies** — Postgres, BM25, RRF, sha256, TLS, OpenTelemetry, Kubernetes, MCP, JSON. These exist independently of CALM's implementation.
+- **External-extension surface** — `pg_search`, `pg_textsearch`, `pg_trgm`, `fuzzystrmatch`. These are operator-visible deployment dependencies, not internal code.
+
+The rule of thumb: if a fact about CALM survives a rewrite in a different language by a different team, it belongs in the HLD. If it depends on this codebase's specific shape — package layout, type names, library choices, lint rules — it belongs in CLAUDE.md or in the code itself, not in the HLD.
+
+When in doubt, re-read the HLD passage and ask: "Could a team writing CALM in Rust / Python / TypeScript from scratch read this and produce a system compatible with this one's wire contract and data model?" If yes, the passage is at the right level. If a Rust team would have to reverse-engineer your Go-specific reference, the passage is leaking implementation into the spec.
+
 ## API contract: OpenAPI is the formal source
 
 - `docs/api/openapi.yaml` is the **canonical formal contract** for the HTTP API. The HLD's API contract section describes intent in prose; this YAML pins the precise wire shape that code is generated from.
@@ -61,18 +97,24 @@ CALM has two distinct isolation primitives, both load-bearing, that enforce diff
 
 **Client-isolation is the optional third layer.** When `require_client_credentials: false` (the default), `client` is workload-supplied metadata — any holder of the namespace API key can claim any client. When `require_client_credentials: true`, each client is registered with a server-minted bearer token and the auth middleware verifies it; within-namespace workload isolation becomes a real boundary. This is the layer that lets shared-namespace tenants (e.g., `eval-shared` for a dev team) actually isolate from each other without requiring an operator to mint a new namespace per workload. The discipline applies only when the namespace opts in; the default code path treats `client` as a tag.
 
-Most bugs that quietly degrade CALM start as a missed `namespace` or `session_id` filter, a cache that wasn't session-keyed, or a "convenience" cross-{namespace,session} query.
+Most bugs that quietly degrade CALM start as a missed `namespace` or session-lookup-key filter, a cache that wasn't session-keyed, or a "convenience" cross-{namespace,session} query.
 
-Concrete disciplines that fall out of both:
+**Three-term terminology** (introduced when the session credential moved server-side). Never blur these — names map to types, and the type system catches confusion:
 
-- **Every DAL method that touches per-session data takes both `namespace` and `sessionID` explicitly** (or an input struct that carries them). See `internal/db/dal.go` — no exceptions. Even the management API (`/v1/manage/*`) is namespace-scoped, never returning another namespace's sessions. The TTL scanner is the one legitimate cross-namespace consumer; it returns `(session_id, namespace)` pairs and feeds them back into the namespace-scoped delete path — one delete path, one set of cascade semantics.
-- **Every domain function that touches per-session data takes `namespace` and `sessionID` explicitly** — never pulled from ambient context. Makes both dependencies visible at the call site.
-- **Caches are keyed by `(namespace, session_id)` jointly.** The search-result cache keys by `namespace + session_id + query + source` and is invalidated on ingest into that session. Adding a cache without joint scoping is a bug, not a feature.
-- **Tables that hold per-session data carry a `namespace` column with a composite FK to `sessions(namespace, session_id) ON DELETE CASCADE`.** Cleanup-by-session is the only cleanup path; orphans are forbidden. Globally-unique `session_id` was rejected as a leaky abstraction (schema would say sessions are top-level entities while the model says they're subordinate to namespace).
-- **Hot-path composite indexes lead with `namespace`** for cache locality and partition pruning. Filter-by-label queries always include the namespace predicate so the planner gets first-cut selectivity.
+- `session_token` (`string`, ~43 chars base64url) — raw secret. Server mints; workload presents on every call via `X-CALM-Session-Token`. Never in logs, URLs, mgmt responses, or DB columns.
+- `session_id` / `Session.ID` (`int64`) — surrogate BIGSERIAL PK. The only "id" of a session. Non-secret. Safe to log.
+- `session_token_hash` (`[]byte`, 32) — `sha256(namespace || 0x00 || session_token)`. Storage form and auth-side lookup key. Never logged.
+
+Concrete disciplines that fall out:
+
+- **Every DAL method that touches per-session data takes `namespace` + the session lookup key explicitly** (or an input struct that carries them). The lookup key is `sessionTokenHash []byte` on the handler path; `sessionID int64` on the TTL scanner path. See `internal/db/dal.go` — no exceptions. Even the management API (`/v1/manage/*`) is namespace-scoped, never returning another namespace's sessions. The TTL scanner returns `(id, namespace)` pairs and feeds them back into the namespace-scoped delete path — one cascade semantics, two entry points distinguished only by lookup-key type.
+- **Every domain function that touches per-session data takes `namespace` and the session credential explicitly** — never pulled from ambient context. Service layer takes `sessionToken string` (raw); it hashes at its boundary so the DAL only ever sees the hash. Makes both dependencies visible at the call site.
+- **Caches are keyed by `(namespace, session_token)` jointly.** The search-result cache keys by `namespace + session_token + query + source` and is invalidated on ingest into that session. Adding a cache without joint scoping is a bug, not a feature.
+- **Tables that hold per-session data FK on `sessions(id) ON DELETE CASCADE`** — the BIGSERIAL surrogate, namespace-stamped at session creation. Children don't carry their own namespace column; the FK chain preserves namespace scope because each surrogate id refers to exactly one session in exactly one namespace. Cleanup-by-session is the only cleanup path; orphans are forbidden. The DAL surface still enforces namespace at the API boundary (Get/Touch/Delete take `(namespace, lookup-key)` explicitly) — child tables don't need a redundant column to repeat that guard.
+- **`sessions`-table composite indexes lead with `namespace`** for cache locality. Filter-by-label queries on child tables join through `sessions` for namespace scope rather than carrying a redundant predicate.
 - **Cross-namespace mismatch returns 404.** Invisibility, not "you don't have access." The OpenAPI spec encodes this.
 - **Integration tests assert both isolations explicitly.** Standard patterns: write to namespace A, read from namespace B → 404 (security); write to session-A in namespace X, read from session-B in namespace X → empty (content). Both are durable proofs in CI.
-- **Logging carries both `namespace` and `session_id`** in every per-request log line. Use `obs.Namespace(...)` and `obs.SessionID(...)`. Cross-session log entries (e.g., the TTL scanner) are explicitly logged without `session_id` so the absence is intentional, not a leak.
+- **Logging carries `namespace` and `session.id` (the int64 surrogate)** in every per-request log line. Use `obs.Namespace(...)` and `obs.SessionID(...)` (the latter takes `int64`). The raw `session_token` has no logging helper by design — it's a credential. Cross-session log entries (e.g., the TTL scanner before it has a specific ref in hand) are explicitly logged without `session.id` so the absence is intentional, not a leak.
 
 If you find yourself wanting a query that intentionally crosses session boundaries within a namespace, stop. Either it belongs in `/v1/manage/*` (the only legitimate cross-session surface, still namespace-scoped), or it's a design gap that requires HLD discussion before code lands. Cross-namespace queries should never appear in code at all outside the TTL scanner.
 

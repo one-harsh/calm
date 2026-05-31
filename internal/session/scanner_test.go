@@ -85,9 +85,9 @@ func TestScanner_TickInvokesScanExpired(t *testing.T) {
 func TestScanner_DeletesEachReturnedRef(t *testing.T) {
 	source := NewMockexpirySource(t)
 	refs := []db.SessionRef{
-		{Namespace: "ns-a", SessionID: "s1"},
-		{Namespace: "ns-a", SessionID: "s2"},
-		{Namespace: "ns-b", SessionID: "s3"},
+		{ID: 1, Namespace: "ns-a"},
+		{ID: 2, Namespace: "ns-a"},
+		{ID: 3, Namespace: "ns-b"},
 	}
 
 	// Return the refs once, then empty on subsequent ticks.
@@ -105,10 +105,10 @@ func TestScanner_DeletesEachReturnedRef(t *testing.T) {
 		}).Maybe()
 
 	deleted := make(chan db.SessionRef, len(refs))
-	source.EXPECT().Delete(mock.Anything, mock.Anything, mock.Anything).
-		RunAndReturn(func(_ context.Context, ns, id string) (db.DeleteSessionResult, error) {
-			deleted <- db.SessionRef{Namespace: ns, SessionID: id}
-			return db.DeleteSessionResult{SessionID: id}, nil
+	source.EXPECT().DeleteByID(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ns string, id int64) (db.DeleteSessionResult, error) {
+			deleted <- db.SessionRef{ID: id, Namespace: ns}
+			return db.DeleteSessionResult{ID: id}, nil
 		}).Times(len(refs))
 
 	scanner := NewScanner(source, ScannerConfig{Interval: time.Millisecond}, logging.Nop())
@@ -147,17 +147,17 @@ func TestScanner_ScanExpiredErrorContinuesLoop(t *testing.T) {
 			if calls == 1 {
 				return nil, errors.New("simulated scan failure")
 			}
-			return []db.SessionRef{{Namespace: "ns-a", SessionID: "s1"}}, nil
+			return []db.SessionRef{{ID: 1, Namespace: "ns-a"}}, nil
 		}).Maybe()
 
 	deleted := make(chan struct{}, 1)
-	source.EXPECT().Delete(mock.Anything, "ns-a", "s1").
-		RunAndReturn(func(context.Context, string, string) (db.DeleteSessionResult, error) {
+	source.EXPECT().DeleteByID(mock.Anything, "ns-a", int64(1)).
+		RunAndReturn(func(context.Context, string, int64) (db.DeleteSessionResult, error) {
 			select {
 			case deleted <- struct{}{}:
 			default:
 			}
-			return db.DeleteSessionResult{SessionID: "s1"}, nil
+			return db.DeleteSessionResult{ID: 1}, nil
 		}).Maybe()
 
 	scanner := NewScanner(source, ScannerConfig{Interval: time.Millisecond}, logging.Nop())
@@ -168,16 +168,16 @@ func TestScanner_ScanExpiredErrorContinuesLoop(t *testing.T) {
 	select {
 	case <-deleted:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Delete never invoked — scanner aborted after first ScanExpired error")
+		t.Fatal("DeleteByID never invoked — scanner aborted after first ScanExpired error")
 	}
 }
 
 func TestScanner_PerRefDeleteErrorContinuesWithRemainingRefs(t *testing.T) {
 	source := NewMockexpirySource(t)
 	refs := []db.SessionRef{
-		{Namespace: "ns-a", SessionID: "s1"},
-		{Namespace: "ns-a", SessionID: "s2"},
-		{Namespace: "ns-a", SessionID: "s3"},
+		{ID: 1, Namespace: "ns-a"},
+		{ID: 2, Namespace: "ns-a"},
+		{ID: 3, Namespace: "ns-a"},
 	}
 	var scanCount int
 	var mu sync.Mutex
@@ -192,14 +192,14 @@ func TestScanner_PerRefDeleteErrorContinuesWithRemainingRefs(t *testing.T) {
 			return nil, nil
 		}).Maybe()
 
-	deleteCalls := make(chan string, len(refs))
-	source.EXPECT().Delete(mock.Anything, mock.Anything, mock.Anything).
-		RunAndReturn(func(_ context.Context, _, id string) (db.DeleteSessionResult, error) {
+	deleteCalls := make(chan int64, len(refs))
+	source.EXPECT().DeleteByID(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, _ string, id int64) (db.DeleteSessionResult, error) {
 			deleteCalls <- id
-			if id == "s2" {
+			if id == 2 {
 				return db.DeleteSessionResult{}, errors.New("simulated delete failure")
 			}
-			return db.DeleteSessionResult{SessionID: id}, nil
+			return db.DeleteSessionResult{ID: id}, nil
 		}).Times(len(refs))
 
 	scanner := NewScanner(source, ScannerConfig{Interval: time.Millisecond}, logging.Nop())
@@ -207,18 +207,18 @@ func TestScanner_PerRefDeleteErrorContinuesWithRemainingRefs(t *testing.T) {
 	defer waitForDone(t, done, 500*time.Millisecond)
 	defer cancel()
 
-	saw := map[string]bool{}
+	saw := map[int64]bool{}
 	for range refs {
 		select {
 		case id := <-deleteCalls:
 			saw[id] = true
 		case <-time.After(500 * time.Millisecond):
-			t.Fatalf("only saw %d/%d Delete calls", len(saw), len(refs))
+			t.Fatalf("only saw %d/%d DeleteByID calls", len(saw), len(refs))
 		}
 	}
-	for _, want := range []string{"s1", "s2", "s3"} {
+	for _, want := range []int64{1, 2, 3} {
 		if !saw[want] {
-			t.Errorf("Delete(%q) skipped — per-ref failure aborted the batch", want)
+			t.Errorf("DeleteByID(%d) skipped — per-ref failure aborted the batch", want)
 		}
 	}
 }
@@ -233,14 +233,14 @@ func TestScanner_NotFoundDuringDeleteIsSilent(t *testing.T) {
 			defer mu.Unlock()
 			scanCount++
 			if scanCount == 1 {
-				return []db.SessionRef{{Namespace: "ns-a", SessionID: "s1"}}, nil
+				return []db.SessionRef{{ID: 1, Namespace: "ns-a"}}, nil
 			}
 			return nil, nil
 		}).Maybe()
 
 	deleted := make(chan struct{}, 1)
-	source.EXPECT().Delete(mock.Anything, "ns-a", "s1").
-		RunAndReturn(func(context.Context, string, string) (db.DeleteSessionResult, error) {
+	source.EXPECT().DeleteByID(mock.Anything, "ns-a", int64(1)).
+		RunAndReturn(func(context.Context, string, int64) (db.DeleteSessionResult, error) {
 			select {
 			case deleted <- struct{}{}:
 			default:
@@ -256,7 +256,7 @@ func TestScanner_NotFoundDuringDeleteIsSilent(t *testing.T) {
 	select {
 	case <-deleted:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Delete never invoked")
+		t.Fatal("DeleteByID never invoked")
 	}
 	// Loop must still be alive — let one more tick happen, scanner will call
 	// ScanExpired again and return nil (handled by Maybe()). Cancel ends test.
@@ -279,11 +279,11 @@ func TestScanner_DeleteReturnsCancellationErrorExitsBatchEarly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			source := NewMockexpirySource(t)
 			refs := []db.SessionRef{
-				{Namespace: "ns-a", SessionID: "s1"},
-				{Namespace: "ns-a", SessionID: "s2"},
-				{Namespace: "ns-a", SessionID: "s3"},
-				{Namespace: "ns-a", SessionID: "s4"},
-				{Namespace: "ns-a", SessionID: "s5"},
+				{ID: 1, Namespace: "ns-a"},
+				{ID: 2, Namespace: "ns-a"},
+				{ID: 3, Namespace: "ns-a"},
+				{ID: 4, Namespace: "ns-a"},
+				{ID: 5, Namespace: "ns-a"},
 			}
 
 			var scanCount int
@@ -302,16 +302,16 @@ func TestScanner_DeleteReturnsCancellationErrorExitsBatchEarly(t *testing.T) {
 			// First Delete succeeds, second returns the cancellation error;
 			// subsequent refs MUST NOT see a Delete call.
 			var deleteCalls atomicInt
-			source.EXPECT().Delete(mock.Anything, mock.Anything, mock.Anything).
-				RunAndReturn(func(_ context.Context, _, id string) (db.DeleteSessionResult, error) {
+			source.EXPECT().DeleteByID(mock.Anything, mock.Anything, mock.Anything).
+				RunAndReturn(func(_ context.Context, _ string, id int64) (db.DeleteSessionResult, error) {
 					n := deleteCalls.IncrementAndLoad()
 					if n == 2 {
 						return db.DeleteSessionResult{}, tc.err
 					}
 					if n > 2 {
-						t.Errorf("Delete called for ref %q after %v — must early-exit", id, tc.err)
+						t.Errorf("DeleteByID called for id=%d after %v — must early-exit", id, tc.err)
 					}
-					return db.DeleteSessionResult{SessionID: id}, nil
+					return db.DeleteSessionResult{ID: id}, nil
 				}).Maybe()
 
 			scanner := NewScanner(source, ScannerConfig{Interval: time.Millisecond}, logging.Nop())
@@ -330,7 +330,7 @@ func TestScanner_DeleteReturnsCancellationErrorExitsBatchEarly(t *testing.T) {
 			waitForDone(t, done, 200*time.Millisecond)
 
 			if got := deleteCalls.Load(); got != 2 {
-				t.Errorf("Delete call count = %d; want 2 (one success + one cancellation → early exit)", got)
+				t.Errorf("DeleteByID call count = %d; want 2 (one success + one cancellation → early exit)", got)
 			}
 		})
 	}

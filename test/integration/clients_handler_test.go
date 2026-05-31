@@ -64,9 +64,9 @@ func TestRegisterClientHandler_RegisteredClientEnablesSessionCreate(t *testing.T
 		t.Fatalf("RegisterClient: %v", err)
 	}
 	sessResp, err := env.client.CreateSessionWithResponse(context.Background(),
+		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{
-			SessionId: "s-after-register",
-			Client:    &clientName,
+			Client: &clientName,
 		},
 	)
 	if err != nil {
@@ -128,7 +128,7 @@ func newCredentialedTestServer(t *testing.T) (apiClient *genapi.ClientWithRespon
 			Logger:   logging.Nop(),
 			Registry: registry,
 			Clients:  clientSvc,
-			Sessions: session.New(env.store, 10_000),
+			Sessions: session.New(env.store, session.Config{CacheSize: 10_000}),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,
@@ -208,7 +208,8 @@ func TestCreateSessionHandler_CredentialedWithoutClientTokenReturns401(t *testin
 
 	// CreateSession without Authorization: Bearer → 401.
 	resp, err := apiClient.CreateSessionWithResponse(context.Background(),
-		genapi.CreateSessionJSONRequestBody{SessionId: "s1"},
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{},
 	)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -230,7 +231,8 @@ func TestCreateSessionHandler_CredentialedWithValidTokenSucceeds(t *testing.T) {
 
 	credentialed := withClientToken(t, serverURL, token)
 	resp, err := credentialed.CreateSessionWithResponse(context.Background(),
-		genapi.CreateSessionJSONRequestBody{SessionId: "s-mode-b-1"},
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{},
 	)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -261,7 +263,8 @@ func TestCreateSessionHandler_CredentialedBodyClientMustMatchTokenClient(t *test
 	credentialed := withClientToken(t, serverURL, token)
 	wrongClient := "bob-mismatch"
 	resp, err := credentialed.CreateSessionWithResponse(context.Background(),
-		genapi.CreateSessionJSONRequestBody{SessionId: "s-spoof", Client: &wrongClient},
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{Client: &wrongClient},
 	)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -293,7 +296,8 @@ func TestCreateSessionHandler_CredentialedCrossClientIsolation(t *testing.T) {
 
 	// Alice creates a session.
 	if _, err := aliceClient.CreateSessionWithResponse(context.Background(),
-		genapi.CreateSessionJSONRequestBody{SessionId: "alice-secret"},
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{},
 	); err != nil {
 		t.Fatalf("alice CreateSession: %v", err)
 	}
@@ -306,7 +310,8 @@ func TestCreateSessionHandler_CredentialedCrossClientIsolation(t *testing.T) {
 	// a session that claims to be alice's by spoofing the client field.
 	wrongClient := "alice-iso"
 	resp, err := bobClient.CreateSessionWithResponse(context.Background(),
-		genapi.CreateSessionJSONRequestBody{SessionId: "bob-spoof", Client: &wrongClient},
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{Client: &wrongClient},
 	)
 	if err != nil {
 		t.Fatalf("bob CreateSession spoof attempt: %v", err)
@@ -343,7 +348,8 @@ func TestRotateClientTokenHandler_CredentialedHappyPath(t *testing.T) {
 	// Old token rejected.
 	oldCredentialed := withClientToken(t, serverURL, originalToken)
 	respOld, err := oldCredentialed.CreateSessionWithResponse(context.Background(),
-		genapi.CreateSessionJSONRequestBody{SessionId: "s-with-old-token"},
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{},
 	)
 	if err != nil {
 		t.Fatalf("CreateSession with old token: %v", err)
@@ -355,7 +361,8 @@ func TestRotateClientTokenHandler_CredentialedHappyPath(t *testing.T) {
 	// New token works.
 	newCredentialed := withClientToken(t, serverURL, newToken)
 	respNew, err := newCredentialed.CreateSessionWithResponse(context.Background(),
-		genapi.CreateSessionJSONRequestBody{SessionId: "s-with-new-token"},
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{},
 	)
 	if err != nil {
 		t.Fatalf("CreateSession with new token: %v", err)
@@ -378,11 +385,17 @@ func TestRotateClientTokenHandler_CredentialedSessionsPersistAcrossRotation(t *t
 	originalToken := *regResp.JSON201.ClientToken
 
 	credentialed := withClientToken(t, serverURL, originalToken)
-	if _, err := credentialed.CreateSessionWithResponse(context.Background(),
-		genapi.CreateSessionJSONRequestBody{SessionId: "pre-rotation"},
-	); err != nil {
+	createResp, err := credentialed.CreateSessionWithResponse(context.Background(),
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{},
+	)
+	if err != nil {
 		t.Fatalf("create pre-rotation session: %v", err)
 	}
+	if createResp.JSON201 == nil {
+		t.Fatalf("create pre-rotation session: status=%d body=%s", createResp.StatusCode(), string(createResp.Body))
+	}
+	preRotationToken := createResp.JSON201.SessionToken
 
 	rotResp, err := credentialed.RotateClientTokenWithResponse(context.Background(), "rotate-persist")
 	if err != nil {
@@ -392,7 +405,8 @@ func TestRotateClientTokenHandler_CredentialedSessionsPersistAcrossRotation(t *t
 
 	// The pre-rotation session should still exist; delete it with the new token.
 	newCredentialed := withClientToken(t, serverURL, newToken)
-	delResp, err := newCredentialed.DeleteSessionWithResponse(context.Background(), "pre-rotation")
+	delResp, err := newCredentialed.DeleteSessionWithResponse(context.Background(),
+		&genapi.DeleteSessionParams{XCALMSessionToken: preRotationToken})
 	if err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}

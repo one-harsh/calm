@@ -27,7 +27,7 @@ func NewLogger(serviceName, version, environment, region, level, format string) 
 }
 
 const (
-	KeySessionID     = "session_id"
+	KeySessionID     = "session.id"
 	KeyNamespace     = "namespace"
 	KeyClient        = "client"
 	KeySource        = "source"
@@ -52,8 +52,9 @@ var (
 	RateLimitTierNamespace = logging.StringField(KeyRateLimitTier, "namespace")
 )
 
-func SessionID(value string) logging.LoggingField {
-	return logging.StringField(KeySessionID, value)
+// Safe to log everywhere — non-secret.
+func SessionID(value int64) logging.LoggingField {
+	return logging.Int64Field(KeySessionID, value)
 }
 
 func Namespace(value string) logging.LoggingField {

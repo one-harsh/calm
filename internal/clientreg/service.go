@@ -5,14 +5,12 @@ package clientreg
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"time"
 
 	logging "github.com/one-harsh/context-logging"
 
+	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/obs"
 )
@@ -86,11 +84,11 @@ func (s *Service) RegisterWithCredential(ctx context.Context, namespace, name st
 	if name == "" {
 		return CredentialedRegisterResult{}, db.ErrClientNameRequired
 	}
-	raw, err := newRandomToken()
+	raw, err := auth.NewRandomToken()
 	if err != nil {
 		return CredentialedRegisterResult{}, fmt.Errorf("generate client token: %w", err)
 	}
-	hash := hashToken(namespace, raw)
+	hash := auth.HashToken(namespace, raw)
 	if err := s.store.Clients().RegisterWithCredential(ctx, namespace, name, hash); err != nil {
 		return CredentialedRegisterResult{}, err
 	}
@@ -113,23 +111,17 @@ func (s *Service) RotateToken(ctx context.Context, namespace, name string) (stri
 	if name == "" {
 		return "", db.ErrClientNameRequired
 	}
-	raw, err := newRandomToken()
+	raw, err := auth.NewRandomToken()
 	if err != nil {
 		return "", fmt.Errorf("generate client token: %w", err)
 	}
-	hash := hashToken(namespace, raw)
+	hash := auth.HashToken(namespace, raw)
 	if err := s.store.Clients().RotateCredential(ctx, namespace, name, hash); err != nil {
 		return "", err
 	}
 	return raw, nil
 }
 
-// ResolveByToken hashes the workload-presented raw token and looks up the
-// (namespace, hash) pair. Returns the client name or ErrInvalidClientCredential.
-// Used by the auth middleware in namespaces that require client credentials.
-//
-// TODO: caching layer if this becomes a bottleneck (hashes are stable, so
-// cache entries don't need expiration; just invalidate on RotateCredential).
 func (s *Service) ResolveByToken(ctx context.Context, namespace, rawToken string) (string, error) {
 	if namespace == "" {
 		return "", db.ErrNamespaceRequired
@@ -137,7 +129,7 @@ func (s *Service) ResolveByToken(ctx context.Context, namespace, rawToken string
 	if rawToken == "" {
 		return "", db.ErrInvalidClientCredential
 	}
-	return s.store.Clients().LookupByToken(ctx, namespace, hashToken(namespace, rawToken))
+	return s.store.Clients().LookupByToken(ctx, namespace, auth.HashToken(namespace, rawToken))
 }
 
 // SeedDefaults ensures every configured namespace has its DL01 default-client
@@ -156,26 +148,4 @@ func (s *Service) SeedDefaults(ctx context.Context, namespaces []string) error {
 		}
 	}
 	return nil
-}
-
-// newRandomToken returns a 32-byte crypto-random string, base64url-encoded
-// (43 chars, URL-safe). 256 bits of entropy — collision-resistant at any
-// realistic scale.
-func newRandomToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-// hashToken returns sha256(namespace || 0x00 || rawToken). Namespace acts as
-// a domain separator so the same raw token in two namespaces hashes to two
-// distinct bytea values.
-func hashToken(namespace, rawToken string) []byte {
-	h := sha256.New()
-	h.Write([]byte(namespace))
-	h.Write([]byte{0})
-	h.Write([]byte(rawToken))
-	return h.Sum(nil)
 }

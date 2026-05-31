@@ -21,17 +21,15 @@ type sessionRepo struct {
 	logger  *logging.Logger
 }
 
-// Create inserts the session row + any declared labels atomically. The
-// (namespace, client) row in clients must exist; a missing client surfaces
-// as ErrClientNotFound (translated from Postgres FK violation 23503).
-// Clients are first-class registered entities — POST /v1/clients/{name} for
-// custom names, SeedDefaults for `default`.
+// Create inserts the session row + any declared labels atomically. A missing
+// (namespace, client) parent surfaces as ErrClientNotFound (translated from
+// the FK violation 23503).
 func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 	if sess.Namespace == "" {
 		return ErrNamespaceRequired
 	}
-	if sess.ID == "" {
-		return ErrSessionIDRequired
+	if len(sess.SessionTokenHash) == 0 {
+		return ErrSessionTokenHashRequired
 	}
 	if sess.TTLMinutes <= 0 {
 		return ErrInvalidTTL
@@ -42,11 +40,11 @@ func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 
 	return inTx(ctx, r.queryer, func(tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx,
-			`INSERT INTO sessions (session_id, namespace, client, ttl_minutes)
+			`INSERT INTO sessions (namespace, session_token_hash, client, ttl_minutes)
 			 VALUES ($1, $2, $3, $4)
-			 RETURNING created_at, last_activity, expires_at`,
-			sess.ID, sess.Namespace, sess.Client, sess.TTLMinutes,
-		).Scan(&sess.CreatedAt, &sess.LastActivity, &sess.ExpiresAt); err != nil {
+			 RETURNING id, created_at, last_activity, expires_at`,
+			sess.Namespace, sess.SessionTokenHash, sess.Client, sess.TTLMinutes,
+		).Scan(&sess.ID, &sess.CreatedAt, &sess.LastActivity, &sess.ExpiresAt); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) {
 				switch pgErr.Code {
@@ -57,50 +55,49 @@ func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 					return ErrClientNotFound
 				}
 			}
-			return fmt.Errorf("%w: insert session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
+			return fmt.Errorf("%w: insert session in %q: %w", ErrStorageBackend, sess.Namespace, err)
 		}
 
 		if len(sess.Labels) > 0 {
 			placeholders := make([]string, 0, len(sess.Labels))
-			args := make([]any, 0, len(sess.Labels)*4)
+			args := make([]any, 0, len(sess.Labels)*3)
 			i := 1
 			for k, v := range sess.Labels {
-				placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d, $%d)", i, i+1, i+2, i+3))
-				args = append(args, sess.Namespace, sess.ID, k, v)
-				i += 4
+				placeholders = append(placeholders, fmt.Sprintf("($%d, $%d, $%d)", i, i+1, i+2))
+				args = append(args, sess.ID, k, v)
+				i += 3
 			}
-			query := `INSERT INTO session_labels (namespace, session_id, key, value) VALUES ` + strings.Join(placeholders, ", ") //nolint:gosec
+			query := `INSERT INTO session_labels (session_id, key, value) VALUES ` + strings.Join(placeholders, ", ") //nolint:gosec
 			if _, err := tx.ExecContext(ctx, query, args...); err != nil {
-				return fmt.Errorf("%w: insert labels for session %q/%q: %w", ErrStorageBackend, sess.Namespace, sess.ID, err)
+				return fmt.Errorf("%w: insert labels for session %d: %w", ErrStorageBackend, sess.ID, err)
 			}
 		}
 		return nil
 	})
 }
 
-func (r *sessionRepo) Get(ctx context.Context, namespace, id string) (Session, error) {
+func (r *sessionRepo) Get(ctx context.Context, namespace string, sessionTokenHash []byte) (Session, error) {
 	if namespace == "" {
 		return Session{}, ErrNamespaceRequired
 	}
-	if id == "" {
-		return Session{}, ErrSessionIDRequired
+	if len(sessionTokenHash) == 0 {
+		return Session{}, ErrSessionTokenHashRequired
 	}
 
 	var sess Session
 	var labelsJSON []byte
 	err := r.queryer.QueryRowContext(ctx, `
 		SELECT
-			s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes,
+			s.id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes,
 			COALESCE(
 				jsonb_object_agg(sl.key, sl.value) FILTER (WHERE sl.key IS NOT NULL),
 				'{}'::jsonb
 			) AS labels
 		FROM sessions s
-		LEFT JOIN session_labels sl
-			ON sl.namespace = s.namespace AND sl.session_id = s.session_id
-		WHERE s.namespace = $1 AND s.session_id = $2
-		GROUP BY s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes`,
-		namespace, id,
+		LEFT JOIN session_labels sl ON sl.session_id = s.id
+		WHERE s.namespace = $1 AND s.session_token_hash = $2
+		GROUP BY s.id`,
+		namespace, sessionTokenHash,
 	).Scan(
 		&sess.ID, &sess.Namespace, &sess.Client,
 		&sess.CreatedAt, &sess.LastActivity, &sess.ExpiresAt, &sess.TTLMinutes,
@@ -110,12 +107,12 @@ func (r *sessionRepo) Get(ctx context.Context, namespace, id string) (Session, e
 		return Session{}, ErrSessionNotFound
 	}
 	if err != nil {
-		return Session{}, fmt.Errorf("%w: get session %q/%q: %w", ErrStorageBackend, namespace, id, err)
+		return Session{}, fmt.Errorf("%w: get session in %q: %w", ErrStorageBackend, namespace, err)
 	}
 	if len(labelsJSON) > 0 {
 		var labels map[string]string
 		if err := json.Unmarshal(labelsJSON, &labels); err != nil {
-			return Session{}, fmt.Errorf("%w: decode labels for %q/%q: %w", ErrStorageBackend, namespace, id, err)
+			return Session{}, fmt.Errorf("%w: decode labels for session %d: %w", ErrStorageBackend, sess.ID, err)
 		}
 		if len(labels) > 0 {
 			sess.Labels = labels
@@ -124,24 +121,25 @@ func (r *sessionRepo) Get(ctx context.Context, namespace, id string) (Session, e
 	return sess, nil
 }
 
-func (r *sessionRepo) Touch(ctx context.Context, namespace, id string, lastActivity time.Time) error {
+func (r *sessionRepo) Touch(ctx context.Context, namespace string, sessionTokenHash []byte, lastActivity time.Time) error {
 	if namespace == "" {
 		return ErrNamespaceRequired
 	}
-	if id == "" {
-		return ErrSessionIDRequired
+	if len(sessionTokenHash) == 0 {
+		return ErrSessionTokenHashRequired
 	}
 
 	result, err := r.queryer.ExecContext(ctx,
-		`UPDATE sessions SET last_activity = GREATEST(last_activity, $3) WHERE namespace = $1 AND session_id = $2`,
-		namespace, id, lastActivity,
+		`UPDATE sessions SET last_activity = GREATEST(last_activity, $3)
+		   WHERE namespace = $1 AND session_token_hash = $2`,
+		namespace, sessionTokenHash, lastActivity,
 	)
 	if err != nil {
-		return fmt.Errorf("%w: touch session %q/%q: %w", ErrStorageBackend, namespace, id, err)
+		return fmt.Errorf("%w: touch session in %q: %w", ErrStorageBackend, namespace, err)
 	}
 	n, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("%w: rows-affected for touch %q/%q: %w", ErrStorageBackend, namespace, id, err)
+		return fmt.Errorf("%w: rows-affected for touch in %q: %w", ErrStorageBackend, namespace, err)
 	}
 	if n == 0 {
 		return ErrSessionNotFound
@@ -157,19 +155,17 @@ func (r *sessionRepo) List(ctx context.Context, filter ListSessionsFilter) ([]Ma
 	whereClause, args := buildSessionFilterWhere(filter, "s")
 	queryHead := `
 		SELECT
-			s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes,
+			s.id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes,
 			COALESCE(
 				jsonb_object_agg(sl.key, sl.value) FILTER (WHERE sl.key IS NOT NULL),
 				'{}'::jsonb
 			) AS labels,
-			(SELECT COUNT(*) FROM session_events
-				WHERE namespace = s.namespace AND session_id = s.session_id) AS event_count
+			(SELECT COUNT(*) FROM session_events WHERE session_id = s.id) AS event_count
 		FROM sessions s
-		LEFT JOIN session_labels sl
-			ON sl.namespace = s.namespace AND sl.session_id = s.session_id
+		LEFT JOIN session_labels sl ON sl.session_id = s.id
 		WHERE `
 	queryTail := `
-		GROUP BY s.session_id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes
+		GROUP BY s.id
 		ORDER BY s.last_activity DESC`
 	query := queryHead + whereClause + queryTail //nolint:gosec
 
@@ -220,50 +216,38 @@ func (r *sessionRepo) Count(ctx context.Context, filter ListSessionsFilter) (int
 	return count, nil
 }
 
-func (r *sessionRepo) Delete(ctx context.Context, namespace, id string) (DeleteSessionResult, error) {
+func (r *sessionRepo) Delete(ctx context.Context, namespace string, sessionTokenHash []byte) (DeleteSessionResult, error) {
 	if namespace == "" {
 		return DeleteSessionResult{}, ErrNamespaceRequired
 	}
-	if id == "" {
-		return DeleteSessionResult{}, ErrSessionIDRequired
+	if len(sessionTokenHash) == 0 {
+		return DeleteSessionResult{}, ErrSessionTokenHashRequired
 	}
 
-	result := DeleteSessionResult{SessionID: id}
+	var client string
+	var result DeleteSessionResult
 	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
 		// FOR UPDATE conflicts with FOR KEY SHARE that FK enforcement takes
 		// on concurrent INSERT INTO children — those inserts block until our
 		// COMMIT and then fail FK. Count and cascade see the same row set.
-		var client string
 		err := tx.QueryRowContext(ctx,
-			`SELECT client FROM sessions
-			 WHERE namespace = $1 AND session_id = $2 FOR UPDATE`,
-			namespace, id,
-		).Scan(&client)
+			`SELECT id, client FROM sessions
+			   WHERE namespace = $1 AND session_token_hash = $2 FOR UPDATE`,
+			namespace, sessionTokenHash,
+		).Scan(&result.ID, &client)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSessionNotFound
 		}
 		if err != nil {
-			return fmt.Errorf("%w: lock session %q/%q: %w", ErrStorageBackend, namespace, id, err)
+			return fmt.Errorf("%w: lock session in %q: %w", ErrStorageBackend, namespace, err)
 		}
 		r.logger.WithContext(ctx).Debug("delete session: lock acquired")
 
-		err = tx.QueryRowContext(ctx, `
-			SELECT
-				(SELECT COUNT(*) FROM sources        WHERE namespace = $1 AND session_id = $2),
-				(SELECT COUNT(*) FROM chunks         WHERE source_id IN
-					(SELECT id FROM sources WHERE namespace = $1 AND session_id = $2)),
-				(SELECT COUNT(*) FROM session_events WHERE namespace = $1 AND session_id = $2),
-				(SELECT COUNT(*) FROM session_labels WHERE namespace = $1 AND session_id = $2)`,
-			namespace, id,
-		).Scan(
-			&result.Cascaded.Sources,
-			&result.Cascaded.Chunks,
-			&result.Cascaded.Events,
-			&result.Cascaded.Labels,
-		)
+		cascade, err := cascadeCountsByID(ctx, tx, result.ID)
 		if err != nil {
-			return fmt.Errorf("%w: count cascade for %q/%q: %w", ErrStorageBackend, namespace, id, err)
+			return err
 		}
+		result.Cascaded = cascade
 		r.logger.WithContext(ctx).Debug("delete session: cascade computed",
 			logging.IntField("sources", result.Cascaded.Sources),
 			logging.IntField("chunks", result.Cascaded.Chunks),
@@ -284,12 +268,71 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace, id string) (DeleteS
 		}
 
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM sessions WHERE namespace = $1 AND session_id = $2`,
-			namespace, id,
+			`DELETE FROM sessions WHERE id = $1`,
+			result.ID,
 		); err != nil {
-			return fmt.Errorf("%w: delete session %q/%q: %w", ErrStorageBackend, namespace, id, err)
+			return fmt.Errorf("%w: delete session %d: %w", ErrStorageBackend, result.ID, err)
 		}
 		r.logger.WithContext(ctx).Debug("delete session: committed")
+		return nil
+	})
+	if err != nil {
+		return DeleteSessionResult{}, err
+	}
+	return result, nil
+}
+
+// DeleteByID pairs id with namespace as defense-in-depth against a
+// wrong-namespace caller, even though the surrogate id alone is unique.
+func (r *sessionRepo) DeleteByID(ctx context.Context, namespace string, sessionID int64) (DeleteSessionResult, error) {
+	if namespace == "" {
+		return DeleteSessionResult{}, ErrNamespaceRequired
+	}
+	var client string
+	var sessionLastActivity time.Time
+	result := DeleteSessionResult{ID: sessionID}
+	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx,
+			`SELECT client, last_activity FROM sessions WHERE id = $1 AND namespace = $2 FOR UPDATE`,
+			sessionID, namespace,
+		).Scan(&client, &sessionLastActivity)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSessionNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("%w: lock session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
+		}
+		r.logger.WithContext(ctx).Debug("delete session by id: lock acquired")
+
+		cascade, err := cascadeCountsByID(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
+		result.Cascaded = cascade
+		r.logger.WithContext(ctx).Debug("delete session by id: cascade computed",
+			logging.IntField("sources", result.Cascaded.Sources),
+			logging.IntField("chunks", result.Cascaded.Chunks),
+			logging.IntField("events", result.Cascaded.Events),
+			logging.IntField("labels", result.Cascaded.Labels),
+		)
+
+		// Scanner is not client activity — bump to session.last_activity
+		// (the real work) rather than NOW() (the scan moment).
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE clients SET last_activity_at = GREATEST(last_activity_at, $3)
+			 WHERE namespace = $1 AND name = $2`,
+			namespace, client, sessionLastActivity,
+		); err != nil {
+			return fmt.Errorf("%w: bump clients.last_activity_at for %q/%q: %w", ErrStorageBackend, namespace, client, err)
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM sessions WHERE id = $1 AND namespace = $2`,
+			sessionID, namespace,
+		); err != nil {
+			return fmt.Errorf("%w: delete session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
+		}
+		r.logger.WithContext(ctx).Debug("delete session by id: committed")
 		return nil
 	})
 	if err != nil {
@@ -307,19 +350,21 @@ func (r *sessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) 
 
 	var result DeleteSessionsResult
 	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
-		lockQuery := `SELECT session_id FROM sessions WHERE ` + whereClause + ` FOR UPDATE` //nolint:gosec
+		// ORDER BY id: deterministic lock order across concurrent callers,
+		// avoids cross-statement deadlocks on overlapping session sets.
+		lockQuery := `SELECT id FROM sessions WHERE ` + whereClause + ` ORDER BY id FOR UPDATE` //nolint:gosec
 		rows, err := tx.QueryContext(ctx, lockQuery, args...)
 		if err != nil {
 			return fmt.Errorf("%w: lock sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
 		}
-		ids := make([]string, 0)
+		ids := make([]int64, 0)
 		for rows.Next() {
-			var sid string
-			if err := rows.Scan(&sid); err != nil {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("%w: scan locked session row in %q: %w", ErrStorageBackend, filter.Namespace, err)
 			}
-			ids = append(ids, sid)
+			ids = append(ids, id)
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
@@ -335,12 +380,12 @@ func (r *sessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) 
 		result.DeletedSessions = len(ids)
 		err = tx.QueryRowContext(ctx, `
 			SELECT
-				(SELECT COUNT(*) FROM sources        WHERE namespace = $1 AND session_id = ANY($2)),
+				(SELECT COUNT(*) FROM sources        WHERE session_id = ANY($1)),
 				(SELECT COUNT(*) FROM chunks         WHERE source_id IN
-					(SELECT id FROM sources WHERE namespace = $1 AND session_id = ANY($2))),
-				(SELECT COUNT(*) FROM session_events WHERE namespace = $1 AND session_id = ANY($2)),
-				(SELECT COUNT(*) FROM session_labels WHERE namespace = $1 AND session_id = ANY($2))`,
-			filter.Namespace, ids,
+					(SELECT id FROM sources WHERE session_id = ANY($1))),
+				(SELECT COUNT(*) FROM session_events WHERE session_id = ANY($1)),
+				(SELECT COUNT(*) FROM session_labels WHERE session_id = ANY($1))`,
+			ids,
 		).Scan(
 			&result.Cascaded.Sources,
 			&result.Cascaded.Chunks,
@@ -358,8 +403,8 @@ func (r *sessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) 
 		)
 
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM sessions WHERE namespace = $1 AND session_id = ANY($2)`,
-			filter.Namespace, ids,
+			`DELETE FROM sessions WHERE id = ANY($1)`,
+			ids,
 		); err != nil {
 			return fmt.Errorf("%w: delete sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
 		}
@@ -374,7 +419,7 @@ func (r *sessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) 
 
 func (r *sessionRepo) ScanExpired(ctx context.Context, now time.Time) ([]SessionRef, error) {
 	rows, err := r.queryer.QueryContext(ctx, `
-		SELECT session_id, namespace
+		SELECT id, namespace
 		FROM sessions
 		WHERE expires_at < $1
 		ORDER BY expires_at ASC`,
@@ -388,7 +433,7 @@ func (r *sessionRepo) ScanExpired(ctx context.Context, now time.Time) ([]Session
 	out := make([]SessionRef, 0)
 	for rows.Next() {
 		var ref SessionRef
-		if err := rows.Scan(&ref.SessionID, &ref.Namespace); err != nil {
+		if err := rows.Scan(&ref.ID, &ref.Namespace); err != nil {
 			return nil, fmt.Errorf("%w: scan expired session row: %w", ErrStorageBackend, err)
 		}
 		out = append(out, ref)
@@ -399,9 +444,26 @@ func (r *sessionRepo) ScanExpired(ctx context.Context, now time.Time) ([]Session
 	return out, nil
 }
 
-// buildSessionFilterWhere returns the WHERE-clause body (no leading "WHERE")
-// and arg slice for List / Count / DeleteAll. The `alias` qualifies session
-// columns (e.g. "s"); "" means bare. Caller validates filter.Namespace.
+func cascadeCountsByID(ctx context.Context, tx *sql.Tx, sessionID int64) (CascadeCounts, error) {
+	var c CascadeCounts
+	err := tx.QueryRowContext(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM sources        WHERE session_id = $1),
+			(SELECT COUNT(*) FROM chunks         WHERE source_id IN
+				(SELECT id FROM sources WHERE session_id = $1)),
+			(SELECT COUNT(*) FROM session_events WHERE session_id = $1),
+			(SELECT COUNT(*) FROM session_labels WHERE session_id = $1)`,
+		sessionID,
+	).Scan(&c.Sources, &c.Chunks, &c.Events, &c.Labels)
+	if err != nil {
+		return CascadeCounts{}, fmt.Errorf("%w: count cascade for session %d: %w", ErrStorageBackend, sessionID, err)
+	}
+	return c, nil
+}
+
+// buildSessionFilterWhere returns the WHERE body (no leading "WHERE") and
+// arg slice. `alias` qualifies session columns ("" for bare). Caller
+// validates filter.Namespace.
 func buildSessionFilterWhere(filter ListSessionsFilter, alias string) (string, []any) {
 	prefix := ""
 	if alias != "" {
@@ -429,12 +491,12 @@ func buildSessionFilterWhere(filter ListSessionsFilter, alias string) (string, [
 			pairs = append(pairs, fmt.Sprintf("(key = $%d AND value = $%d)", kIdx, vIdx))
 		}
 		clauses = append(clauses, fmt.Sprintf(
-			"(%snamespace, %ssession_id) IN ("+
-				"SELECT namespace, session_id FROM session_labels "+
-				"WHERE namespace = $1 AND (%s) "+
-				"GROUP BY namespace, session_id "+
+			"%sid IN ("+
+				"SELECT session_id FROM session_labels "+
+				"WHERE (%s) "+
+				"GROUP BY session_id "+
 				"HAVING COUNT(DISTINCT key) = %d)",
-			prefix, prefix, strings.Join(pairs, " OR "), len(filter.Labels),
+			prefix, strings.Join(pairs, " OR "), len(filter.Labels),
 		))
 	}
 

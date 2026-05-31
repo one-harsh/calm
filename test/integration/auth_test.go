@@ -15,9 +15,10 @@ import (
 )
 
 func TestBearerAuthSucceeds(t *testing.T) {
-	resp, err := env.client.CreateSessionWithResponse(context.Background(), genapi.CreateSessionJSONRequestBody{
-		SessionId: "auth-smoke",
-	})
+	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{},
+	)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -27,14 +28,14 @@ func TestBearerAuthSucceeds(t *testing.T) {
 }
 
 func TestMissingAuthHeaderRejected(t *testing.T) {
-	status := rawPOSTStatus(t, "/v1/sessions", `{"session_id":"x"}`, nil)
+	status := rawPOSTStatus(t, "/v1/sessions", `{}`, nil)
 	if status != http.StatusUnauthorized {
 		t.Errorf("status = %d; want 401", status)
 	}
 }
 
 func TestNonBearerSchemeRejected(t *testing.T) {
-	status := rawPOSTStatus(t, "/v1/sessions", `{"session_id":"x"}`, map[string]string{
+	status := rawPOSTStatus(t, "/v1/sessions", `{}`, map[string]string{
 		auth.HeaderAuthorization: "Basic dXNlcjpwYXNz",
 	})
 	if status != http.StatusUnauthorized {
@@ -43,7 +44,7 @@ func TestNonBearerSchemeRejected(t *testing.T) {
 }
 
 func TestUnknownBearerKeyRejected(t *testing.T) {
-	status := rawPOSTStatus(t, "/v1/sessions", `{"session_id":"x"}`, map[string]string{
+	status := rawPOSTStatus(t, "/v1/sessions", `{}`, map[string]string{
 		auth.HeaderAuthorization: auth.BearerPrefix + "not-a-real-key",
 	})
 	if status != http.StatusUnauthorized {

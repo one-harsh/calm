@@ -22,7 +22,7 @@ func TestMapSessionError_KnownSentinels(t *testing.T) {
 	}{
 		{"ErrSessionExists", db.ErrSessionExists, errorMapping{http.StatusConflict, "session_exists", "session already exists in this namespace"}},
 		{"ErrSessionNotFound", db.ErrSessionNotFound, errorMapping{http.StatusNotFound, "session_not_found", "session not found in this namespace"}},
-		{"ErrSessionIDRequired", db.ErrSessionIDRequired, errorMapping{http.StatusBadRequest, "invalid_request", "session_id is required"}},
+		{"ErrSessionTokenHashRequired", db.ErrSessionTokenHashRequired, errorMapping{http.StatusBadRequest, "invalid_request", "session token is required"}},
 		{"ErrInvalidTTL", db.ErrInvalidTTL, errorMapping{http.StatusBadRequest, "invalid_request", "ttl_minutes must be a positive integer"}},
 		{"ErrNamespaceRequired", db.ErrNamespaceRequired, errorMapping{http.StatusBadRequest, "invalid_request", "namespace is required"}},
 	}
@@ -79,7 +79,7 @@ func TestMapSessionError_DetailNeverLeaksInternalString(t *testing.T) {
 	for _, sentinel := range []error{
 		db.ErrSessionExists,
 		db.ErrSessionNotFound,
-		db.ErrSessionIDRequired,
+		db.ErrSessionTokenHashRequired,
 		db.ErrInvalidTTL,
 		db.ErrNamespaceRequired,
 	} {

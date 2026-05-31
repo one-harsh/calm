@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
@@ -50,11 +49,8 @@ func run() error {
 	}
 	defer func() { _ = logger.Sync() }()
 
-	sessionID := uuid.NewString()
-
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	ctx = logging.Bind(ctx, obs.SessionID(sessionID))
 
 	logger.WithContext(ctx).Info(
 		"adapter starting",
@@ -66,7 +62,7 @@ func run() error {
 		return fmt.Errorf("init client: %w", err)
 	}
 
-	if err := createSession(ctx, client, sessionID, cfg.sessionTTL); err != nil {
+	if _, err := createSession(ctx, client, cfg.sessionTTL); err != nil {
 		// never-worse invariant: never fail because CALM is unavailable. Log and continue.
 		logger.WithContext(ctx).Warn(
 			"create session failed; continuing without CALM",
@@ -89,23 +85,25 @@ func apiKeyEditor(apiKey string) genapi.RequestEditorFn {
 	}
 }
 
-func createSession(ctx context.Context, client *genapi.ClientWithResponses, sessionID string, ttl int) error {
+func createSession(ctx context.Context, client *genapi.ClientWithResponses, ttl int) (string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
 	labels := map[string]string{"agent": "calm-adapter"}
 	body := genapi.CreateSessionJSONRequestBody{
-		SessionId:  sessionID,
 		Labels:     &labels,
 		TtlMinutes: &ttl,
 	}
 
-	resp, err := client.CreateSessionWithResponse(reqCtx, body)
+	resp, err := client.CreateSessionWithResponse(reqCtx, &genapi.CreateSessionParams{}, body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return fmt.Errorf("create session: %s", resp.Status())
+		return "", fmt.Errorf("create session: %s", resp.Status())
 	}
-	return nil
+	if resp.JSON201 == nil {
+		return "", fmt.Errorf("create session: unexpected empty body, status=%s", resp.Status())
+	}
+	return resp.JSON201.SessionToken, nil
 }

@@ -10,7 +10,7 @@ import (
 
 func TestLRUCache_HitMiss(t *testing.T) {
 	c := newCache(100)
-	k := cacheKey{Namespace: "ns-a", SessionID: "s1"}
+	k := cacheKey{Namespace: "ns-a", SessionToken: "s1"}
 	if _, ok := c.Lookup(k); ok {
 		t.Fatal("Lookup on empty cache returned hit")
 	}
@@ -27,7 +27,7 @@ func TestLRUCache_HitMiss(t *testing.T) {
 
 func TestLRUCache_InvalidateRemovesEntry(t *testing.T) {
 	c := newCache(100)
-	k := cacheKey{Namespace: "ns-a", SessionID: "s1"}
+	k := cacheKey{Namespace: "ns-a", SessionToken: "s1"}
 	c.Put(k, SessionMetadata{Client: "alice", TTLMinutes: 60})
 	c.Invalidate(k)
 	if _, ok := c.Lookup(k); ok {
@@ -37,17 +37,17 @@ func TestLRUCache_InvalidateRemovesEntry(t *testing.T) {
 
 func TestLRUCache_InvalidateNamespace_LeavesOtherNamespaces(t *testing.T) {
 	c := newCache(100)
-	keep := cacheKey{Namespace: "ns-b", SessionID: "s1"}
-	c.Put(cacheKey{Namespace: "ns-a", SessionID: "s1"}, SessionMetadata{Client: "x"})
-	c.Put(cacheKey{Namespace: "ns-a", SessionID: "s2"}, SessionMetadata{Client: "y"})
+	keep := cacheKey{Namespace: "ns-b", SessionToken: "s1"}
+	c.Put(cacheKey{Namespace: "ns-a", SessionToken: "s1"}, SessionMetadata{Client: "x"})
+	c.Put(cacheKey{Namespace: "ns-a", SessionToken: "s2"}, SessionMetadata{Client: "y"})
 	c.Put(keep, SessionMetadata{Client: "z"})
 
 	c.InvalidateNamespace("ns-a")
 
-	if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionID: "s1"}); ok {
+	if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionToken: "s1"}); ok {
 		t.Error("ns-a/s1 still present after InvalidateNamespace")
 	}
-	if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionID: "s2"}); ok {
+	if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionToken: "s2"}); ok {
 		t.Error("ns-a/s2 still present after InvalidateNamespace")
 	}
 	if _, ok := c.Lookup(keep); !ok {
@@ -59,8 +59,8 @@ func TestLRUCache_InvalidateNamespace_LeavesOtherNamespaces(t *testing.T) {
 // entries must not alias.
 func TestLRUCache_CrossNamespaceSameSessionIDIsolated(t *testing.T) {
 	c := newCache(100)
-	a := cacheKey{Namespace: "ns-a", SessionID: "shared"}
-	b := cacheKey{Namespace: "ns-b", SessionID: "shared"}
+	a := cacheKey{Namespace: "ns-a", SessionToken: "shared"}
+	b := cacheKey{Namespace: "ns-b", SessionToken: "shared"}
 	c.Put(a, SessionMetadata{Client: "alice"})
 	c.Put(b, SessionMetadata{Client: "bob"})
 
@@ -77,15 +77,15 @@ func TestLRUCache_CrossNamespaceSameSessionIDIsolated(t *testing.T) {
 func TestLRUCache_SizeCapEvictsOldest(t *testing.T) {
 	c := newCache(3)
 	for i, id := range []string{"s1", "s2", "s3"} {
-		c.Put(cacheKey{Namespace: "ns-a", SessionID: id}, SessionMetadata{TTLMinutes: i})
+		c.Put(cacheKey{Namespace: "ns-a", SessionToken: id}, SessionMetadata{TTLMinutes: i})
 	}
-	c.Put(cacheKey{Namespace: "ns-a", SessionID: "s4"}, SessionMetadata{TTLMinutes: 4})
+	c.Put(cacheKey{Namespace: "ns-a", SessionToken: "s4"}, SessionMetadata{TTLMinutes: 4})
 
-	if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionID: "s1"}); ok {
+	if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionToken: "s1"}); ok {
 		t.Error("s1 (oldest) should have been evicted at cap")
 	}
 	for _, id := range []string{"s2", "s3", "s4"} {
-		if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionID: id}); !ok {
+		if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionToken: id}); !ok {
 			t.Errorf("%s evicted; expected to survive", id)
 		}
 	}
@@ -93,20 +93,20 @@ func TestLRUCache_SizeCapEvictsOldest(t *testing.T) {
 
 func TestLRUCache_PurgeEmpties(t *testing.T) {
 	c := newCache(100)
-	c.Put(cacheKey{Namespace: "ns-a", SessionID: "s1"}, SessionMetadata{})
-	c.Put(cacheKey{Namespace: "ns-b", SessionID: "s1"}, SessionMetadata{})
+	c.Put(cacheKey{Namespace: "ns-a", SessionToken: "s1"}, SessionMetadata{})
+	c.Put(cacheKey{Namespace: "ns-b", SessionToken: "s1"}, SessionMetadata{})
 	c.Purge()
-	if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionID: "s1"}); ok {
+	if _, ok := c.Lookup(cacheKey{Namespace: "ns-a", SessionToken: "s1"}); ok {
 		t.Error("ns-a/s1 survived Purge")
 	}
-	if _, ok := c.Lookup(cacheKey{Namespace: "ns-b", SessionID: "s1"}); ok {
+	if _, ok := c.Lookup(cacheKey{Namespace: "ns-b", SessionToken: "s1"}); ok {
 		t.Error("ns-b/s1 survived Purge")
 	}
 }
 
 func TestNoopCache_AlwaysMisses(t *testing.T) {
 	c := noopCache{}
-	k := cacheKey{Namespace: "ns-a", SessionID: "s1"}
+	k := cacheKey{Namespace: "ns-a", SessionToken: "s1"}
 	c.Put(k, SessionMetadata{Client: "alice"})
 	if _, ok := c.Lookup(k); ok {
 		t.Error("noopCache.Lookup returned hit; want always-miss")
@@ -119,7 +119,7 @@ func TestNoopCache_AlwaysMisses(t *testing.T) {
 func TestNewCache_NonPositiveSizeReturnsNoop(t *testing.T) {
 	for _, size := range []int{0, -1, -100} {
 		c := newCache(size)
-		k := cacheKey{Namespace: "ns-a", SessionID: "s1"}
+		k := cacheKey{Namespace: "ns-a", SessionToken: "s1"}
 		c.Put(k, SessionMetadata{Client: "alice"})
 		if _, ok := c.Lookup(k); ok {
 			t.Errorf("newCache(%d) returned a working cache; want noop", size)

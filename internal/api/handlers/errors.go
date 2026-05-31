@@ -24,8 +24,8 @@ func mapSessionError(err error) (m errorMapping, ok bool) {
 		return errorMapping{http.StatusConflict, "session_exists", "session already exists in this namespace"}, true
 	case errors.Is(err, db.ErrSessionNotFound):
 		return errorMapping{http.StatusNotFound, "session_not_found", "session not found in this namespace"}, true
-	case errors.Is(err, db.ErrSessionIDRequired):
-		return errorMapping{http.StatusBadRequest, "invalid_request", "session_id is required"}, true
+	case errors.Is(err, db.ErrSessionTokenHashRequired):
+		return errorMapping{http.StatusBadRequest, "invalid_request", "session token is required"}, true
 	case errors.Is(err, db.ErrInvalidTTL):
 		return errorMapping{http.StatusBadRequest, "invalid_request", "ttl_minutes must be a positive integer"}, true
 	case errors.Is(err, db.ErrNamespaceRequired):

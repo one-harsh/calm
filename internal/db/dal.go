@@ -42,9 +42,10 @@ type ClientRepo interface {
 // (mock_session_repo.go, build-tag "mocks") for unit tests that need a fake.
 type SessionRepo interface {
 	Create(ctx context.Context, sess *Session) error
-	Get(ctx context.Context, namespace, id string) (Session, error)
-	Touch(ctx context.Context, namespace, id string, lastActivity time.Time) error
-	Delete(ctx context.Context, namespace, id string) (DeleteSessionResult, error)
+	Get(ctx context.Context, namespace string, sessionTokenHash []byte) (Session, error)
+	Touch(ctx context.Context, namespace string, sessionTokenHash []byte, lastActivity time.Time) error
+	Delete(ctx context.Context, namespace string, sessionTokenHash []byte) (DeleteSessionResult, error)
+	DeleteByID(ctx context.Context, namespace string, sessionID int64) (DeleteSessionResult, error)
 	List(ctx context.Context, filter ListSessionsFilter) ([]ManagedSession, error)
 	Count(ctx context.Context, filter ListSessionsFilter) (int, error)
 	DeleteAll(ctx context.Context, filter ListSessionsFilter) (DeleteSessionsResult, error)

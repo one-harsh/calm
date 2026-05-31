@@ -12,14 +12,15 @@ import (
 // SessionMetadata excludes Labels (cold-path, Service.Get) and LastActivity
 // (changes on every Touch, would force a cache write per request).
 type SessionMetadata struct {
+	ID         int64
 	Client     string
 	TTLMinutes int
 	CreatedAt  time.Time
 }
 
 type cacheKey struct {
-	Namespace string
-	SessionID string
+	Namespace    string
+	SessionToken string
 }
 
 type cache interface {
@@ -55,8 +56,6 @@ func (noopCache) Invalidate(cacheKey)                     {}
 func (noopCache) InvalidateNamespace(string)              {}
 func (noopCache) Purge()                                  {}
 
-// newCache returns noopCache when size <= 0 (cache disabled — every Lookup
-// hits DB).
 func newCache(size int) cache {
 	if size <= 0 {
 		return noopCache{}

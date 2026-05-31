@@ -111,7 +111,11 @@ func bootstrap() (*harness, error) {
 			Logger:   logging.Nop(),
 			Registry: registry,
 			Clients:  clientSvc,
-			Sessions: session.New(store, 10_000),
+			Sessions: session.New(store, session.Config{
+				CacheSize:          10_000,
+				IdempotencyKeyTTL:  time.Hour,
+				IdempotencyKeySize: 10_000,
+			}),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,

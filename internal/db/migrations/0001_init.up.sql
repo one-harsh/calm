@@ -24,23 +24,24 @@ CREATE TABLE clients (
 CREATE INDEX clients_token_hash_idx ON clients(namespace, client_token_hash)
   WHERE client_token_hash IS NOT NULL;
 
--- session_id is namespace-scoped (composite PK with namespace): the schema
--- treats sessions as subordinate to namespace, matching the conceptual model.
+-- session_token_hash = sha256(namespace || 0x00 || raw_session_token).
+-- Child tables FK on the surrogate id, not on the hash.
 CREATE TABLE sessions (
-  session_id    TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 256),
-  namespace     TEXT NOT NULL,
-  client        TEXT NOT NULL DEFAULT 'default',
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_activity TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ttl_minutes   INTEGER NOT NULL,
+  id                 BIGSERIAL PRIMARY KEY,
+  namespace          TEXT NOT NULL,
+  session_token_hash BYTEA NOT NULL,
+  client             TEXT NOT NULL DEFAULT 'default',
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_activity      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ttl_minutes        INTEGER NOT NULL,
   -- Maintained by the sessions_set_expires_at trigger below; never written
   -- by app code. The TTL scanner's WHERE expires_at < $1 hits sessions_expires_at_idx
   -- instead of recomputing the predicate per-row. A GENERATED ALWAYS column would
   -- be cleaner, but TIMESTAMPTZ + INTERVAL is only STABLE (DST math depends on
   -- session timezone), and generated columns require IMMUTABLE expressions.
   -- Trigger functions run in execution context where STABLE is fine.
-  expires_at    TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (namespace, session_id),
+  expires_at         TIMESTAMPTZ NOT NULL,
+  UNIQUE (namespace, session_token_hash),
   FOREIGN KEY (namespace, client) REFERENCES clients(namespace, name) ON DELETE CASCADE
 );
 CREATE INDEX sessions_namespace_client_idx ON sessions(namespace, client);
@@ -62,25 +63,21 @@ BEFORE INSERT OR UPDATE OF last_activity, ttl_minutes ON sessions
 FOR EACH ROW EXECUTE FUNCTION sessions_set_expires_at();
 
 CREATE TABLE session_labels (
-  namespace  TEXT NOT NULL,
-  session_id TEXT NOT NULL,
+  session_id BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   key        TEXT NOT NULL,
   value      TEXT NOT NULL,
-  PRIMARY KEY (namespace, session_id, key),
-  FOREIGN KEY (namespace, session_id) REFERENCES sessions(namespace, session_id) ON DELETE CASCADE
+  PRIMARY KEY (session_id, key)
 );
-CREATE INDEX session_labels_key_value_idx ON session_labels(namespace, key, value);
+CREATE INDEX session_labels_key_value_idx ON session_labels(key, value);
 
 CREATE TABLE sources (
   id         BIGSERIAL PRIMARY KEY,
-  namespace  TEXT NOT NULL,
-  session_id TEXT NOT NULL,
+  session_id BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   label      TEXT NOT NULL,
   indexed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (namespace, session_id, label),
-  FOREIGN KEY (namespace, session_id) REFERENCES sessions(namespace, session_id) ON DELETE CASCADE
+  UNIQUE (session_id, label)
 );
-CREATE INDEX sources_session_idx ON sources(namespace, session_id);
+CREATE INDEX sources_session_idx ON sources(session_id);
 
 CREATE TABLE chunks (
   id           BIGSERIAL PRIMARY KEY,
@@ -111,12 +108,10 @@ CREATE INDEX chunks_title_trgm_idx   ON chunks USING gin (title   gin_trgm_ops);
 CREATE INDEX chunks_content_trgm_idx ON chunks USING gin (content gin_trgm_ops);
 
 CREATE TABLE vocabulary (
-  namespace  TEXT NOT NULL,
-  session_id TEXT NOT NULL,
+  session_id BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   word       TEXT NOT NULL,
   doc_freq   INTEGER NOT NULL,
-  PRIMARY KEY (namespace, session_id, word),
-  FOREIGN KEY (namespace, session_id) REFERENCES sessions(namespace, session_id) ON DELETE CASCADE
+  PRIMARY KEY (session_id, word)
 );
 
 -- data_hash is BYTEA (raw SHA-256, 32 bytes) rather than hex TEXT (64 chars):
@@ -124,14 +119,12 @@ CREATE TABLE vocabulary (
 -- and index size on a hot table.
 CREATE TABLE session_events (
   id         BIGSERIAL PRIMARY KEY,
-  namespace  TEXT NOT NULL,
-  session_id TEXT NOT NULL,
+  session_id BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   type       TEXT NOT NULL,
   priority   INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 4),
   data       JSONB NOT NULL,
   data_hash  BYTEA NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  FOREIGN KEY (namespace, session_id) REFERENCES sessions(namespace, session_id) ON DELETE CASCADE
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX session_events_priority_idx ON session_events(namespace, session_id, priority, created_at DESC);
-CREATE INDEX session_events_dedup_idx    ON session_events(namespace, session_id, data_hash);
+CREATE INDEX session_events_priority_idx ON session_events(session_id, priority, created_at DESC);
+CREATE INDEX session_events_dedup_idx    ON session_events(session_id, data_hash);
