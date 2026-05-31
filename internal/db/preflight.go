@@ -12,11 +12,7 @@ import (
 
 const sharedPreloadRequired = "pg_textsearch"
 
-// Preflight verifies the Postgres CALM is talking to has the extensions and
-// configuration the schema relies on:
-//   - shared_preload_libraries contains pg_textsearch (required for the bm25
-//     access method to load).
-//   - pg_textsearch and pg_trgm are installed (in pg_available_extensions).
+// Preflight verifies pg_textsearch is preloaded and pg_textsearch + pg_trgm are available.
 func Preflight(ctx context.Context, conn *sql.DB) error {
 	if err := checkSharedPreloadLibraries(ctx, conn); err != nil {
 		return err

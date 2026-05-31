@@ -13,7 +13,6 @@ import (
 )
 
 // Logging emits a DEBUG line on request start and an INFO summary on completion.
-// Per CLAUDE.md INFO-event taxonomy; this is the per-request entry.
 func Logging(logger *logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

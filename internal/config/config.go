@@ -1,11 +1,8 @@
 // Copyright 2026 The CALM Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package config loads the CALM service configuration from a YAML file at
-// the path given by CALM_CONFIG_FILE. Env vars prefixed CALM_ override file
-// values via Viper's key replacer (e.g., CALM_SERVER_ADDRESS overrides
-// server.address). The loader fails fast on missing file, unknown keys, or
-// invalid namespace declarations — no silent degraded mode.
+// Package config loads CALM's YAML config. Fail-fast on missing file,
+// unknown keys, or invalid namespace declarations — no silent degraded mode.
 package config
 
 import (
@@ -68,13 +65,10 @@ type SessionsConfig struct {
 	IdempotencyKeySize   int           `mapstructure:"idempotency_key_size"`
 }
 
-// StorageConfig carries Postgres connection details and the migration
-// strategy. MigrateOnStartup=true is the v1 default (single-replica deploys);
-// production multi-replica installs flip it off and run migrations as a
-// separate job to avoid concurrent migrator races.
 type StorageConfig struct {
-	DSN              string `mapstructure:"dsn"`
-	MigrateOnStartup bool   `mapstructure:"migrate_on_startup"`
+	DSN string `mapstructure:"dsn"`
+	// MigrateOnStartup off in multi-replica deploys to avoid concurrent migrator races.
+	MigrateOnStartup bool `mapstructure:"migrate_on_startup"`
 }
 
 type NamespaceConfig struct {
@@ -84,10 +78,7 @@ type NamespaceConfig struct {
 	RequireClientCredentials bool           `mapstructure:"require_client_credentials"`
 }
 
-// Load reads the YAML config at path, applies env overrides (CALM_-prefixed,
-// `.`/`-` in keys map to `_` in env names), unmarshals into Config, and
-// validates. Returns wrapped error on any failure; callers should surface
-// these as service-startup failures (no degraded mode).
+// Load reads the YAML at path, applies CALM_-prefixed env overrides, validates.
 func Load(path string) (*Config, error) {
 	if path == "" {
 		return nil, errors.New("CALM_CONFIG_FILE is required")
@@ -182,8 +173,7 @@ func validate(cfg *Config) error {
 	if cfg.Sessions.TTLScannerJitterMS < 0 {
 		return fmt.Errorf("sessions.ttl_scanner_jitter_ms must be >= 0; got %d", cfg.Sessions.TTLScannerJitterMS)
 	}
-	// Jitter must be strictly less than interval; otherwise a tick could
-	// compute a delay <= 0 → busy loop. Only enforce when scanner is enabled.
+	// Jitter >= interval would compute a delay <= 0 → busy loop.
 	if cfg.Sessions.TTLScannerIntervalMS > 0 && cfg.Sessions.TTLScannerJitterMS >= cfg.Sessions.TTLScannerIntervalMS {
 		return fmt.Errorf("sessions.ttl_scanner_jitter_ms (%d) must be < sessions.ttl_scanner_interval_ms (%d)",
 			cfg.Sessions.TTLScannerJitterMS, cfg.Sessions.TTLScannerIntervalMS)

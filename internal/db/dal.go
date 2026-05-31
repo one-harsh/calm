@@ -8,38 +8,20 @@ import (
 	"time"
 )
 
-// ClientRepo is the per-entity port for client-table operations. Backed by
-// *Store via Store.Clients(). Mockery generates MockClientRepo
-// (mock_client_repo.go, build-tag "mocks") for unit tests that need a fake.
 type ClientRepo interface {
-	// Register creates a client row without a credential. Returns
-	// created=true on the first call; created=false on duplicates (no error).
-	// SeedDefaults and the public registration handler both call through
-	// here; the handler maps created=false → 409 while SeedDefaults ignores
-	// the flag (restart-safe).
+	// Register returns created=true on the first call; created=false on duplicates (no error).
 	Register(ctx context.Context, namespace, name string) (created bool, err error)
 
-	// RegisterWithCredential creates a client row bound to a token hash.
-	// Errors with ErrClientExists on duplicate — no silent re-issue, since
-	// the raw token can't be recovered post-hash.
+	// RegisterWithCredential errors with ErrClientExists on duplicate (no re-issue; token is unrecoverable post-hash).
 	RegisterWithCredential(ctx context.Context, namespace, name string, tokenHash []byte) error
 
-	// RotateCredential replaces the token hash for an existing client.
-	// Errors with ErrClientNotFound if no row matches.
 	RotateCredential(ctx context.Context, namespace, name string, newHash []byte) error
-
-	// LookupByToken resolves a (namespace, token hash) pair to the client
-	// name. Errors with ErrInvalidClientCredential on miss.
 	LookupByToken(ctx context.Context, namespace string, tokenHash []byte) (name string, err error)
-
 	List(ctx context.Context, namespace string) ([]ClientSummary, error)
 	CountSessions(ctx context.Context, namespace, name string) (int, error)
 	Delete(ctx context.Context, namespace, name string) (DeleteClientResult, error)
 }
 
-// SessionRepo is the per-entity port for session-table operations. Backed by
-// *Store via Store.Sessions(). Mockery generates MockSessionRepo
-// (mock_session_repo.go, build-tag "mocks") for unit tests that need a fake.
 type SessionRepo interface {
 	Create(ctx context.Context, sess *Session) error
 	Get(ctx context.Context, namespace string, sessionTokenHash []byte) (Session, error)
@@ -52,18 +34,21 @@ type SessionRepo interface {
 	ScanExpired(ctx context.Context, now time.Time) ([]SessionRef, error)
 }
 
-// DAL is the narrow contract Service-layer packages (internal/session,
-// internal/client) depend on — the root entry to per-entity repos plus the
-// cross-repo tx primitive. *Store satisfies it; mockery generates MockDAL
-// (mock_dal.go, build-tag "mocks") for unit tests.
+type EventsRepo interface {
+	Write(ctx context.Context, namespace string, sessionID int64, events []EventInput) (accepted int, err error)
+	Read(ctx context.Context, namespace string, sessionID int64, filter EventFilter) ([]Event, error)
+}
+
 type DAL interface {
 	Clients() ClientRepo
 	Sessions() SessionRepo
+	Events() EventsRepo
 	WithTx(ctx context.Context, fn func(Repos) error) error
 }
 
 var (
 	_ ClientRepo  = (*clientRepo)(nil)
 	_ SessionRepo = (*sessionRepo)(nil)
+	_ EventsRepo  = (*eventsRepo)(nil)
 	_ DAL         = (*Store)(nil)
 )

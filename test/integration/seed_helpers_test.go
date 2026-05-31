@@ -5,12 +5,12 @@ package integration
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/one-harsh/calm/internal/auth"
+	"github.com/one-harsh/calm/internal/db"
 )
 
 // Fixture helpers. Each takes the sibling *sql.DB (not the under-test *db.Store)
@@ -114,12 +114,23 @@ func seedChunk(t *testing.T, sqlDB *sql.DB, sourceID int64, title, content, cont
 
 func seedEvent(t *testing.T, sqlDB *sql.DB, sessionID int64, eventType string, priority int, data []byte) {
 	t.Helper()
-	h := sha256.Sum256(append([]byte(eventType), data...))
 	if _, err := sqlDB.ExecContext(context.Background(),
 		`INSERT INTO session_events (session_id, type, priority, data, data_hash) VALUES ($1, $2, $3, $4, $5)`,
-		sessionID, eventType, priority, data, h[:],
+		sessionID, eventType, priority, data, db.HashEventPayload(eventType, data),
 	); err != nil {
 		t.Fatalf("seedEvent(session=%d, type=%q): %v", sessionID, eventType, err)
+	}
+}
+
+// seedEventAt is seedEvent + an explicit created_at stamp. The schema default
+// is now(), so this is the only way to seed events with controlled ordering.
+func seedEventAt(t *testing.T, sqlDB *sql.DB, sessionID int64, eventType string, priority int, data []byte, createdAt time.Time) {
+	t.Helper()
+	if _, err := sqlDB.ExecContext(context.Background(),
+		`INSERT INTO session_events (session_id, type, priority, data, data_hash, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		sessionID, eventType, priority, data, db.HashEventPayload(eventType, data), createdAt,
+	); err != nil {
+		t.Fatalf("seedEventAt(session=%d, type=%q, at=%v): %v", sessionID, eventType, createdAt, err)
 	}
 }
 

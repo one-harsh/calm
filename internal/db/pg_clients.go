@@ -190,10 +190,7 @@ func (r *clientRepo) Delete(ctx context.Context, namespace, name string) (Delete
 
 	result := DeleteClientResult{Client: name}
 	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
-		// FOR UPDATE conflicts with FOR KEY SHARE that FK enforcement takes
-		// on concurrent INSERT INTO sessions referencing this client — those
-		// inserts block until our COMMIT and then fail FK. Count and cascade
-		// see the same row set.
+		// FOR UPDATE blocks concurrent child inserts so count and cascade see the same row set.
 		var one int
 		err := tx.QueryRowContext(ctx,
 			`SELECT 1 FROM clients WHERE namespace = $1 AND name = $2 FOR UPDATE`,

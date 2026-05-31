@@ -14,7 +14,6 @@ import (
 type errorMapping struct {
 	Status int
 	Code   string
-	// Wire-safe default detail message.
 	Detail string
 }
 
@@ -54,8 +53,6 @@ func mapClientError(err error) (m errorMapping, ok bool) {
 	}
 }
 
-// isContextError reports whether err is a client-cancellation / deadline-exceeded
-// signal that should propagate without an ERROR log.
 func isContextError(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

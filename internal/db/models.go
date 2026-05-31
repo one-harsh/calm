@@ -15,11 +15,6 @@ type ClientSummary struct {
 	LastActivity *time.Time
 }
 
-// Session carries three distinct identifiers that the code must keep separate:
-//
-//   - ID — the BIGSERIAL surrogate. Non-secret. The only "session id" anywhere
-//     in code. Safe to log. Returned by Create (from RETURNING id) and Get;
-//     also the value child tables FK on.
 type Session struct {
 	ID               int64
 	SessionToken     string
@@ -90,7 +85,7 @@ type Event struct {
 	Type      string
 	Priority  int
 	Data      []byte
-	DataHash  string
+	DataHash  []byte
 	CreatedAt time.Time
 }
 
@@ -98,6 +93,12 @@ type EventFilter struct {
 	Types       []string
 	MinPriority int
 	Limit       int
+}
+
+type EventInput struct {
+	Type     string
+	Priority int
+	Data     []byte
 }
 
 type ListSessionsFilter struct {

@@ -3,8 +3,7 @@
 
 package auth
 
-// Wire-protocol header names. Match the OpenAPI security-scheme and
-// parameter definitions in docs/api/openapi.yaml.
+// Wire-protocol header names — match docs/api/openapi.yaml.
 const (
 	HeaderAPIKey         = "X-CALM-API-Key" //nolint:gosec // G101 false positive: header name, not a credential value.
 	HeaderAuthorization  = "Authorization"

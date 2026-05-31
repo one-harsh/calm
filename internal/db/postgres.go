@@ -16,20 +16,20 @@ import (
 	logging "github.com/one-harsh/context-logging"
 )
 
-// Store is the Postgres DAL root. Per-entity repositories are reached via
-// Store.Clients() / Store.Sessions() — each repo method is atomically self-
-// contained. Cross-repository workflows that need to share a transaction
-// (e.g. register client + create session) go through Store.WithTx; do NOT
-// compose multiple Store.Clients()/Store.Sessions() calls expecting atomicity.
+// Store's per-entity repo methods are each self-contained. Cross-repo
+// atomicity goes through Store.WithTx — composing two Clients()/Sessions()
+// calls does NOT share a transaction.
 type Store struct {
 	db       *sql.DB
 	logger   *logging.Logger
 	clients  *clientRepo
 	sessions *sessionRepo
+	events   *eventsRepo
 }
 
 func (s *Store) Clients() ClientRepo   { return s.clients }
 func (s *Store) Sessions() SessionRepo { return s.sessions }
+func (s *Store) Events() EventsRepo    { return s.events }
 
 func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *logging.Logger) (*Store, error) {
 	conn, err := sql.Open("pgx", dsn)
@@ -59,6 +59,7 @@ func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *loggin
 	s := &Store{db: conn, logger: logger}
 	s.clients = &clientRepo{queryer: conn, logger: logger}
 	s.sessions = &sessionRepo{queryer: conn, logger: logger}
+	s.events = &eventsRepo{queryer: conn, logger: logger}
 	return s, nil
 }
 
