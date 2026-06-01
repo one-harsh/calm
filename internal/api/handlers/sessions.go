@@ -15,6 +15,7 @@ import (
 	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/obs"
+	"github.com/one-harsh/calm/internal/session"
 )
 
 func (h *Handlers) CreateSession(
@@ -48,9 +49,7 @@ func (h *Handlers) CreateSession(
 		)
 		sess.TTLMinutes = h.deps.Cfg.MaxTTLMinutes
 	}
-	// Credentialed namespace: auth-context client is the source of truth;
-	// reject body.client mismatch as spoofing. Uncredentialed: body.client
-	// is workload-supplied metadata.
+	// Credentialed: auth-context client wins; mismatch is spoof, reject.
 	if authClient := auth.ClientFromContext(ctx); authClient != "" {
 		if request.Body.Client != nil && *request.Body.Client != authClient {
 			detail := fmt.Sprintf("body client %q does not match authenticated client %q", *request.Body.Client, authClient)
@@ -81,7 +80,7 @@ func (h *Handlers) CreateSession(
 			case http.StatusBadRequest:
 				return genapi.CreateSession400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse(body)}, nil
 			default:
-				// Unmapped status → 500. Warn so the gap is visible.
+				// Defensive: sentinel mapped without a response variant.
 				h.deps.Logger.WithContext(ctx).Warn("create session: mapped sentinel has no response variant — returning 500",
 					logging.IntField("http.status", m.Status),
 					logging.StringField("error.code", m.Code),
@@ -115,15 +114,14 @@ func (h *Handlers) DeleteSession(
 	ctx context.Context,
 	request genapi.DeleteSessionRequestObject,
 ) (genapi.DeleteSessionResponseObject, error) {
-	namespace := auth.NamespaceFromContext(ctx)
-	if namespace == "" {
-		h.deps.Logger.WithContext(ctx).Error("namespace missing from request context — auth middleware did not run")
-		return nil, errors.New("namespace not present in request context")
+	if _, ok := session.MetadataFromContext(ctx); !ok {
+		h.deps.Logger.WithContext(ctx).Error("delete session: session metadata missing from context")
+		return nil, errors.New("session metadata not present in request context")
 	}
+	namespace := auth.NamespaceFromContext(ctx)
 
-	sessionToken := request.Params.XCALMSessionToken
-
-	result, err := h.deps.Sessions.Delete(ctx, namespace, sessionToken)
+	// Explicit close: Delete (not DeleteByID) bumps clients.last_activity_at to NOW().
+	result, err := h.deps.Sessions.Delete(ctx, namespace, request.Params.XCALMSessionToken)
 	if err != nil {
 		if m, ok := mapSessionError(err); ok {
 			if m.Status == http.StatusNotFound {
@@ -132,7 +130,7 @@ func (h *Handlers) DeleteSession(
 					Detail: &m.Detail,
 				}}, nil
 			}
-			// Unmapped status → 500. Warn so the gap is visible.
+			// Defensive: sentinel mapped without a response variant.
 			h.deps.Logger.WithContext(ctx).Warn("delete session: mapped sentinel has no response variant — returning 500",
 				logging.IntField("http.status", m.Status),
 				logging.StringField("error.code", m.Code),

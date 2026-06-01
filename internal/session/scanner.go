@@ -43,8 +43,7 @@ func NewScanner(sessions expirySource, cfg ScannerConfig, logger *logging.Logger
 	}
 }
 
-// Run blocks until ctx is cancelled. Per-scan and per-ref errors are logged
-// and the loop continues — one bad row must not abort the rest.
+// Run blocks until ctx is cancelled; per-scan and per-ref errors log and continue.
 func (s *Scanner) Run(ctx context.Context) error {
 	if s.cfg.Interval <= 0 {
 		s.logger.WithContext(ctx).Info("ttl scanner disabled (interval=0)")

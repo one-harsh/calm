@@ -10,9 +10,7 @@ import (
 	logging "github.com/one-harsh/context-logging"
 )
 
-// Recovery is the outermost middleware. It holds a reference to the base
-// logger so it can record panics even if Context middleware never ran and
-// ctx was never hydrated.
+// Recovery holds the base logger directly so panics log even when Context middleware never ran.
 func Recovery(base *logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

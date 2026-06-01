@@ -6,9 +6,11 @@ package integration
 import (
 	"context"
 	"database/sql"
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/one-harsh/calm/internal/api/genapi"
 	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/db"
 )
@@ -78,6 +80,38 @@ func seedSessionWithActivity(t *testing.T, sqlDB *sql.DB, namespace, client stri
 		t.Fatalf("seedSessionWithActivity(%q/%q): %v", namespace, client, err)
 	}
 	return seededSession{ID: id, SessionToken: raw, Namespace: namespace, Client: client}
+}
+
+// createSessionForTest mints a session through the live handler stack
+// (auth + service) rather than via raw SQL, so callers exercise the same
+// path real workloads use.
+func createSessionForTest(t *testing.T, namespace string) seededSession {
+	t.Helper()
+	client := env.clientForNamespace(t, namespace)
+	resp, err := client.CreateSessionWithResponse(context.Background(),
+		&genapi.CreateSessionParams{},
+		genapi.CreateSessionJSONRequestBody{},
+	)
+	if err != nil {
+		t.Fatalf("createSessionForTest(%q): %v", namespace, err)
+	}
+	if resp.StatusCode() != http.StatusCreated {
+		t.Fatalf("createSessionForTest(%q): status=%d body=%s", namespace, resp.StatusCode(), string(resp.Body))
+	}
+	hash := auth.HashToken(namespace, resp.JSON201.SessionToken)
+	var id int64
+	if err := env.sqlDB.QueryRowContext(context.Background(),
+		`SELECT id FROM sessions WHERE namespace = $1 AND session_token_hash = $2`,
+		namespace, hash,
+	).Scan(&id); err != nil {
+		t.Fatalf("createSessionForTest(%q): resolve id: %v", namespace, err)
+	}
+	return seededSession{
+		ID:           id,
+		SessionToken: resp.JSON201.SessionToken,
+		Namespace:    namespace,
+		Client:       resp.JSON201.Client,
+	}
 }
 
 func seedSessionLabel(t *testing.T, sqlDB *sql.DB, sessionID int64, key, value string) {

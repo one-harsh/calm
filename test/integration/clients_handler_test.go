@@ -115,6 +115,7 @@ func newCredentialedTestServer(t *testing.T) (apiClient *genapi.ClientWithRespon
 	)
 	clientSvc := clientreg.New(env.store)
 
+	sessionSvc := session.New(env.store, session.Config{CacheSize: 10_000})
 	handler, err := server.NewHandler(server.Config{
 		MaxIngestPayloadKB:   1024,
 		RateLimitPerSecond:   1000, // out of the way
@@ -124,11 +125,13 @@ func newCredentialedTestServer(t *testing.T) (apiClient *genapi.ClientWithRespon
 		Logger:         logging.Nop(),
 		Registry:       registry,
 		ClientResolver: clientSvc,
+		Sessions:       sessionSvc,
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
 			Registry: registry,
 			Clients:  clientSvc,
-			Sessions: session.New(env.store, session.Config{CacheSize: 10_000}),
+			Sessions: sessionSvc,
+			Events:   env.store.Events(),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,

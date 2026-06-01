@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
 	"github.com/one-harsh/calm/internal/auth"
@@ -314,6 +315,38 @@ func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 		testNamespace, db.DefaultClient,
 	); n != 1 {
 		t.Errorf("clients.last_activity_at not set after explicit close: matching-rows = %d; want 1", n)
+	}
+}
+
+// Regression: explicit DELETE bumps clients.last_activity_at to NOW(); the
+// scanner-driven DeleteByID path preserves session.last_activity instead.
+func TestDeleteSessionHandler_BumpsClientActivityToNow(t *testing.T) {
+	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
+	backdated := time.Now().UTC().Add(-2 * time.Hour)
+	s := seedSessionWithActivity(t, env.sqlDB, testNamespace, db.DefaultClient, 240, backdated)
+
+	if _, err := env.sqlDB.ExecContext(context.Background(),
+		`UPDATE clients SET last_activity_at = $1 WHERE namespace = $2 AND name = $3`,
+		backdated, testNamespace, db.DefaultClient,
+	); err != nil {
+		t.Fatalf("backdate clients.last_activity_at: %v", err)
+	}
+
+	resp, err := env.client.DeleteSessionWithResponse(context.Background(),
+		&genapi.DeleteSessionParams{XCALMSessionToken: s.SessionToken})
+	if err != nil || resp.StatusCode() != http.StatusOK {
+		t.Fatalf("DeleteSession: err=%v status=%d", err, resp.StatusCode())
+	}
+
+	var after time.Time
+	if err := env.sqlDB.QueryRowContext(context.Background(),
+		`SELECT last_activity_at FROM clients WHERE namespace = $1 AND name = $2`,
+		testNamespace, db.DefaultClient,
+	).Scan(&after); err != nil {
+		t.Fatalf("read post-delete last_activity_at: %v", err)
+	}
+	if !after.After(backdated.Add(time.Hour)) {
+		t.Errorf("clients.last_activity_at = %v; want a recent NOW()-style bump (backdated was %v)", after, backdated)
 	}
 }
 

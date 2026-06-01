@@ -17,11 +17,12 @@ import (
 
 func TestHarness_RoutesResolve(t *testing.T) {
 	t.Parallel()
+	s := createSessionForTest(t, testNamespace)
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sources", nil)
 	require.NoError(t, err)
 	req.Header.Set(auth.HeaderAPIKey, testMasterKey)
-	req.Header.Set("X-CALM-Session-Token", uniqueSessionToken(t))
+	req.Header.Set("X-CALM-Session-Token", s.SessionToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)

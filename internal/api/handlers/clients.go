@@ -81,10 +81,6 @@ func (h *Handlers) registerCredentialedClient(ctx context.Context, namespace, na
 	}, nil
 }
 
-// mapRegisterClientError translates the small set of DAL-layer errors the
-// registration paths share into the appropriate strict-server response.
-// Returns ok=false for errors the handler should propagate (logged or
-// context cancellation).
 func mapRegisterClientError(err error, namespace, name string) (genapi.RegisterClientResponseObject, bool) {
 	m, ok := mapClientError(err)
 	if !ok {

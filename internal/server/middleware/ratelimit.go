@@ -20,19 +20,12 @@ import (
 )
 
 const (
-	// IP-bucket bounded store. Botnet-scale fanout could otherwise grow the
-	// map unbounded; the sweep evicts buckets at full burst (effectively
-	// idle clients) once the map crosses ipBucketSweepThreshold.
 	ipBucketSweepThreshold = 100_000
 	ipSweepEvery           = 10_000
 )
 
-// ipBucketStore is a bounded per-IP token-bucket store with soft eviction:
-// when len(buckets) crosses sweepThreshold, the next sweep (every
-// sweepEvery inserts) drops buckets at full burst capacity (effectively
-// idle clients). Defends RateLimitIP against unbounded growth under bot-net
-// scale IP fanout. Evicted IPs get fresh buckets on next request — slight
-// skew, acceptable.
+// ipBucketStore evicts buckets at full burst (effectively idle) once the
+// map crosses sweepThreshold, bounding growth under bot-net IP fanout.
 type ipBucketStore struct {
 	mu             sync.Mutex
 	buckets        map[string]*rate.Limiter
@@ -78,12 +71,7 @@ func (s *ipBucketStore) size() int {
 	return len(s.buckets)
 }
 
-// RateLimitIP is a pre-auth limiter keyed by client IP. Sits before Auth so
-// unauthenticated DDoS doesn't burn registry-lookup CPU. Bucket key derived
-// from r.RemoteAddr by default, or the first X-Forwarded-For IP when
-// trustProxyHeaders is true (required behind a trusted LB).
-//
-// perSecond <= 0 disables this tier (returns passthrough).
+// RateLimitIP runs pre-auth; perSecond <= 0 disables.
 func RateLimitIP(perSecond int, trustProxyHeaders bool, logger *logging.Logger) func(http.Handler) http.Handler {
 	if perSecond <= 0 {
 		return func(next http.Handler) http.Handler { return next }
@@ -108,13 +96,10 @@ func RateLimitIP(perSecond int, trustProxyHeaders bool, logger *logging.Logger) 
 	}
 }
 
-// RateLimitNamespaceAndGlobal enforces per-namespace + global-aggregate tiers
-// after Auth. Order: Namespace → Global. Namespace first because the loser
-// tier burns a token on every rejected request: with Global checked first, a
-// misbehaving namespace would drain the shared global bucket on requests it
-// was always going to 429 at the namespace tier — leaking its overload into
-// other namespaces' global headroom and breaking the namespace-isolation
-// contract in the cost dimension. Either tier at <= 0 disables that tier.
+// RateLimitNamespaceAndGlobal checks namespace then global. Namespace-first
+// stops a misbehaving namespace from draining the shared global bucket on
+// requests it would 429 at its own tier — preserves namespace-isolation in
+// the cost dimension. Each tier at <= 0 is disabled.
 func RateLimitNamespaceAndGlobal(
 	registry auth.Registry,
 	defaultNamespacePerSecond int,
@@ -150,9 +135,6 @@ func RateLimitNamespaceAndGlobal(
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ns := auth.NamespaceFromContext(r.Context())
 			if ns == "" {
-				// Unauthenticated paths (health, version) intentionally bypass
-				// the auth middleware and have no namespace. They're also
-				// rate-limit-exempt — operational probes shouldn't be throttled.
 				next.ServeHTTP(w, r)
 				return
 			}

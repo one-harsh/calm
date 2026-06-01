@@ -13,15 +13,9 @@ import (
 	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
 )
 
-// OpenAPIValidator validates incoming requests against the embedded OpenAPI
-// spec (path, query params, headers, body schema). Slot innermost, after
-// Auth/RateLimit/BodySizeLimit/Timeout — request validation is part of the
-// per-request work budget.
-//
-// kin-openapi's authentication check is intentionally suppressed here: API
-// key resolution and namespace stamping are owned by middleware.Auth, which
-// runs before this middleware. Without this hook, kin-openapi would reject
-// every request whose operation declares the apiKey security scheme.
+// OpenAPIValidator validates requests against the embedded spec. The
+// authentication hook is suppressed — Auth middleware runs upstream and
+// owns key resolution; otherwise kin-openapi would 401 every secured op.
 func OpenAPIValidator(spec *openapi3.T) func(http.Handler) http.Handler {
 	spec.Servers = nil
 

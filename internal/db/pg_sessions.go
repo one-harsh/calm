@@ -21,9 +21,6 @@ type sessionRepo struct {
 	logger  *logging.Logger
 }
 
-// Create inserts the session row + any declared labels atomically. A missing
-// (namespace, client) parent surfaces as ErrClientNotFound (translated from
-// the FK violation 23503).
 func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 	if sess.Namespace == "" {
 		return ErrNamespaceRequired
@@ -227,9 +224,7 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace string, sessionToken
 	var client string
 	var result DeleteSessionResult
 	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
-		// FOR UPDATE conflicts with FOR KEY SHARE that FK enforcement takes
-		// on concurrent INSERT INTO children — those inserts block until our
-		// COMMIT and then fail FK. Count and cascade see the same row set.
+		// FOR UPDATE blocks concurrent child inserts so count and cascade see the same row set.
 		err := tx.QueryRowContext(ctx,
 			`SELECT id, client FROM sessions
 			   WHERE namespace = $1 AND session_token_hash = $2 FOR UPDATE`,
@@ -282,8 +277,7 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace string, sessionToken
 	return result, nil
 }
 
-// DeleteByID pairs id with namespace as defense-in-depth against a
-// wrong-namespace caller, even though the surrogate id alone is unique.
+// DeleteByID's namespace pairing is defense-in-depth; the surrogate id alone is unique.
 func (r *sessionRepo) DeleteByID(ctx context.Context, namespace string, sessionID int64) (DeleteSessionResult, error) {
 	if namespace == "" {
 		return DeleteSessionResult{}, ErrNamespaceRequired
@@ -461,9 +455,6 @@ func cascadeCountsByID(ctx context.Context, tx *sql.Tx, sessionID int64) (Cascad
 	return c, nil
 }
 
-// buildSessionFilterWhere returns the WHERE body (no leading "WHERE") and
-// arg slice. `alias` qualifies session columns ("" for bare). Caller
-// validates filter.Namespace.
 func buildSessionFilterWhere(filter ListSessionsFilter, alias string) (string, []any) {
 	prefix := ""
 	if alias != "" {

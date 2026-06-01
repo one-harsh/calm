@@ -23,12 +23,13 @@ type eventsRepo struct {
 	logger  *logging.Logger
 }
 
-// HLD-DEVIATION: the last-N dedup window required by HLD's storage section
-// is not enforced — every event is written as-is. The per-session FIFO cap
-// + lowest-priority-oldest-first eviction from the same section is also
-// not enforced; sessions can grow unbounded. data_hash is still computed
-// and persisted so reconciliation only adds a SELECT-before-insert branch
-// + post-commit cap check; no schema migration is owed.
+// HLD-DEVIATION: HLD's storage section requires a last-N dedup window and
+// per-session FIFO eviction; neither is enforced — every event is written
+// as-is and sessions grow unbounded. data_hash + session_events_dedup_idx
+// are populated today as dead weight so the reconciling dedup check can
+// land as an indexed lookup (session_id = $1 AND data_hash = $2 ORDER BY
+// created_at DESC LIMIT $N) without an ADD COLUMN + backfill + SET NOT
+// NULL migration against a populated table.
 func (r *eventsRepo) Write(ctx context.Context, namespace string, sessionID int64, events []EventInput) (int, error) {
 	if namespace == "" {
 		return 0, ErrNamespaceRequired

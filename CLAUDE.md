@@ -181,7 +181,8 @@ test/integration/        user-facing scenarios — see HLD's workload-scenarios 
               → BodySizeLimit (1MB cap → 413)
                 → Timeout (per-request budgets)
                   → OpenAPIValidator (kin-openapi against embedded spec)
-                    → Handler
+                    → SessionResolve (X-CALM-Session-Token → SessionMetadata; post-handler Touch on 2xx)
+                      → Handler
   ```
 
 - **Recovery** is outermost and holds a reference to the base logger so it can record panics even if `ctx` was never hydrated by Context middleware.
@@ -191,6 +192,7 @@ test/integration/        user-facing scenarios — see HLD's workload-scenarios 
 - **Auth** must run before RateLimit:NS+Global (the namespace tier reads the auth-stamped namespace from context).
 - **RateLimit:NS+Global** checks namespace tier first, then global aggregate. Namespace-first is load-bearing for namespace-isolation: with global-first, a misbehaving namespace would burn shared global tokens on requests it was always going to 429 at its own tier, leaking overload pressure across the isolation boundary.
 - **BodySizeLimit** before Timeout — rejecting an oversized body shouldn't consume the timeout budget.
+- **SessionResolve** is presence-based on `X-CALM-Session-Token`: when set, it calls `session.Service.Lookup` (404 on miss or cross-namespace), stuffs `SessionMetadata` into context via `session.WithMetadata`, and best-effort `Touch`es after 2xx. Sits after OpenAPIValidator so the validator catches missing-required-header before a DB lookup. Handlers read via `session.MetadataFromContext(ctx)` — they never touch the raw token.
 
 ## Logging > comments
 

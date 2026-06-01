@@ -22,3 +22,6 @@ packages:
   github.com/one-harsh/calm/internal/session:
     interfaces:
       expirySource:
+  github.com/one-harsh/calm/internal/server/middleware:
+    interfaces:
+      SessionResolver:

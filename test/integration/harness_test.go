@@ -98,6 +98,11 @@ func bootstrap() (*harness, error) {
 		return nil, fmt.Errorf("seed default clients: %w", err)
 	}
 
+	sessionSvc := session.New(store, session.Config{
+		CacheSize:          10_000,
+		IdempotencyKeyTTL:  time.Hour,
+		IdempotencyKeySize: 10_000,
+	})
 	handler, err := server.NewHandler(server.Config{
 		MaxIngestPayloadKB:   1024,
 		RateLimitPerSecond:   100,
@@ -107,15 +112,13 @@ func bootstrap() (*harness, error) {
 		Logger:         logging.Nop(),
 		Registry:       registry,
 		ClientResolver: clientSvc,
+		Sessions:       sessionSvc,
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
 			Registry: registry,
 			Clients:  clientSvc,
-			Sessions: session.New(store, session.Config{
-				CacheSize:          10_000,
-				IdempotencyKeyTTL:  time.Hour,
-				IdempotencyKeySize: 10_000,
-			}),
+			Sessions: sessionSvc,
+			Events:   store.Events(),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,

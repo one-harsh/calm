@@ -35,6 +35,7 @@ type Deps struct {
 	Logger         *logging.Logger
 	Registry       auth.Registry
 	ClientResolver middleware.ClientResolver
+	Sessions       middleware.SessionResolver
 	Handlers       *handlers.Handlers
 }
 
@@ -49,13 +50,13 @@ func NewHandler(cfg Config, deps Deps) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load embedded openapi spec: %w", err)
 	}
+	sessionRoutes, err := middleware.ExtractSessionTokenRoutes(spec)
+	if err != nil {
+		return nil, fmt.Errorf("extract session-token routes: %w", err)
+	}
 
 	r := chi.NewRouter()
 
-	// Middleware order is canonical (CLAUDE.md). RateLimitIP sits pre-Auth
-	// so unauthenticated DDoS doesn't burn registry-lookup CPU;
-	// RateLimitNamespaceAndGlobal sits post-Auth because the namespace tier
-	// reads from auth context.
 	r.Use(middleware.Recovery(deps.Logger))
 	r.Use(middleware.Context())
 	r.Use(middleware.Logging(deps.Logger))
@@ -70,6 +71,7 @@ func NewHandler(cfg Config, deps Deps) (http.Handler, error) {
 	r.Use(middleware.BodySizeLimit(int64(cfg.MaxIngestPayloadKB) * 1024))
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(middleware.OpenAPIValidator(spec))
+	r.Use(middleware.SessionResolve(deps.Sessions, sessionRoutes, deps.Logger))
 
 	api.Mount(r, deps.Handlers)
 	return r, nil

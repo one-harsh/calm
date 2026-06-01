@@ -92,11 +92,13 @@ func run() error {
 		Logger:         logger,
 		Registry:       registry,
 		ClientResolver: clientSvc,
+		Sessions:       sessionSvc,
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logger,
 			Registry: registry,
 			Clients:  clientSvc,
 			Sessions: sessionSvc,
+			Events:   store.Events(),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: cfg.Sessions.DefaultTTLMinutes,
 				MaxTTLMinutes:     cfg.Sessions.MaxTTLMinutes,

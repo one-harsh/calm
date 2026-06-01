@@ -14,8 +14,7 @@ import (
 
 const requestIDHeader = "X-Request-ID"
 
-// Context hydrates the request context with RequestID and any incoming OTel
-// trace context. Must run before Logging so every log line carries these.
+// Context hydrates request context with RequestID and OTel trace context.
 func Context() func(http.Handler) http.Handler {
 	propagator := otel.GetTextMapPropagator()
 	if propagator == nil {

@@ -127,8 +127,7 @@ func (s *Service) Delete(ctx context.Context, namespace, sessionToken string) (d
 	return result, err
 }
 
-// DeleteByID's namespace-wide cache eviction reflects the scanner having no
-// raw token for a precise key.
+// Scanner has no raw token, so this evicts by namespace.
 func (s *Service) DeleteByID(ctx context.Context, namespace string, sessionID int64) (db.DeleteSessionResult, error) {
 	result, err := s.store.Sessions().DeleteByID(ctx, namespace, sessionID)
 	if namespace != "" {

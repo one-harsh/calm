@@ -11,6 +11,7 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/clientreg"
+	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/session"
 )
 
@@ -27,6 +28,7 @@ type Deps struct {
 	Registry auth.Registry
 	Clients  *clientreg.Service
 	Sessions *session.Service
+	Events   db.EventsRepo
 	Cfg      HandlersConfig
 }
 

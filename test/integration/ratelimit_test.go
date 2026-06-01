@@ -49,6 +49,7 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 		nil,
 	)
 
+	sessionSvc := session.New(env.store, session.Config{CacheSize: 10_000})
 	handler, err := server.NewHandler(server.Config{
 		MaxIngestPayloadKB:       1024,
 		RateLimitPerSecond:       cfg.NSDefault,
@@ -60,10 +61,12 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 	}, server.Deps{
 		Logger:   logging.Nop(),
 		Registry: registry,
+		Sessions: sessionSvc,
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
 			Clients:  clientreg.New(env.store),
-			Sessions: session.New(env.store, session.Config{CacheSize: 10_000}),
+			Sessions: sessionSvc,
+			Events:   env.store.Events(),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,
