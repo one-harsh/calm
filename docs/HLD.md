@@ -928,7 +928,7 @@ CALM reads the session's events, sorts them by `(priority asc, created_at desc)`
 
 The snapshot is built on demand from current events, not pre-computed and stored. It's cheap — a database read plus serialization, single-digit milliseconds for typical session sizes.
 
-**Budget overflow.** If higher-priority events alone exceed the budget, CALM still returns the most recent P1 events that fit and sets `budget_exceeded: true` on the response. The workload gets a partial snapshot rather than nothing; it can request a larger budget on retry if its context allows.
+**Budget overflow.** If higher-priority events alone exceed the budget, CALM still returns the most recent P1 events that fit and sets `budget_exceeded: true` on the response. The workload gets a partial snapshot rather than nothing; it can request a larger budget on retry if its context allows. If even the single most-critical event (the most-recent P1) exceeds the entire budget on its own, CALM returns that one event anyway — overshooting the budget rather than returning an empty snapshot — consistent with P1 being state that must survive reconstruction at all costs. Lower-priority tiers get no such exception: if no event fits and none is P1, the snapshot is empty with `budget_exceeded: true`.
 
 **Who calls this and when:**
 

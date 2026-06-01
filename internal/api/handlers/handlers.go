@@ -13,6 +13,7 @@ import (
 	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/session"
+	"github.com/one-harsh/calm/internal/snapshot"
 )
 
 // ErrNotImplemented is the sentinel stubs return; StrictErrorHandler maps it to 501.
@@ -29,6 +30,7 @@ type Deps struct {
 	Clients  *clientreg.Service
 	Sessions *session.Service
 	Events   db.EventsRepo
+	Snapshot *snapshot.Service
 	Cfg      HandlersConfig
 }
 

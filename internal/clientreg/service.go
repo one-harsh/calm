@@ -15,8 +15,7 @@ import (
 	"github.com/one-harsh/calm/internal/obs"
 )
 
-// RegisterResult is what Service.Register returns. Created reflects whether
-// the row was inserted (false on collision; the DAL Register is idempotent).
+// RegisterResult.Created is false on collision (Register is idempotent at the DAL).
 type RegisterResult struct {
 	Name      string
 	Namespace string
@@ -70,13 +69,7 @@ func (s *Service) Register(ctx context.Context, namespace, name string) (Registe
 	}, nil
 }
 
-// RegisterWithCredential mints a fresh random token, hashes it
-// (sha256(namespace || 0x00 || token)), and persists the hash. Returns the
-// raw token for the handler to surface to the workload (one-time-display;
-// the server never stores it).
-//
-// Errors with db.ErrClientExists on duplicate —
-// no silent re-issue, since the older token can't be recovered from its hash.
+// RegisterWithCredential errors with ErrClientExists on duplicate (no re-issue; token unrecoverable post-hash).
 func (s *Service) RegisterWithCredential(ctx context.Context, namespace, name string) (CredentialedRegisterResult, error) {
 	if namespace == "" {
 		return CredentialedRegisterResult{}, db.ErrNamespaceRequired
@@ -100,10 +93,7 @@ func (s *Service) RegisterWithCredential(ctx context.Context, namespace, name st
 	}, nil
 }
 
-// RotateToken mints a fresh token, hashes it, and atomically replaces the
-// stored hash via RotateCredential. Old token is rejected immediately on
-// subsequent calls (strict rotation; no overlap window). Returns the new
-// raw token for the handler to surface.
+// RotateToken is strict — no overlap window; old token rejects immediately.
 func (s *Service) RotateToken(ctx context.Context, namespace, name string) (string, error) {
 	if namespace == "" {
 		return "", db.ErrNamespaceRequired
@@ -132,13 +122,7 @@ func (s *Service) ResolveByToken(ctx context.Context, namespace, rawToken string
 	return s.store.Clients().LookupByToken(ctx, namespace, auth.HashToken(namespace, rawToken))
 }
 
-// SeedDefaults ensures every configured namespace has its DL01 default-client
-// row, the FK precondition for sessions that omit `client` at creation
-// (which insert with `client='default'`). Idempotent at the DAL layer.
-// Credentialed namespaces skip the seed — workloads must explicitly register
-// (the default client would have no token and would be unreachable from
-// session operations there, undermining the within-namespace isolation
-// the namespace opted into).
+// SeedDefaults inserts the default client for each uncredentialed namespace (idempotent).
 func (s *Service) SeedDefaults(ctx context.Context, namespaces []string) error {
 	clients := s.store.Clients()
 	for _, ns := range namespaces {

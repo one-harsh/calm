@@ -134,6 +134,49 @@ func (r *eventsRepo) Read(ctx context.Context, namespace string, sessionID int64
 	return out, nil
 }
 
+// snapshotRowCap bounds the fetch. The max byte budget (8KB per the API
+// contract) fits at most ~117 minimally-sized events, so 512 can never truncate
+// before the byte budget does, while keeping the fetch bounded on a session
+// whose event store is unbounded (per-session FIFO eviction is not enforced).
+const snapshotRowCap = 512
+
+func (r *eventsRepo) Snapshot(ctx context.Context, namespace string, sessionID int64) ([]Event, error) {
+	if namespace == "" {
+		return nil, ErrNamespaceRequired
+	}
+	if err := verifySessionInNamespace(ctx, r.queryer, namespace, sessionID); err != nil {
+		return nil, err
+	}
+
+	const query = `SELECT id, session_id, type, priority, data, created_at
+	               FROM session_events
+	               WHERE session_id = $1
+	               ORDER BY priority ASC, created_at DESC
+	               LIMIT $2`
+
+	rows, err := r.queryer.QueryContext(ctx, query, sessionID, snapshotRowCap)
+	if err != nil {
+		return nil, fmt.Errorf("%w: snapshot events for session %d in %q: %w",
+			ErrStorageBackend, sessionID, namespace, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]Event, 0, snapshotRowCap)
+	for rows.Next() {
+		var ev Event
+		if err := rows.Scan(&ev.ID, &ev.SessionID, &ev.Type, &ev.Priority, &ev.Data, &ev.CreatedAt); err != nil {
+			return nil, fmt.Errorf("%w: scan snapshot event for session %d in %q: %w",
+				ErrStorageBackend, sessionID, namespace, err)
+		}
+		out = append(out, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: iterate snapshot events for session %d in %q: %w",
+			ErrStorageBackend, sessionID, namespace, err)
+	}
+	return out, nil
+}
+
 // HashEventPayload is the canonical event-identity hash used for dedup and
 // row-content fingerprinting. Length-prefixes both fields so that distinct
 // (type, data) pairs that happen to share a concatenation cannot collide

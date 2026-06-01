@@ -37,6 +37,7 @@ type SessionRepo interface {
 type EventsRepo interface {
 	Write(ctx context.Context, namespace string, sessionID int64, events []EventInput) (accepted int, err error)
 	Read(ctx context.Context, namespace string, sessionID int64, filter EventFilter) ([]Event, error)
+	Snapshot(ctx context.Context, namespace string, sessionID int64) ([]Event, error)
 }
 
 type DAL interface {

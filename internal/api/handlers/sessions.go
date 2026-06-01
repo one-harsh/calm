@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/obs"
 	"github.com/one-harsh/calm/internal/session"
+	"github.com/one-harsh/calm/internal/snapshot"
 )
 
 func (h *Handlers) CreateSession(
@@ -164,8 +166,73 @@ func (h *Handlers) DeleteSession(
 	}), nil
 }
 
-func (h *Handlers) GetSnapshot(_ context.Context, _ genapi.GetSnapshotRequestObject) (genapi.GetSnapshotResponseObject, error) {
-	return nil, ErrNotImplemented
+func (h *Handlers) GetSnapshot(ctx context.Context, request genapi.GetSnapshotRequestObject) (genapi.GetSnapshotResponseObject, error) {
+	md, ok := session.MetadataFromContext(ctx)
+	if !ok {
+		h.deps.Logger.WithContext(ctx).Error("get snapshot: session metadata missing from context")
+		return nil, errors.New("session metadata not present in request context")
+	}
+	namespace := auth.NamespaceFromContext(ctx)
+
+	budget := snapshot.DefaultBudgetBytes
+	if request.Params.BudgetBytes != nil {
+		budget = *request.Params.BudgetBytes
+	}
+
+	result, err := h.deps.Snapshot.Build(ctx, namespace, md.ID, budget)
+	if err != nil {
+		if m, ok := mapEventsError(err); ok {
+			body := genapi.Error{Error: m.Code, Detail: &m.Detail}
+			switch m.Status {
+			case http.StatusNotFound:
+				return genapi.GetSnapshot404JSONResponse{NotFoundJSONResponse: genapi.NotFoundJSONResponse(body)}, nil
+			default:
+				h.deps.Logger.WithContext(ctx).Warn("get snapshot: mapped sentinel has no response variant — returning 500",
+					logging.IntField("http.status", m.Status),
+					logging.StringField("error.code", m.Code),
+					logging.ErrorField(err),
+				)
+			}
+		}
+		if !isContextError(err) {
+			h.deps.Logger.WithContext(ctx).Error("get snapshot failed", logging.ErrorField(err))
+		}
+		return nil, err
+	}
+
+	events := make([]genapi.Event, 0, len(result.Events))
+	for _, ev := range result.Events {
+		var data map[string]any
+		if len(ev.Data) > 0 {
+			if err := json.Unmarshal(ev.Data, &data); err != nil {
+				h.deps.Logger.WithContext(ctx).Error("get snapshot: failed to decode stored event data",
+					obs.EventType(ev.Type),
+					logging.ErrorField(err),
+				)
+				return nil, fmt.Errorf("decode event %d data: %w", ev.ID, err)
+			}
+		} else {
+			data = map[string]any{}
+		}
+		events = append(events, genapi.Event{
+			Id:        ev.ID,
+			Type:      ev.Type,
+			Priority:  ev.Priority,
+			Data:      data,
+			CreatedAt: ev.CreatedAt,
+		})
+	}
+
+	h.deps.Logger.WithContext(ctx).Debug("snapshot built",
+		logging.IntField("snapshot.byte_budget_used", result.ByteBudgetUsed),
+		logging.IntField("snapshot.events_returned", len(events)),
+	)
+
+	return genapi.GetSnapshot200JSONResponse(genapi.SnapshotResult{
+		ByteBudgetUsed: result.ByteBudgetUsed,
+		BudgetExceeded: result.BudgetExceeded,
+		Events:         events,
+	}), nil
 }
 
 func (h *Handlers) ListSources(_ context.Context, _ genapi.ListSourcesRequestObject) (genapi.ListSourcesResponseObject, error) {

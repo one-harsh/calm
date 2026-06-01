@@ -29,6 +29,7 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/server"
 	"github.com/one-harsh/calm/internal/session"
+	"github.com/one-harsh/calm/internal/snapshot"
 )
 
 const (
@@ -103,6 +104,7 @@ func bootstrap() (*harness, error) {
 		IdempotencyKeyTTL:  time.Hour,
 		IdempotencyKeySize: 10_000,
 	})
+	snapshotSvc := snapshot.New(store)
 	handler, err := server.NewHandler(server.Config{
 		MaxIngestPayloadKB:   1024,
 		RateLimitPerSecond:   100,
@@ -119,6 +121,7 @@ func bootstrap() (*harness, error) {
 			Clients:  clientSvc,
 			Sessions: sessionSvc,
 			Events:   store.Events(),
+			Snapshot: snapshotSvc,
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,

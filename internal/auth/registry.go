@@ -14,19 +14,13 @@ import (
 	"github.com/one-harsh/calm/internal/secrets"
 )
 
-// Registry resolves an API key to a namespace. Namespace is server-resolved
-// from the API key header per DL10, never from the request body. Built once
-// at startup from operator config; rebuilt on process restart.
+// Registry resolves an API key to a namespace (DL10).
 type Registry interface {
 	Resolve(apiKey string) (namespace string, ok bool)
 
-	// RateFor returns the per-namespace requests-per-second override.
-	// Callers fall back to a global default when hasOverride is false.
+	// RateFor returns the per-namespace override; hasOverride=false → caller uses global default.
 	RateFor(namespace string) (rate int, hasOverride bool)
 
-	// RequiresClientCredentials reports whether operations in the namespace
-	// must present a per-client bearer token (in addition to the namespace
-	// API key). Set per-namespace via require_client_credentials in YAML.
 	RequiresClientCredentials(namespace string) bool
 }
 
@@ -63,10 +57,7 @@ func (m *memoryRegistry) RequiresClientCredentials(namespace string) bool {
 	return m.credentialsRequired[namespace]
 }
 
-// BuildRegistry resolves each namespace's bracketed api_key reference via
-// the SecretReader and returns the in-memory Registry. Fatal on resolution
-// failure, an empty resolved key, or two namespaces resolving to the same
-// value. buildRegistry is the testable core.
+// BuildRegistry is Fatal on resolution failure, empty resolved key, or two namespaces resolving to the same value.
 func BuildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, reader secrets.SecretReader, logger *logging.Logger) Registry {
 	reg, err := buildRegistry(ctx, namespaces, reader, logger)
 	if err != nil {
@@ -82,15 +73,12 @@ func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 	keyOrigin := make(map[string]string, len(namespaces))
 
 	for _, ns := range namespaces {
-		// Bind namespace before ReadSecret so the SecretReader's Fatal log
-		// (on a bad ref) carries which namespace's secret failed.
+		// Bind namespace before ReadSecret so any Fatal log names the failing namespace.
 		nsCtx := logging.Bind(ctx, obs.Namespace(ns.Name))
 		apiKey := reader.ReadSecret(nsCtx, ns.APIKey)
 
 		if apiKey == "" {
-			// An empty value here would authenticate every empty
-			// X-CALM-API-Key header — the SecretReader allows empty env-var
-			// values by design; the consumer enforces non-empty for credential use.
+			// Empty value would authenticate empty X-CALM-API-Key headers.
 			return nil, fmt.Errorf("namespace %q: api_key resolved to empty value (secret %q)", ns.Name, ns.APIKey)
 		}
 

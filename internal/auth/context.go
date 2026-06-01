@@ -5,15 +5,9 @@ package auth
 
 import "context"
 
-// namespaceCtxKey is intentionally separate from the logging library's
-// field bag — namespace is a business-logic trust-scope value and must
-// not depend on an observability library to propagate.
 type namespaceCtxKey struct{}
 
-// clientCtxKey carries the auth-resolved client name in namespaces that
-// require client credentials (where the workload presented a client token).
-// When credentials aren't required this remains unset; handlers fall back
-// to the body-supplied `client` field.
+// clientCtxKey is unset in uncredentialed namespaces; handlers fall back to body.client there.
 type clientCtxKey struct{}
 
 func WithNamespace(ctx context.Context, ns string) context.Context {

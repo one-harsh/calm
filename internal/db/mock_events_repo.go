@@ -85,6 +85,66 @@ func (_c *MockEventsRepo_Read_Call) RunAndReturn(run func(context.Context, strin
 	return _c
 }
 
+// Snapshot provides a mock function with given fields: ctx, namespace, sessionID
+func (_m *MockEventsRepo) Snapshot(ctx context.Context, namespace string, sessionID int64) ([]Event, error) {
+	ret := _m.Called(ctx, namespace, sessionID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Snapshot")
+	}
+
+	var r0 []Event
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64) ([]Event, error)); ok {
+		return rf(ctx, namespace, sessionID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64) []Event); ok {
+		r0 = rf(ctx, namespace, sessionID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]Event)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, int64) error); ok {
+		r1 = rf(ctx, namespace, sessionID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockEventsRepo_Snapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Snapshot'
+type MockEventsRepo_Snapshot_Call struct {
+	*mock.Call
+}
+
+// Snapshot is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - sessionID int64
+func (_e *MockEventsRepo_Expecter) Snapshot(ctx interface{}, namespace interface{}, sessionID interface{}) *MockEventsRepo_Snapshot_Call {
+	return &MockEventsRepo_Snapshot_Call{Call: _e.mock.On("Snapshot", ctx, namespace, sessionID)}
+}
+
+func (_c *MockEventsRepo_Snapshot_Call) Run(run func(ctx context.Context, namespace string, sessionID int64)) *MockEventsRepo_Snapshot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(int64))
+	})
+	return _c
+}
+
+func (_c *MockEventsRepo_Snapshot_Call) Return(_a0 []Event, _a1 error) *MockEventsRepo_Snapshot_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockEventsRepo_Snapshot_Call) RunAndReturn(run func(context.Context, string, int64) ([]Event, error)) *MockEventsRepo_Snapshot_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Write provides a mock function with given fields: ctx, namespace, sessionID, events
 func (_m *MockEventsRepo) Write(ctx context.Context, namespace string, sessionID int64, events []EventInput) (int, error) {
 	ret := _m.Called(ctx, namespace, sessionID, events)

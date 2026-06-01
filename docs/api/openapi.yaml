@@ -222,7 +222,11 @@ paths:
         - in: query
           name: budget_bytes
           schema: { type: integer, minimum: 256, maximum: 8192, default: 2048 }
-          description: Byte budget for the snapshot. Server caps at 8KB.
+          description: |
+            Event-payload budget for the snapshot: bounds the summed JSON size
+            of the returned events. It does not count the response envelope or
+            the array separators between events, so the actual HTTP body is
+            slightly larger. Server caps at 8KB.
       responses:
         '200':
           description: Snapshot
@@ -811,7 +815,14 @@ components:
       type: object
       required: [byte_budget_used, budget_exceeded, events]
       properties:
-        byte_budget_used: { type: integer }
+        byte_budget_used:
+          type: integer
+          description: |
+            Summed JSON size of the returned events (the event-payload budget
+            unit). Excludes the response envelope and array separators, so the
+            HTTP body is slightly larger. Exceeds `budget_bytes` only when a
+            single critical (P1) event that alone overflows the budget is
+            returned rather than dropped.
         budget_exceeded:
           type: boolean
           description: |
