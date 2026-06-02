@@ -68,6 +68,19 @@ func mapEventsError(err error) (m errorMapping, ok bool) {
 	}
 }
 
+func mapIngestError(err error) (m errorMapping, ok bool) {
+	switch {
+	case errors.Is(err, db.ErrSessionNotFound):
+		return errorMapping{http.StatusNotFound, "session_not_found", "session not found in this namespace"}, true
+	case errors.Is(err, db.ErrSourceRequired):
+		return errorMapping{http.StatusBadRequest, "invalid_request", "source label is required"}, true
+	case errors.Is(err, db.ErrNamespaceRequired):
+		return errorMapping{http.StatusBadRequest, "invalid_request", "namespace is required"}, true
+	default:
+		return errorMapping{}, false
+	}
+}
+
 func isContextError(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

@@ -28,8 +28,8 @@ func TestHarness_RoutesResolve(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode,
-		"handler is stubbed today; route resolution + chain reach handler is the proof")
+	assert.Equal(t, http.StatusOK, resp.StatusCode,
+		"route resolution + middleware chain must reach the live handler")
 	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 }
 

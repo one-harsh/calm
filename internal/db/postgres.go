@@ -25,11 +25,13 @@ type Store struct {
 	clients  *clientRepo
 	sessions *sessionRepo
 	events   *eventsRepo
+	sources  *sourcesRepo
 }
 
 func (s *Store) Clients() ClientRepo   { return s.clients }
 func (s *Store) Sessions() SessionRepo { return s.sessions }
 func (s *Store) Events() EventsRepo    { return s.events }
+func (s *Store) Sources() SourcesRepo  { return s.sources }
 
 func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *logging.Logger) (*Store, error) {
 	conn, err := sql.Open("pgx", dsn)
@@ -60,6 +62,7 @@ func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *loggin
 	s.clients = &clientRepo{queryer: conn, logger: logger}
 	s.sessions = &sessionRepo{queryer: conn, logger: logger}
 	s.events = &eventsRepo{queryer: conn, logger: logger}
+	s.sources = &sourcesRepo{queryer: conn, logger: logger}
 	return s, nil
 }
 

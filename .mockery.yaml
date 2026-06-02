@@ -15,6 +15,7 @@ packages:
       ClientRepo:
       SessionRepo:
       EventsRepo:
+      SourcesRepo:
       DAL:
   github.com/one-harsh/calm/internal/secrets:
     interfaces:

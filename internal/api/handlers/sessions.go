@@ -235,6 +235,39 @@ func (h *Handlers) GetSnapshot(ctx context.Context, request genapi.GetSnapshotRe
 	}), nil
 }
 
-func (h *Handlers) ListSources(_ context.Context, _ genapi.ListSourcesRequestObject) (genapi.ListSourcesResponseObject, error) {
-	return nil, ErrNotImplemented
+func (h *Handlers) ListSources(ctx context.Context, _ genapi.ListSourcesRequestObject) (genapi.ListSourcesResponseObject, error) {
+	md, ok := session.MetadataFromContext(ctx)
+	if !ok {
+		h.deps.Logger.WithContext(ctx).Error("list sources: session metadata missing from context")
+		return nil, errors.New("session metadata not present in request context")
+	}
+	namespace := auth.NamespaceFromContext(ctx)
+
+	sources, err := h.deps.Ingest.ListSources(ctx, namespace, md.ID)
+	if err != nil {
+		if m, ok := mapIngestError(err); ok {
+			body := genapi.Error{Error: m.Code, Detail: &m.Detail}
+			switch m.Status {
+			case http.StatusNotFound:
+				return genapi.ListSources404JSONResponse{NotFoundJSONResponse: genapi.NotFoundJSONResponse(body)}, nil
+			default:
+				h.deps.Logger.WithContext(ctx).Warn("list sources: mapped sentinel has no response variant — returning 500",
+					logging.IntField("http.status", m.Status),
+					logging.StringField("error.code", m.Code),
+					logging.ErrorField(err),
+				)
+			}
+		}
+		if !isContextError(err) {
+			h.deps.Logger.WithContext(ctx).Error("list sources failed", logging.ErrorField(err))
+		}
+		return nil, err
+	}
+
+	out := make([]genapi.SourceSummary, len(sources))
+	for i, s := range sources {
+		out[i] = genapi.SourceSummary{Label: s.Label, Chunks: s.Chunks, IndexedAt: s.IndexedAt}
+	}
+
+	return genapi.ListSources200JSONResponse(genapi.ListSourcesResult{Sources: out}), nil
 }

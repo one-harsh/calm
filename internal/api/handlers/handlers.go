@@ -12,6 +12,7 @@ import (
 	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/ingest"
 	"github.com/one-harsh/calm/internal/session"
 	"github.com/one-harsh/calm/internal/snapshot"
 )
@@ -31,6 +32,7 @@ type Deps struct {
 	Sessions *session.Service
 	Events   db.EventsRepo
 	Snapshot *snapshot.Service
+	Ingest   *ingest.Service
 	Cfg      HandlersConfig
 }
 

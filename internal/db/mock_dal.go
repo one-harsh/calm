@@ -165,6 +165,53 @@ func (_c *MockDAL_Sessions_Call) RunAndReturn(run func() SessionRepo) *MockDAL_S
 	return _c
 }
 
+// Sources provides a mock function with no fields
+func (_m *MockDAL) Sources() SourcesRepo {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Sources")
+	}
+
+	var r0 SourcesRepo
+	if rf, ok := ret.Get(0).(func() SourcesRepo); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(SourcesRepo)
+		}
+	}
+
+	return r0
+}
+
+// MockDAL_Sources_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Sources'
+type MockDAL_Sources_Call struct {
+	*mock.Call
+}
+
+// Sources is a helper method to define mock.On call
+func (_e *MockDAL_Expecter) Sources() *MockDAL_Sources_Call {
+	return &MockDAL_Sources_Call{Call: _e.mock.On("Sources")}
+}
+
+func (_c *MockDAL_Sources_Call) Run(run func()) *MockDAL_Sources_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockDAL_Sources_Call) Return(_a0 SourcesRepo) *MockDAL_Sources_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockDAL_Sources_Call) RunAndReturn(run func() SourcesRepo) *MockDAL_Sources_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // WithTx provides a mock function with given fields: ctx, fn
 func (_m *MockDAL) WithTx(ctx context.Context, fn func(Repos) error) error {
 	ret := _m.Called(ctx, fn)

@@ -40,10 +40,16 @@ type EventsRepo interface {
 	Snapshot(ctx context.Context, namespace string, sessionID int64) ([]Event, error)
 }
 
+type SourcesRepo interface {
+	Index(ctx context.Context, namespace string, in IndexInput) error
+	List(ctx context.Context, namespace string, sessionID int64) ([]SourceSummary, error)
+}
+
 type DAL interface {
 	Clients() ClientRepo
 	Sessions() SessionRepo
 	Events() EventsRepo
+	Sources() SourcesRepo
 	WithTx(ctx context.Context, fn func(Repos) error) error
 }
 
@@ -51,5 +57,6 @@ var (
 	_ ClientRepo  = (*clientRepo)(nil)
 	_ SessionRepo = (*sessionRepo)(nil)
 	_ EventsRepo  = (*eventsRepo)(nil)
+	_ SourcesRepo = (*sourcesRepo)(nil)
 	_ DAL         = (*Store)(nil)
 )

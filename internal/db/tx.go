@@ -45,6 +45,7 @@ type Repos struct {
 	Clients  ClientRepo
 	Sessions SessionRepo
 	Events   EventsRepo
+	Sources  SourcesRepo
 }
 
 // WithTx executes fn inside a single transaction shared across both repos.
@@ -58,6 +59,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(Repos) error) error {
 		Clients:  &clientRepo{queryer: tx, logger: s.logger},
 		Sessions: &sessionRepo{queryer: tx, logger: s.logger},
 		Events:   &eventsRepo{queryer: tx, logger: s.logger},
+		Sources:  &sourcesRepo{queryer: tx, logger: s.logger},
 	}
 	if err := fn(repos); err != nil {
 		return err
