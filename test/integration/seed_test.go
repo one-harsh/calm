@@ -22,7 +22,7 @@ func TestSeedNamespaceClients_HappyAndIdempotent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	svc := clientreg.New(store)
+	svc := clientreg.New(store, logging.Nop())
 	namespaces := []string{"default", "tenant-a", "tenant-b"}
 	if err := svc.SeedDefaults(ctx, namespaces); err != nil {
 		t.Fatalf("first seed: %v", err)

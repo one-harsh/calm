@@ -64,7 +64,7 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 		Sessions: sessionSvc,
 		Handlers: handlers.New(handlers.Deps{
 			Logger:   logging.Nop(),
-			Clients:  clientreg.New(env.store),
+			Clients:  clientreg.New(env.store, logging.Nop()),
 			Sessions: sessionSvc,
 			Events:   env.store.Events(),
 			Cfg: handlers.HandlersConfig{

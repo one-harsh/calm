@@ -77,7 +77,8 @@ func (h *Handlers) WriteEvents(
 		return nil, err
 	}
 
-	h.deps.Logger.WithContext(ctx).Debug("events written",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info("events written",
+		obs.AuditInitiatorAPI,
 		logging.IntField("events.write.accepted", accepted),
 		logging.IntField("events.write.submitted", len(inputs)),
 	)

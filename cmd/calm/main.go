@@ -71,7 +71,7 @@ func run() error {
 	}
 	defer func() { _ = store.Close() }()
 
-	clientSvc := clientreg.New(store)
+	clientSvc := clientreg.New(store, logger)
 	sessionSvc := session.New(store, session.Config{
 		CacheSize:          cfg.Sessions.CacheSize,
 		IdempotencyKeyTTL:  cfg.Sessions.IdempotencyKeyTTL,

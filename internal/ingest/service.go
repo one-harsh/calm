@@ -36,6 +36,7 @@ type Section struct {
 
 type Result struct {
 	Source           string
+	Created          bool
 	SectionsIndexed  int
 	SectionsTotal    int
 	SummaryTruncated bool
@@ -45,11 +46,12 @@ type Result struct {
 
 func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64, in Input) (Result, error) {
 	chunks := chunk(in.Source, in.Content, in.Format, in.ContentType)
-	if err := s.store.Sources().Index(ctx, namespace, db.IndexInput{
+	created, err := s.store.Sources().Index(ctx, namespace, db.IndexInput{
 		SessionID: sessionID,
 		Source:    in.Source,
 		Chunks:    chunks,
-	}); err != nil {
+	})
+	if err != nil {
 		return Result{}, err
 	}
 
@@ -69,6 +71,7 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 	// (HLD ingest section); smoke returns none.
 	return Result{
 		Source:           in.Source,
+		Created:          created,
 		SectionsIndexed:  indexed,
 		SectionsTotal:    total,
 		SummaryTruncated: truncated,

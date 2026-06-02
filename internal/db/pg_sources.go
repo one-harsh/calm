@@ -19,25 +19,27 @@ type sourcesRepo struct {
 	logger  *logging.Logger
 }
 
-func (r *sourcesRepo) Index(ctx context.Context, namespace string, in IndexInput) error {
+func (r *sourcesRepo) Index(ctx context.Context, namespace string, in IndexInput) (bool, error) {
 	if namespace == "" {
-		return ErrNamespaceRequired
+		return false, ErrNamespaceRequired
 	}
 	if in.Source == "" {
-		return ErrSourceRequired
+		return false, ErrSourceRequired
 	}
-	return inTx(ctx, r.queryer, func(tx *sql.Tx) error {
+	created := false
+	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
 		if err := verifySessionInNamespace(ctx, tx, namespace, in.SessionID); err != nil {
 			return err
 		}
 		// idempotent-indexing invariant: re-ingesting a source replaces its prior content.
+		// xmax = 0 distinguishes a fresh insert from an on-conflict update.
 		var sourceID int64
 		err := tx.QueryRowContext(ctx,
 			`INSERT INTO sources (session_id, label) VALUES ($1, $2)
 			 ON CONFLICT (session_id, label) DO UPDATE SET indexed_at = now()
-			 RETURNING id`,
+			 RETURNING id, (xmax = 0)`,
 			in.SessionID, in.Source,
-		).Scan(&sourceID)
+		).Scan(&sourceID, &created)
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23503" {
@@ -70,6 +72,7 @@ func (r *sourcesRepo) Index(ctx context.Context, namespace string, in IndexInput
 		}
 		return nil
 	})
+	return created, err
 }
 
 func (r *sourcesRepo) List(ctx context.Context, namespace string, sessionID int64) ([]SourceSummary, error) {

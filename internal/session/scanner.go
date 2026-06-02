@@ -101,8 +101,9 @@ func (s *Scanner) scanOnce(ctx context.Context) {
 			)
 			continue
 		}
-		s.logger.WithContext(ctx).Info("session closed",
+		s.logger.WithContext(ctx).WithAuditEvent(logging.ResourceDelete).Info("session closed",
 			obs.CloseReasonTTLExpired,
+			obs.AuditInitiatorSystem,
 			logging.IntField("session.delete.cascaded_events", res.Cascaded.Events),
 			logging.IntField("session.delete.cascaded_sources", res.Cascaded.Sources),
 			logging.IntField("session.delete.cascaded_chunks", res.Cascaded.Chunks),

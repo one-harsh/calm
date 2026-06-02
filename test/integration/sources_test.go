@@ -19,7 +19,7 @@ func TestSourcesIndex_PersistsSourceAndChunks(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 
-	err := store.Sources().Index(context.Background(), "ns-a", db.IndexInput{
+	_, err := store.Sources().Index(context.Background(), "ns-a", db.IndexInput{
 		SessionID: sess.ID, Source: "build.log",
 		Chunks: []db.Chunk{
 			{Title: "a", Content: "alpha", ContentType: "prose"},
@@ -48,7 +48,7 @@ func TestSourcesIndex_IdempotentReingestReplaces(t *testing.T) {
 	ctx := context.Background()
 
 	mustIndex := func(chunks []db.Chunk) {
-		if err := store.Sources().Index(ctx, "ns-a", db.IndexInput{SessionID: sess.ID, Source: "s", Chunks: chunks}); err != nil {
+		if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{SessionID: sess.ID, Source: "s", Chunks: chunks}); err != nil {
 			t.Fatalf("Index: %v", err)
 		}
 	}
@@ -79,14 +79,14 @@ func TestSourcesIndex_EmptyChunksClearsContent(t *testing.T) {
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 	ctx := context.Background()
 
-	if err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
+	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
 		SessionID: sess.ID, Source: "s",
 		Chunks: []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}},
 	}); err != nil {
 		t.Fatalf("Index: %v", err)
 	}
 	// Re-ingest with no chunks clears content but keeps the source row.
-	if err := store.Sources().Index(ctx, "ns-a", db.IndexInput{SessionID: sess.ID, Source: "s", Chunks: nil}); err != nil {
+	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{SessionID: sess.ID, Source: "s", Chunks: nil}); err != nil {
 		t.Fatalf("Index empty: %v", err)
 	}
 
@@ -99,6 +99,32 @@ func TestSourcesIndex_EmptyChunksClearsContent(t *testing.T) {
 	}
 }
 
+func TestSourcesIndex_ReportsCreatedThenUpdated(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	ctx := context.Background()
+	in := db.IndexInput{SessionID: sess.ID, Source: "s", Chunks: []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}}}
+
+	created, err := store.Sources().Index(ctx, "ns-a", in)
+	if err != nil {
+		t.Fatalf("first Index: %v", err)
+	}
+	if !created {
+		t.Error("first index of a source: created = false; want true")
+	}
+
+	created, err = store.Sources().Index(ctx, "ns-a", in)
+	if err != nil {
+		t.Fatalf("re-Index: %v", err)
+	}
+	if created {
+		t.Error("re-index of the same source: created = true; want false")
+	}
+}
+
 func TestSourcesIndex_CrossNamespaceMapsToNotFound(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
@@ -106,7 +132,7 @@ func TestSourcesIndex_CrossNamespaceMapsToNotFound(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 
-	err := store.Sources().Index(context.Background(), "ns-b", db.IndexInput{
+	_, err := store.Sources().Index(context.Background(), "ns-b", db.IndexInput{
 		SessionID: sess.ID, Source: "s",
 		Chunks: []db.Chunk{{Title: "t", Content: "c", ContentType: "prose"}},
 	})
@@ -131,13 +157,13 @@ func TestSourcesList_OrdersByIndexedAtDescWithChunkCounts(t *testing.T) {
 		t.Errorf("empty session List = %+v; want none", got)
 	}
 
-	if err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
+	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
 		SessionID: sess.ID, Source: "first",
 		Chunks: []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}},
 	}); err != nil {
 		t.Fatalf("Index first: %v", err)
 	}
-	if err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
+	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
 		SessionID: sess.ID, Source: "second",
 		Chunks: []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}, {Title: "b", Content: "y", ContentType: "prose"}},
 	}); err != nil {
@@ -176,7 +202,7 @@ func TestSourcesList_SessionIsolationWithinNamespace(t *testing.T) {
 	sessB := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 	ctx := context.Background()
 
-	if err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
+	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
 		SessionID: sessA.ID, Source: "in-a",
 		Chunks: []db.Chunk{{Title: "t", Content: "c", ContentType: "prose"}},
 	}); err != nil {

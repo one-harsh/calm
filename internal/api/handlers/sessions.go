@@ -55,6 +55,10 @@ func (h *Handlers) CreateSession(
 	if authClient := auth.ClientFromContext(ctx); authClient != "" {
 		if request.Body.Client != nil && *request.Body.Client != authClient {
 			detail := fmt.Sprintf("body client %q does not match authenticated client %q", *request.Body.Client, authClient)
+			h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.AuthzDenied).Warn("session create denied: body client does not match authenticated client",
+				obs.AuditInitiatorAPI,
+				logging.StringField("auth.actor_client", authClient),
+			)
 			return genapi.CreateSession400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse{
 				Error:  "client_mismatch",
 				Detail: &detail,
@@ -99,7 +103,9 @@ func (h *Handlers) CreateSession(
 	}
 
 	ctx = logging.Bind(ctx, obs.SessionID(sess.ID))
-	h.deps.Logger.WithContext(ctx).Debug("session created",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info("session created",
+		obs.AuditInitiatorAPI,
+		obs.Client(sess.Client),
 		logging.IntField("session.create.committed_ttl_minutes", sess.TTLMinutes),
 	)
 
@@ -148,7 +154,8 @@ func (h *Handlers) DeleteSession(
 	}
 
 	ctx = logging.Bind(ctx, obs.SessionID(result.ID))
-	h.deps.Logger.WithContext(ctx).Info("session closed",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceDelete).Info("session closed",
+		obs.AuditInitiatorAPI,
 		obs.CloseReasonExplicit,
 		logging.IntField("session.delete.cascaded_events", result.Cascaded.Events),
 		logging.IntField("session.delete.cascaded_sources", result.Cascaded.Sources),

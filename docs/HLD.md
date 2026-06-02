@@ -1128,6 +1128,14 @@ Errors and warnings:
 
 Session IDs in every relevant log entry make it possible to reconstruct the full history of a session from logs alone.
 
+### Audit events
+
+Security- and lifecycle-significant operations carry a structured audit marker so a compliance pipeline can filter them out of the log stream: authentication outcomes (success and failure), authorization denials, and the create/update/delete lifecycle of sessions, clients, sources, and events. Each marker identifies whether the action was request-driven or system-initiated (background jobs, bootstrap).
+
+Successful authentications are emitted at a verbose (debug) level, not as a standing always-on record: every request authenticates, and the per-request completion summary already carries the authenticated namespace and client, so a separate always-on success line would only duplicate it. The audit-tagged success event exists for deep traceability when verbose logging is enabled; authentication failures and authorization denials, which are rare and security-relevant, are always recorded.
+
+Namespace isolation is enforced as **invisibility** — cross-namespace access returns 404, indistinguishable from not-found — and is deliberately not surfaced as an authorization-denial event, since doing so would leak which namespaces hold which resources.
+
 ## Quality risk
 
 CALM's primary risk is not availability or cost — it's the possibility that filtering content saves tokens while quietly degrading the model's answers. A workload may never notice because the session runs faster and cheaper, but the model missed a critical detail that was filtered out or buried in a low-ranked chunk.

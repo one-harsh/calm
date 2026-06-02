@@ -113,7 +113,7 @@ func newCredentialedTestServer(t *testing.T) (apiClient *genapi.ClientWithRespon
 		nil,
 		map[string]bool{testCredentialedNamespace: true},
 	)
-	clientSvc := clientreg.New(env.store)
+	clientSvc := clientreg.New(env.store, logging.Nop())
 
 	sessionSvc := session.New(env.store, session.Config{CacheSize: 10_000})
 	handler, err := server.NewHandler(server.Config{

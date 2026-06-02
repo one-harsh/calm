@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	logging "github.com/one-harsh/context-logging"
 	"github.com/stretchr/testify/mock"
 
 	"github.com/one-harsh/calm/internal/db"
@@ -28,7 +29,7 @@ func newServiceHarness(t *testing.T) *serviceHarness {
 	dal := db.NewMockDAL(t)
 	clients := db.NewMockClientRepo(t)
 	dal.EXPECT().Clients().Return(clients).Maybe()
-	return &serviceHarness{svc: New(dal), dal: dal, clients: clients}
+	return &serviceHarness{svc: New(dal, logging.Nop()), dal: dal, clients: clients}
 }
 
 // ---------- List / CountSessions / Delete (proxies) ----------

@@ -31,11 +31,12 @@ type CredentialedRegisterResult struct {
 }
 
 type Service struct {
-	store db.DAL
+	store  db.DAL
+	logger *logging.Logger
 }
 
-func New(store db.DAL) *Service {
-	return &Service{store: store}
+func New(store db.DAL, logger *logging.Logger) *Service {
+	return &Service{store: store, logger: logger}
 }
 
 func (s *Service) List(ctx context.Context, namespace string) ([]db.ClientSummary, error) {
@@ -127,8 +128,14 @@ func (s *Service) SeedDefaults(ctx context.Context, namespaces []string) error {
 	clients := s.store.Clients()
 	for _, ns := range namespaces {
 		nsCtx := logging.Bind(ctx, obs.Namespace(ns), obs.Client(db.DefaultClient))
-		if _, err := clients.Register(nsCtx, ns, db.DefaultClient); err != nil {
+		created, err := clients.Register(nsCtx, ns, db.DefaultClient)
+		if err != nil {
 			return fmt.Errorf("%w: seed default client for namespace %q", err, ns)
+		}
+		if created {
+			s.logger.WithContext(nsCtx).WithAuditEvent(logging.ResourceCreate).Info("default client seeded",
+				obs.AuditInitiatorSystem,
+			)
 		}
 	}
 	return nil

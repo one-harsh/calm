@@ -25,21 +25,31 @@ func (_m *MockSourcesRepo) EXPECT() *MockSourcesRepo_Expecter {
 }
 
 // Index provides a mock function with given fields: ctx, namespace, in
-func (_m *MockSourcesRepo) Index(ctx context.Context, namespace string, in IndexInput) error {
+func (_m *MockSourcesRepo) Index(ctx context.Context, namespace string, in IndexInput) (bool, error) {
 	ret := _m.Called(ctx, namespace, in)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Index")
 	}
 
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, IndexInput) error); ok {
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, IndexInput) (bool, error)); ok {
+		return rf(ctx, namespace, in)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, IndexInput) bool); ok {
 		r0 = rf(ctx, namespace, in)
 	} else {
-		r0 = ret.Error(0)
+		r0 = ret.Get(0).(bool)
 	}
 
-	return r0
+	if rf, ok := ret.Get(1).(func(context.Context, string, IndexInput) error); ok {
+		r1 = rf(ctx, namespace, in)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // MockSourcesRepo_Index_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Index'
@@ -62,12 +72,12 @@ func (_c *MockSourcesRepo_Index_Call) Run(run func(ctx context.Context, namespac
 	return _c
 }
 
-func (_c *MockSourcesRepo_Index_Call) Return(_a0 error) *MockSourcesRepo_Index_Call {
-	_c.Call.Return(_a0)
+func (_c *MockSourcesRepo_Index_Call) Return(created bool, err error) *MockSourcesRepo_Index_Call {
+	_c.Call.Return(created, err)
 	return _c
 }
 
-func (_c *MockSourcesRepo_Index_Call) RunAndReturn(run func(context.Context, string, IndexInput) error) *MockSourcesRepo_Index_Call {
+func (_c *MockSourcesRepo_Index_Call) RunAndReturn(run func(context.Context, string, IndexInput) (bool, error)) *MockSourcesRepo_Index_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -27,16 +27,17 @@ func NewLogger(serviceName, version, environment, region, level, format string) 
 }
 
 const (
-	KeySessionID     = "session.id"
-	KeyNamespace     = "namespace"
-	KeyClient        = "client"
-	KeySource        = "source"
-	KeyMatchLayer    = "match_layer"
-	KeyEndpoint      = "endpoint"
-	KeyEventType     = "event_type"
-	KeyFormatHint    = "format_hint"
-	KeyCloseReason   = "close_reason"
-	KeyRateLimitTier = "ratelimit.tier"
+	KeySessionID      = "session.id"
+	KeyNamespace      = "namespace"
+	KeyClient         = "client"
+	KeySource         = "source"
+	KeyMatchLayer     = "match_layer"
+	KeyEndpoint       = "endpoint"
+	KeyEventType      = "event_type"
+	KeyFormatHint     = "format_hint"
+	KeyCloseReason    = "close_reason"
+	KeyRateLimitTier  = "ratelimit.tier"
+	KeyAuditInitiator = "audit_initiator"
 )
 
 var (
@@ -50,6 +51,9 @@ var (
 	RateLimitTierIP        = logging.StringField(KeyRateLimitTier, "ip")
 	RateLimitTierGlobal    = logging.StringField(KeyRateLimitTier, "global")
 	RateLimitTierNamespace = logging.StringField(KeyRateLimitTier, "namespace")
+
+	AuditInitiatorAPI    = logging.StringField(KeyAuditInitiator, "api")
+	AuditInitiatorSystem = logging.StringField(KeyAuditInitiator, "system")
 )
 
 // Safe to log everywhere — non-secret.

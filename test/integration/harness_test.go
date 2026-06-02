@@ -88,7 +88,7 @@ func bootstrap() (*harness, error) {
 		nil,
 		nil,
 	)
-	clientSvc := clientreg.New(store)
+	clientSvc := clientreg.New(store, logging.Nop())
 
 	// Match production behavior: seed the `default` client for each
 	// configured namespace at startup (cmd/calm/main.go does the same).

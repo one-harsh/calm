@@ -41,7 +41,7 @@ type EventsRepo interface {
 }
 
 type SourcesRepo interface {
-	Index(ctx context.Context, namespace string, in IndexInput) error
+	Index(ctx context.Context, namespace string, in IndexInput) (created bool, err error)
 	List(ctx context.Context, namespace string, sessionID int64) ([]SourceSummary, error)
 }
 

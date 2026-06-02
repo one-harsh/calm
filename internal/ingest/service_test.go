@@ -68,7 +68,7 @@ func newMockService(t *testing.T) (*Service, *db.MockSourcesRepo) {
 
 func TestIngest_HappyBuildsSummary(t *testing.T) {
 	svc, sources := newMockService(t)
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(nil).Once()
+	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(true, nil).Once()
 
 	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "alpha\n\nbeta"})
 	if err != nil {
@@ -89,12 +89,28 @@ func TestIngest_HappyBuildsSummary(t *testing.T) {
 	if res.DistinctiveTerms == nil || len(res.DistinctiveTerms) != 0 {
 		t.Errorf("DistinctiveTerms = %#v; want non-nil empty slice", res.DistinctiveTerms)
 	}
+	if !res.Created {
+		t.Error("Created = false; want true (Index reported a fresh insert)")
+	}
+}
+
+func TestIngest_ReindexReportsNotCreated(t *testing.T) {
+	svc, sources := newMockService(t)
+	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(false, nil).Once()
+
+	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "alpha"})
+	if err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if res.Created {
+		t.Error("Created = true; want false (Index reported an update)")
+	}
 }
 
 func TestIngest_EmptyContentIndexesNothing(t *testing.T) {
 	svc, sources := newMockService(t)
 	// Index is still called (clears prior content) even with zero chunks.
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(nil).Once()
+	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(true, nil).Once()
 
 	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "   "})
 	if err != nil {
@@ -113,7 +129,7 @@ func TestIngest_EmptyContentIndexesNothing(t *testing.T) {
 
 func TestIngest_TruncatesSummaryAt50(t *testing.T) {
 	svc, sources := newMockService(t)
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(nil).Once()
+	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(true, nil).Once()
 
 	var sb strings.Builder
 	for i := range 60 {
@@ -142,7 +158,7 @@ func TestIngest_TruncatesSummaryAt50(t *testing.T) {
 
 func TestIngest_DALErrorPropagates(t *testing.T) {
 	svc, sources := newMockService(t)
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(db.ErrSessionNotFound).Once()
+	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(false, db.ErrSessionNotFound).Once()
 
 	_, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "x", Content: "y"})
 	if !errors.Is(err, db.ErrSessionNotFound) {

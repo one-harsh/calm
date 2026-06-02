@@ -82,7 +82,12 @@ func (h *Handlers) Ingest(
 		summary[i] = genapi.SectionPreview{Title: sec.Title, Preview: &preview}
 	}
 
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info("content ingested",
+	auditEvent := logging.ResourceCreate
+	if !result.Created {
+		auditEvent = logging.ResourceUpdate
+	}
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(auditEvent).Info("content ingested",
+		obs.AuditInitiatorAPI,
 		obs.Source(in.Source),
 		logging.IntField("ingest.sections_indexed", result.SectionsIndexed),
 		logging.IntField("ingest.sections_total", result.SectionsTotal),
