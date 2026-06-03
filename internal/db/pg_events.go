@@ -85,17 +85,13 @@ func (r *eventsRepo) Read(ctx context.Context, namespace string, sessionID int64
 	if filter.MinPriority != 0 && (filter.MinPriority < 1 || filter.MinPriority > 4) {
 		return nil, ErrInvalidPriority
 	}
-	if err := verifySessionInNamespace(ctx, r.queryer, namespace, sessionID); err != nil {
-		return nil, err
-	}
-
 	limit := filter.Limit
 	if limit == 0 {
 		limit = defaultReadEventsLimit
 	}
 
-	clauses := []string{"session_id = $1"}
-	args := []any{sessionID}
+	clauses := []string{"session_id = $1", "EXISTS (SELECT 1 FROM sessions WHERE id = $1 AND namespace = $2)"}
+	args := []any{sessionID, namespace}
 	if len(filter.Types) > 0 {
 		args = append(args, filter.Types)
 		clauses = append(clauses, fmt.Sprintf("type = ANY($%d)", len(args)))
@@ -144,17 +140,15 @@ func (r *eventsRepo) Snapshot(ctx context.Context, namespace string, sessionID i
 	if namespace == "" {
 		return nil, ErrNamespaceRequired
 	}
-	if err := verifySessionInNamespace(ctx, r.queryer, namespace, sessionID); err != nil {
-		return nil, err
-	}
 
 	const query = `SELECT id, session_id, type, priority, data, created_at
 	               FROM session_events
 	               WHERE session_id = $1
+	                 AND EXISTS (SELECT 1 FROM sessions WHERE id = $1 AND namespace = $3)
 	               ORDER BY priority ASC, created_at DESC
 	               LIMIT $2`
 
-	rows, err := r.queryer.QueryContext(ctx, query, sessionID, snapshotRowCap)
+	rows, err := r.queryer.QueryContext(ctx, query, sessionID, snapshotRowCap, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("%w: snapshot events for session %d in %q: %w",
 			ErrStorageBackend, sessionID, namespace, err)
@@ -191,18 +185,4 @@ func HashEventPayload(eventType string, data []byte) []byte {
 	h.Write(lenBuf[:])
 	h.Write(data)
 	return h.Sum(nil)
-}
-
-func verifySessionInNamespace(ctx context.Context, q queryer, namespace string, sessionID int64) error {
-	var exists bool
-	if err := q.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND namespace = $2)`,
-		sessionID, namespace,
-	).Scan(&exists); err != nil {
-		return fmt.Errorf("%w: verify session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
-	}
-	if !exists {
-		return ErrSessionNotFound
-	}
-	return nil
 }

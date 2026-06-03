@@ -16,6 +16,7 @@ packages:
       SessionRepo:
       EventsRepo:
       SourcesRepo:
+      ChunksRepo:
       DAL:
   github.com/one-harsh/calm/internal/secrets:
     interfaces:

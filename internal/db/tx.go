@@ -46,26 +46,17 @@ type Repos struct {
 	Sessions SessionRepo
 	Events   EventsRepo
 	Sources  SourcesRepo
+	Chunks   ChunksRepo
 }
 
-// WithTx executes fn inside a single transaction shared across both repos.
 func (s *Store) WithTx(ctx context.Context, fn func(Repos) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("%w: begin tx: %w", ErrStorageBackend, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	repos := Repos{
-		Clients:  &clientRepo{queryer: tx, logger: s.logger},
-		Sessions: &sessionRepo{queryer: tx, logger: s.logger},
-		Events:   &eventsRepo{queryer: tx, logger: s.logger},
-		Sources:  &sourcesRepo{queryer: tx, logger: s.logger},
-	}
-	if err := fn(repos); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("%w: commit tx: %w", ErrStorageBackend, err)
-	}
-	return nil
+	return inTx(ctx, s.db, func(tx *sql.Tx) error {
+		return fn(Repos{
+			Clients:  &clientRepo{queryer: tx, logger: s.logger},
+			Sessions: &sessionRepo{queryer: tx, logger: s.logger},
+			Events:   &eventsRepo{queryer: tx, logger: s.logger},
+			Sources:  &sourcesRepo{queryer: tx, logger: s.logger},
+			Chunks:   &chunksRepo{queryer: tx, logger: s.logger},
+		})
+	})
 }

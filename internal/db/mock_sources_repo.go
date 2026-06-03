@@ -24,64 +24,6 @@ func (_m *MockSourcesRepo) EXPECT() *MockSourcesRepo_Expecter {
 	return &MockSourcesRepo_Expecter{mock: &_m.Mock}
 }
 
-// Index provides a mock function with given fields: ctx, namespace, in
-func (_m *MockSourcesRepo) Index(ctx context.Context, namespace string, in IndexInput) (bool, error) {
-	ret := _m.Called(ctx, namespace, in)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Index")
-	}
-
-	var r0 bool
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, IndexInput) (bool, error)); ok {
-		return rf(ctx, namespace, in)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, IndexInput) bool); ok {
-		r0 = rf(ctx, namespace, in)
-	} else {
-		r0 = ret.Get(0).(bool)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, IndexInput) error); ok {
-		r1 = rf(ctx, namespace, in)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockSourcesRepo_Index_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Index'
-type MockSourcesRepo_Index_Call struct {
-	*mock.Call
-}
-
-// Index is a helper method to define mock.On call
-//   - ctx context.Context
-//   - namespace string
-//   - in IndexInput
-func (_e *MockSourcesRepo_Expecter) Index(ctx interface{}, namespace interface{}, in interface{}) *MockSourcesRepo_Index_Call {
-	return &MockSourcesRepo_Index_Call{Call: _e.mock.On("Index", ctx, namespace, in)}
-}
-
-func (_c *MockSourcesRepo_Index_Call) Run(run func(ctx context.Context, namespace string, in IndexInput)) *MockSourcesRepo_Index_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(IndexInput))
-	})
-	return _c
-}
-
-func (_c *MockSourcesRepo_Index_Call) Return(created bool, err error) *MockSourcesRepo_Index_Call {
-	_c.Call.Return(created, err)
-	return _c
-}
-
-func (_c *MockSourcesRepo_Index_Call) RunAndReturn(run func(context.Context, string, IndexInput) (bool, error)) *MockSourcesRepo_Index_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // List provides a mock function with given fields: ctx, namespace, sessionID
 func (_m *MockSourcesRepo) List(ctx context.Context, namespace string, sessionID int64) ([]SourceSummary, error) {
 	ret := _m.Called(ctx, namespace, sessionID)
@@ -198,6 +140,72 @@ func (_c *MockSourcesRepo_Search_Call) Return(_a0 []SearchResult, _a1 error) *Mo
 }
 
 func (_c *MockSourcesRepo_Search_Call) RunAndReturn(run func(context.Context, string, SearchInput) ([]SearchResult, error)) *MockSourcesRepo_Search_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Upsert provides a mock function with given fields: ctx, namespace, sessionID, source
+func (_m *MockSourcesRepo) Upsert(ctx context.Context, namespace string, sessionID int64, source string) (int64, bool, error) {
+	ret := _m.Called(ctx, namespace, sessionID, source)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Upsert")
+	}
+
+	var r0 int64
+	var r1 bool
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64, string) (int64, bool, error)); ok {
+		return rf(ctx, namespace, sessionID, source)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64, string) int64); ok {
+		r0 = rf(ctx, namespace, sessionID, source)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, int64, string) bool); ok {
+		r1 = rf(ctx, namespace, sessionID, source)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, string, int64, string) error); ok {
+		r2 = rf(ctx, namespace, sessionID, source)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// MockSourcesRepo_Upsert_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Upsert'
+type MockSourcesRepo_Upsert_Call struct {
+	*mock.Call
+}
+
+// Upsert is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - sessionID int64
+//   - source string
+func (_e *MockSourcesRepo_Expecter) Upsert(ctx interface{}, namespace interface{}, sessionID interface{}, source interface{}) *MockSourcesRepo_Upsert_Call {
+	return &MockSourcesRepo_Upsert_Call{Call: _e.mock.On("Upsert", ctx, namespace, sessionID, source)}
+}
+
+func (_c *MockSourcesRepo_Upsert_Call) Run(run func(ctx context.Context, namespace string, sessionID int64, source string)) *MockSourcesRepo_Upsert_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(int64), args[3].(string))
+	})
+	return _c
+}
+
+func (_c *MockSourcesRepo_Upsert_Call) Return(sourceID int64, created bool, err error) *MockSourcesRepo_Upsert_Call {
+	_c.Call.Return(sourceID, created, err)
+	return _c
+}
+
+func (_c *MockSourcesRepo_Upsert_Call) RunAndReturn(run func(context.Context, string, int64, string) (int64, bool, error)) *MockSourcesRepo_Upsert_Call {
 	_c.Call.Return(run)
 	return _c
 }

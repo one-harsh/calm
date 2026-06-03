@@ -14,23 +14,13 @@ import (
 
 func seedSearchCorpus(t *testing.T, store *db.Store, namespace string, sessionID int64) {
 	t.Helper()
-	if _, err := store.Sources().Index(context.Background(), namespace, db.IndexInput{
-		SessionID: sessionID, Source: "build.log",
-		Chunks: []db.Chunk{
-			{Title: "compile step", Content: "the build failed with a fatal linker error", ContentType: "prose"},
-			{Title: "test step", Content: "all unit tests passed cleanly", ContentType: "prose"},
-		},
-	}); err != nil {
-		t.Fatalf("Index build.log: %v", err)
-	}
-	if _, err := store.Sources().Index(context.Background(), namespace, db.IndexInput{
-		SessionID: sessionID, Source: "main.go",
-		Chunks: []db.Chunk{
-			{Title: "handler", Content: "func handleLinkerError() { return }", ContentType: "code"},
-		},
-	}); err != nil {
-		t.Fatalf("Index main.go: %v", err)
-	}
+	seedIndexedSource(t, store, namespace, sessionID, "build.log", []db.Chunk{
+		{Title: "compile step", Content: "the build failed with a fatal linker error", ContentType: "prose"},
+		{Title: "test step", Content: "all unit tests passed cleanly", ContentType: "prose"},
+	})
+	seedIndexedSource(t, store, namespace, sessionID, "main.go", []db.Chunk{
+		{Title: "handler", Content: "func handleLinkerError() { return }", ContentType: "code"},
+	})
 }
 
 func TestSearch_MatchInContentReturnsHitWithSnippet(t *testing.T) {
@@ -68,12 +58,8 @@ func TestSearch_MatchInTitleOnly(t *testing.T) {
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
-	if _, err := store.Sources().Index(context.Background(), "ns-a", db.IndexInput{
-		SessionID: sess.ID, Source: "s",
-		Chunks: []db.Chunk{{Title: "deployment guide", Content: "step one is to provision the cluster", ContentType: "prose"}},
-	}); err != nil {
-		t.Fatalf("Index: %v", err)
-	}
+	seedIndexedSource(t, store, "ns-a", sess.ID, "s",
+		[]db.Chunk{{Title: "deployment guide", Content: "step one is to provision the cluster", ContentType: "prose"}})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
 		SessionID: sess.ID, Queries: []string{"deployment"},
@@ -122,11 +108,7 @@ func TestSearch_LimitCapsHits(t *testing.T) {
 	for i := range chunks {
 		chunks[i] = db.Chunk{Title: "t", Content: "needle in the haystack", ContentType: "prose"}
 	}
-	if _, err := store.Sources().Index(context.Background(), "ns-a", db.IndexInput{
-		SessionID: sess.ID, Source: "s", Chunks: chunks,
-	}); err != nil {
-		t.Fatalf("Index: %v", err)
-	}
+	seedIndexedSource(t, store, "ns-a", sess.ID, "s", chunks)
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
 		SessionID: sess.ID, Queries: []string{"needle"}, Limit: 2,
@@ -166,18 +148,21 @@ func TestSearch_MultiQueryResultsPerQueryInOrder(t *testing.T) {
 	}
 }
 
-func TestSearch_CrossNamespaceMapsToNotFound(t *testing.T) {
+func TestSearch_CrossNamespaceIsInvisible(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 	seedSearchCorpus(t, store, "ns-a", sess.ID)
 
-	_, err := store.Sources().Search(context.Background(), "ns-b", db.SearchInput{
+	got, err := store.Sources().Search(context.Background(), "ns-b", db.SearchInput{
 		SessionID: sess.ID, Queries: []string{"linker"},
 	})
-	if !errors.Is(err, db.ErrSessionNotFound) {
-		t.Fatalf("err = %v; want ErrSessionNotFound", err)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Hits) != 0 {
+		t.Fatalf("results = %+v; want one query result with zero hits (invisibility)", got)
 	}
 }
 

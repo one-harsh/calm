@@ -274,7 +274,7 @@ func TestReadEvents_EmptyNamespaceRejects(t *testing.T) {
 	}
 }
 
-func TestReadEvents_CrossNamespaceSessionMapsToNotFound(t *testing.T) {
+func TestReadEvents_CrossNamespaceSessionIsInvisible(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -283,9 +283,12 @@ func TestReadEvents_CrossNamespaceSessionMapsToNotFound(t *testing.T) {
 	sessA := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 	seedEvent(t, sqlDB, sessA.ID, "leak", 1, []byte(`{}`))
 
-	_, err := store.Events().Read(context.Background(), "ns-b", sessA.ID, db.EventFilter{})
-	if !errors.Is(err, db.ErrSessionNotFound) {
-		t.Errorf("err = %v; want ErrSessionNotFound", err)
+	got, err := store.Events().Read(context.Background(), "ns-b", sessA.ID, db.EventFilter{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d events; want 0 (invisibility)", len(got))
 	}
 }
 

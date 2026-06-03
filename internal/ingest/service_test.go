@@ -58,17 +58,38 @@ func TestChunk_HonorsContentTypeHint(t *testing.T) {
 	}
 }
 
-func newMockService(t *testing.T) (*Service, *db.MockSourcesRepo) {
+type ingestMocks struct {
+	sources *db.MockSourcesRepo
+	chunks  *db.MockChunksRepo
+}
+
+// newMockService wires the service over a MockDAL whose WithTx invokes the
+// closure with mock repos, so tests set expectations on the composed ops.
+func newMockService(t *testing.T) (*Service, ingestMocks) {
 	t.Helper()
-	sources := db.NewMockSourcesRepo(t)
+	m := ingestMocks{
+		sources: db.NewMockSourcesRepo(t),
+		chunks:  db.NewMockChunksRepo(t),
+	}
 	dal := db.NewMockDAL(t)
-	dal.EXPECT().Sources().Return(sources)
-	return New(dal), sources
+	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, fn func(db.Repos) error) error {
+			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks})
+		}).Maybe()
+	return New(dal), m
+}
+
+// expectIndex sets the happy-path WithTx composition: upsert (namespace-scoped) →
+// delete → insert. Insert is always called (it no-ops on empty content).
+func (m ingestMocks) expectIndex(sessionID int64, source string, created bool) {
+	m.sources.EXPECT().Upsert(mock.Anything, "ns-a", sessionID, source).Return(int64(7), created, nil).Once()
+	m.chunks.EXPECT().DeleteForSource(mock.Anything, int64(7)).Return(nil).Once()
+	m.chunks.EXPECT().Insert(mock.Anything, int64(7), mock.Anything).Return(nil).Once()
 }
 
 func TestIngest_HappyBuildsSummary(t *testing.T) {
-	svc, sources := newMockService(t)
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(true, nil).Once()
+	svc, m := newMockService(t)
+	m.expectIndex(1, "out", true)
 
 	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "alpha\n\nbeta"})
 	if err != nil {
@@ -90,27 +111,27 @@ func TestIngest_HappyBuildsSummary(t *testing.T) {
 		t.Errorf("DistinctiveTerms = %#v; want non-nil empty slice", res.DistinctiveTerms)
 	}
 	if !res.Created {
-		t.Error("Created = false; want true (Index reported a fresh insert)")
+		t.Error("Created = false; want true (Upsert reported a fresh insert)")
 	}
 }
 
 func TestIngest_ReindexReportsNotCreated(t *testing.T) {
-	svc, sources := newMockService(t)
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(false, nil).Once()
+	svc, m := newMockService(t)
+	m.expectIndex(1, "out", false)
 
 	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "alpha"})
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
 	if res.Created {
-		t.Error("Created = true; want false (Index reported an update)")
+		t.Error("Created = true; want false (Upsert reported an update)")
 	}
 }
 
 func TestIngest_EmptyContentIndexesNothing(t *testing.T) {
-	svc, sources := newMockService(t)
-	// Index is still called (clears prior content) even with zero chunks.
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(true, nil).Once()
+	svc, m := newMockService(t)
+	// DeleteForSource is still called (clears prior content); Insert no-ops on zero chunks.
+	m.expectIndex(1, "out", true)
 
 	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "   "})
 	if err != nil {
@@ -128,8 +149,8 @@ func TestIngest_EmptyContentIndexesNothing(t *testing.T) {
 }
 
 func TestIngest_TruncatesSummaryAt50(t *testing.T) {
-	svc, sources := newMockService(t)
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(true, nil).Once()
+	svc, m := newMockService(t)
+	m.expectIndex(1, "big", true)
 
 	var sb strings.Builder
 	for i := range 60 {
@@ -156,9 +177,17 @@ func TestIngest_TruncatesSummaryAt50(t *testing.T) {
 	}
 }
 
-func TestIngest_DALErrorPropagates(t *testing.T) {
-	svc, sources := newMockService(t)
-	sources.EXPECT().Index(mock.Anything, "ns-a", mock.Anything).Return(false, db.ErrSessionNotFound).Once()
+func TestIngest_EmptySourceRejected(t *testing.T) {
+	svc, _ := newMockService(t) // WithTx must NOT be reached
+	_, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "", Content: "y"})
+	if !errors.Is(err, db.ErrSourceRequired) {
+		t.Fatalf("err = %v; want ErrSourceRequired", err)
+	}
+}
+
+func TestIngest_SessionNotFoundPropagates(t *testing.T) {
+	svc, m := newMockService(t)
+	m.sources.EXPECT().Upsert(mock.Anything, "ns-a", int64(1), "x").Return(int64(0), false, db.ErrSessionNotFound).Once()
 
 	_, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "x", Content: "y"})
 	if !errors.Is(err, db.ErrSessionNotFound) {

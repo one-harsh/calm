@@ -24,6 +24,53 @@ func (_m *MockDAL) EXPECT() *MockDAL_Expecter {
 	return &MockDAL_Expecter{mock: &_m.Mock}
 }
 
+// Chunks provides a mock function with no fields
+func (_m *MockDAL) Chunks() ChunksRepo {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Chunks")
+	}
+
+	var r0 ChunksRepo
+	if rf, ok := ret.Get(0).(func() ChunksRepo); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(ChunksRepo)
+		}
+	}
+
+	return r0
+}
+
+// MockDAL_Chunks_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Chunks'
+type MockDAL_Chunks_Call struct {
+	*mock.Call
+}
+
+// Chunks is a helper method to define mock.On call
+func (_e *MockDAL_Expecter) Chunks() *MockDAL_Chunks_Call {
+	return &MockDAL_Chunks_Call{Call: _e.mock.On("Chunks")}
+}
+
+func (_c *MockDAL_Chunks_Call) Run(run func()) *MockDAL_Chunks_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockDAL_Chunks_Call) Return(_a0 ChunksRepo) *MockDAL_Chunks_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockDAL_Chunks_Call) RunAndReturn(run func() ChunksRepo) *MockDAL_Chunks_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Clients provides a mock function with no fields
 func (_m *MockDAL) Clients() ClientRepo {
 	ret := _m.Called()

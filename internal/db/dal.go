@@ -41,9 +41,14 @@ type EventsRepo interface {
 }
 
 type SourcesRepo interface {
-	Index(ctx context.Context, namespace string, in IndexInput) (created bool, err error)
+	Upsert(ctx context.Context, namespace string, sessionID int64, source string) (sourceID int64, created bool, err error)
 	List(ctx context.Context, namespace string, sessionID int64) ([]SourceSummary, error)
 	Search(ctx context.Context, namespace string, in SearchInput) ([]SearchResult, error)
+}
+
+type ChunksRepo interface {
+	DeleteForSource(ctx context.Context, sourceID int64) error
+	Insert(ctx context.Context, sourceID int64, chunks []Chunk) error
 }
 
 type DAL interface {
@@ -51,6 +56,7 @@ type DAL interface {
 	Sessions() SessionRepo
 	Events() EventsRepo
 	Sources() SourcesRepo
+	Chunks() ChunksRepo
 	WithTx(ctx context.Context, fn func(Repos) error) error
 }
 
@@ -59,5 +65,6 @@ var (
 	_ SessionRepo = (*sessionRepo)(nil)
 	_ EventsRepo  = (*eventsRepo)(nil)
 	_ SourcesRepo = (*sourcesRepo)(nil)
+	_ ChunksRepo  = (*chunksRepo)(nil)
 	_ DAL         = (*Store)(nil)
 )

@@ -5,7 +5,6 @@ package integration
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -57,16 +56,20 @@ func TestSnapshot_OrdersByPriorityThenRecency(t *testing.T) {
 	}
 }
 
-func TestSnapshot_CrossNamespaceMapsToNotFound(t *testing.T) {
+func TestSnapshot_CrossNamespaceIsInvisible(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	seedEvent(t, sqlDB, sess.ID, "leak", 1, []byte(`{}`))
 
-	_, err := store.Events().Snapshot(context.Background(), "ns-b", sess.ID)
-	if !errors.Is(err, db.ErrSessionNotFound) {
-		t.Fatalf("err = %v; want ErrSessionNotFound", err)
+	got, err := store.Events().Snapshot(context.Background(), "ns-b", sess.ID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d events; want 0 (invisibility)", len(got))
 	}
 }
 

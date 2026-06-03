@@ -21,6 +21,23 @@ type sessionRepo struct {
 	logger  *logging.Logger
 }
 
+// verifySessionInNamespace is a transitional namespace-isolation shim. The
+// canonical pattern folds namespace into the data statement (child tables join up
+// to sessions); its sole remaining caller is eventsRepo.Write, pending migration.
+func verifySessionInNamespace(ctx context.Context, q queryer, namespace string, sessionID int64) error {
+	var exists bool
+	if err := q.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND namespace = $2)`,
+		sessionID, namespace,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("%w: verify session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
+	}
+	if !exists {
+		return ErrSessionNotFound
+	}
+	return nil
+}
+
 func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 	if sess.Namespace == "" {
 		return ErrNamespaceRequired

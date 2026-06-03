@@ -12,132 +12,93 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 )
 
-func TestSourcesIndex_PersistsSourceAndChunks(t *testing.T) {
+func TestSourcesUpsert_ReportsCreatedThenUpdated(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	ctx := context.Background()
 
-	_, err := store.Sources().Index(context.Background(), "ns-a", db.IndexInput{
-		SessionID: sess.ID, Source: "build.log",
-		Chunks: []db.Chunk{
-			{Title: "a", Content: "alpha", ContentType: "prose"},
-			{Title: "b", Content: "beta", ContentType: "prose"},
-		},
-	})
+	id, created, err := store.Sources().Upsert(ctx, "ns-a", sess.ID, "s")
 	if err != nil {
-		t.Fatalf("Index: %v", err)
-	}
-
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sources WHERE session_id = $1`, sess.ID); n != 1 {
-		t.Errorf("sources = %d; want 1", n)
-	}
-	if n := countRows(t, sqlDB,
-		`SELECT COUNT(*) FROM chunks c JOIN sources s ON c.source_id = s.id WHERE s.session_id = $1`, sess.ID); n != 2 {
-		t.Errorf("chunks = %d; want 2", n)
-	}
-}
-
-func TestSourcesIndex_IdempotentReingestReplaces(t *testing.T) {
-	store, sqlDB, teardown := openConcreteStore(t)
-	defer teardown()
-
-	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
-	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
-	ctx := context.Background()
-
-	mustIndex := func(chunks []db.Chunk) {
-		if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{SessionID: sess.ID, Source: "s", Chunks: chunks}); err != nil {
-			t.Fatalf("Index: %v", err)
-		}
-	}
-	mustIndex([]db.Chunk{
-		{Title: "old1", Content: "x", ContentType: "prose"},
-		{Title: "old2", Content: "y", ContentType: "prose"},
-	})
-	mustIndex([]db.Chunk{{Title: "new1", Content: "z", ContentType: "prose"}})
-
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sources WHERE session_id = $1`, sess.ID); n != 1 {
-		t.Errorf("sources = %d; want 1 (re-ingest reuses the row)", n)
-	}
-	if n := countRows(t, sqlDB,
-		`SELECT COUNT(*) FROM chunks c JOIN sources s ON c.source_id = s.id WHERE s.session_id = $1`, sess.ID); n != 1 {
-		t.Errorf("chunks = %d; want 1 (old chunks replaced)", n)
-	}
-	if n := countRows(t, sqlDB,
-		`SELECT COUNT(*) FROM chunks c JOIN sources s ON c.source_id = s.id WHERE s.session_id = $1 AND c.title = 'new1'`, sess.ID); n != 1 {
-		t.Error("want the new chunk present after re-ingest")
-	}
-}
-
-func TestSourcesIndex_EmptyChunksClearsContent(t *testing.T) {
-	store, sqlDB, teardown := openConcreteStore(t)
-	defer teardown()
-
-	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
-	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
-	ctx := context.Background()
-
-	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
-		SessionID: sess.ID, Source: "s",
-		Chunks: []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}},
-	}); err != nil {
-		t.Fatalf("Index: %v", err)
-	}
-	// Re-ingest with no chunks clears content but keeps the source row.
-	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{SessionID: sess.ID, Source: "s", Chunks: nil}); err != nil {
-		t.Fatalf("Index empty: %v", err)
-	}
-
-	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM sources WHERE session_id = $1`, sess.ID); n != 1 {
-		t.Errorf("sources = %d; want 1 (source row preserved)", n)
-	}
-	if n := countRows(t, sqlDB,
-		`SELECT COUNT(*) FROM chunks c JOIN sources s ON c.source_id = s.id WHERE s.session_id = $1`, sess.ID); n != 0 {
-		t.Errorf("chunks = %d; want 0 after empty re-ingest", n)
-	}
-}
-
-func TestSourcesIndex_ReportsCreatedThenUpdated(t *testing.T) {
-	store, sqlDB, teardown := openConcreteStore(t)
-	defer teardown()
-
-	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
-	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
-	ctx := context.Background()
-	in := db.IndexInput{SessionID: sess.ID, Source: "s", Chunks: []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}}}
-
-	created, err := store.Sources().Index(ctx, "ns-a", in)
-	if err != nil {
-		t.Fatalf("first Index: %v", err)
+		t.Fatalf("first Upsert: %v", err)
 	}
 	if !created {
-		t.Error("first index of a source: created = false; want true")
+		t.Error("first upsert: created = false; want true")
 	}
-
-	created, err = store.Sources().Index(ctx, "ns-a", in)
+	id2, created, err := store.Sources().Upsert(ctx, "ns-a", sess.ID, "s")
 	if err != nil {
-		t.Fatalf("re-Index: %v", err)
+		t.Fatalf("re-Upsert: %v", err)
 	}
 	if created {
-		t.Error("re-index of the same source: created = true; want false")
+		t.Error("re-upsert: created = true; want false")
+	}
+	if id != id2 {
+		t.Errorf("re-upsert returned id %d; want stable %d", id2, id)
 	}
 }
 
-func TestSourcesIndex_CrossNamespaceMapsToNotFound(t *testing.T) {
+func TestSourcesUpsert_UnknownSessionMapsToNotFound(t *testing.T) {
+	store, _, teardown := openConcreteStore(t)
+	defer teardown()
+
+	_, _, err := store.Sources().Upsert(context.Background(), "ns-a", 999999, "s")
+	if !errors.Is(err, db.ErrSessionNotFound) {
+		t.Fatalf("err = %v; want ErrSessionNotFound (no matching session row)", err)
+	}
+}
+
+func TestSourcesUpsert_CrossNamespaceMapsToNotFound(t *testing.T) {
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 
-	_, err := store.Sources().Index(context.Background(), "ns-b", db.IndexInput{
-		SessionID: sess.ID, Source: "s",
-		Chunks: []db.Chunk{{Title: "t", Content: "c", ContentType: "prose"}},
-	})
+	_, _, err := store.Sources().Upsert(context.Background(), "ns-b", sess.ID, "s")
 	if !errors.Is(err, db.ErrSessionNotFound) {
 		t.Fatalf("err = %v; want ErrSessionNotFound", err)
+	}
+}
+
+func TestChunks_InsertAndDeleteForSource(t *testing.T) {
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	ctx := context.Background()
+
+	id, _, err := store.Sources().Upsert(ctx, "ns-a", sess.ID, "s")
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	if err := store.Chunks().Insert(ctx, id, []db.Chunk{
+		{Title: "a", Content: "alpha", ContentType: "prose"},
+		{Title: "b", Content: "beta", ContentType: "prose"},
+	}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM chunks WHERE source_id = $1`, id); n != 2 {
+		t.Errorf("chunks = %d; want 2", n)
+	}
+
+	// Insert with an empty slice is a no-op.
+	if err := store.Chunks().Insert(ctx, id, nil); err != nil {
+		t.Fatalf("Insert (empty): %v", err)
+	}
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM chunks WHERE source_id = $1`, id); n != 2 {
+		t.Errorf("chunks = %d after empty insert; want 2 unchanged", n)
+	}
+
+	// DeleteForSource clears the source's chunks.
+	if err := store.Chunks().DeleteForSource(ctx, id); err != nil {
+		t.Fatalf("DeleteForSource: %v", err)
+	}
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM chunks WHERE source_id = $1`, id); n != 0 {
+		t.Errorf("chunks = %d; want 0 after DeleteForSource", n)
 	}
 }
 
@@ -157,18 +118,11 @@ func TestSourcesList_OrdersByIndexedAtDescWithChunkCounts(t *testing.T) {
 		t.Errorf("empty session List = %+v; want none", got)
 	}
 
-	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
-		SessionID: sess.ID, Source: "first",
-		Chunks: []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}},
-	}); err != nil {
-		t.Fatalf("Index first: %v", err)
-	}
-	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
-		SessionID: sess.ID, Source: "second",
-		Chunks: []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}, {Title: "b", Content: "y", ContentType: "prose"}},
-	}); err != nil {
-		t.Fatalf("Index second: %v", err)
-	}
+	seedIndexedSource(t, store, "ns-a", sess.ID, "first", []db.Chunk{{Title: "a", Content: "x", ContentType: "prose"}})
+	seedIndexedSource(t, store, "ns-a", sess.ID, "second", []db.Chunk{
+		{Title: "a", Content: "x", ContentType: "prose"},
+		{Title: "b", Content: "y", ContentType: "prose"},
+	})
 	// Pin indexed_at so the DESC ordering assertion is deterministic.
 	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
 	if _, err := sqlDB.ExecContext(ctx, `UPDATE sources SET indexed_at = $2 WHERE session_id = $1 AND label = 'first'`, sess.ID, t0); err != nil {
@@ -200,16 +154,10 @@ func TestSourcesList_SessionIsolationWithinNamespace(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sessA := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 	sessB := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
-	ctx := context.Background()
 
-	if _, err := store.Sources().Index(ctx, "ns-a", db.IndexInput{
-		SessionID: sessA.ID, Source: "in-a",
-		Chunks: []db.Chunk{{Title: "t", Content: "c", ContentType: "prose"}},
-	}); err != nil {
-		t.Fatalf("Index: %v", err)
-	}
+	seedIndexedSource(t, store, "ns-a", sessA.ID, "in-a", []db.Chunk{{Title: "t", Content: "c", ContentType: "prose"}})
 
-	got, err := store.Sources().List(ctx, "ns-a", sessB.ID)
+	got, err := store.Sources().List(context.Background(), "ns-a", sessB.ID)
 	if err != nil {
 		t.Fatalf("List B: %v", err)
 	}

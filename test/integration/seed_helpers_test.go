@@ -18,6 +18,26 @@ import (
 // Fixture helpers. Each takes the sibling *sql.DB (not the under-test *db.Store)
 // so tests bypass the surface they're verifying.
 
+// seedIndexedSource indexes a source + chunks via the DAL transaction primitives
+// (Upsert + DeleteForSource + Insert inside WithTx), mirroring how ingest.Service
+// writes.
+func seedIndexedSource(t *testing.T, store *db.Store, namespace string, sessionID int64, source string, chunks []db.Chunk) {
+	t.Helper()
+	err := store.WithTx(context.Background(), func(r db.Repos) error {
+		id, _, err := r.Sources.Upsert(context.Background(), namespace, sessionID, source)
+		if err != nil {
+			return err
+		}
+		if err := r.Chunks.DeleteForSource(context.Background(), id); err != nil {
+			return err
+		}
+		return r.Chunks.Insert(context.Background(), id, chunks)
+	})
+	if err != nil {
+		t.Fatalf("seedIndexedSource(%q): %v", source, err)
+	}
+}
+
 // seededSession carries the surrogate id of a freshly-seeded session plus the
 // raw session_token a test can present to handler/service-level entry points
 // that authenticate by token. Tests that only need the FK target use .ID;

@@ -45,11 +45,23 @@ type Result struct {
 }
 
 func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64, in Input) (Result, error) {
+	if in.Source == "" {
+		return Result{}, db.ErrSourceRequired
+	}
 	chunks := chunk(in.Source, in.Content, in.Format, in.ContentType)
-	created, err := s.store.Sources().Index(ctx, namespace, db.IndexInput{
-		SessionID: sessionID,
-		Source:    in.Source,
-		Chunks:    chunks,
+
+	var created bool
+	err := s.store.WithTx(ctx, func(r db.Repos) error {
+		srcID, c, err := r.Sources.Upsert(ctx, namespace, sessionID, in.Source)
+		if err != nil {
+			return err
+		}
+		created = c
+		if err := r.Chunks.DeleteForSource(ctx, srcID); err != nil {
+			return err
+		}
+		// Empty content is valid: the delete above leaves the source with no chunks.
+		return r.Chunks.Insert(ctx, srcID, chunks)
 	})
 	if err != nil {
 		return Result{}, err
