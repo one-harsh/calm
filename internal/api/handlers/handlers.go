@@ -33,6 +33,7 @@ type Deps struct {
 	Events   db.EventsRepo
 	Snapshot *snapshot.Service
 	Ingest   *ingest.Service
+	Sources  db.SourcesRepo
 	Cfg      HandlersConfig
 }
 

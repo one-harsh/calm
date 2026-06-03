@@ -105,6 +105,7 @@ func run() error {
 			Events:   store.Events(),
 			Snapshot: snapshotSvc,
 			Ingest:   ingestSvc,
+			Sources:  store.Sources(),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: cfg.Sessions.DefaultTTLMinutes,
 				MaxTTLMinutes:     cfg.Sessions.MaxTTLMinutes,

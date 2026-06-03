@@ -125,6 +125,7 @@ func bootstrap() (*harness, error) {
 			Events:   store.Events(),
 			Snapshot: snapshotSvc,
 			Ingest:   ingestSvc,
+			Sources:  store.Sources(),
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,

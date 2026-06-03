@@ -722,11 +722,18 @@ components:
       required: [results]
       properties:
         results:
-          type: object
-          additionalProperties:
-            type: array
-            items: { $ref: '#/components/schemas/SearchHit' }
-          description: Map of query string → ranked hits.
+          type: array
+          items: { $ref: '#/components/schemas/QuerySearchResult' }
+          description: Ranked hits per query, in the order the queries were submitted.
+
+    QuerySearchResult:
+      type: object
+      required: [query, hits]
+      properties:
+        query: { type: string }
+        hits:
+          type: array
+          items: { $ref: '#/components/schemas/SearchHit' }
 
     EventInput:
       type: object

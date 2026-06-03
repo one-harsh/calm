@@ -572,26 +572,34 @@ Returns exact indexed text with smart snippets around matching terms. The multi-
 
 Search is not scoped by `content_type`. A session that has indexed a mix of prose and code chunks (e.g., a coding-agent run that ingested both API docs and source files) gets results from both tokenization paths in one ranked list — the layer-1 query runs against both the prose and code FTS indexes and the two rankings are fused (see [§7](#7-data-model--storage) for the fusion mechanics). The workload sees a single result list and does not need to know which tokenizer matched.
 
+`results` is an ordered array with one entry per query, in the order the queries were submitted; each entry pairs the `query` with its ranked `hits`. (An array rather than a query-keyed object preserves request order, tolerates duplicate queries, and leaves room to attach per-query metadata without a breaking change.)
+
 ```json
 {
-  "results": {
-    "connection timeout": [
-      {
-        "title": "Connection Pool Exhaustion",
-        "snippet": "<excerpt around matching terms>",
-        "source": "web-search-results",
-        "match_layer": "primary"
-      }
-    ],
-    "retry configuration": [
-      {
-        "title": "Retry Backoff Errors",
-        "snippet": "<excerpt around matching terms>",
-        "source": "web-search-results",
-        "match_layer": "trigram"
-      }
-    ]
-  }
+  "results": [
+    {
+      "query": "connection timeout",
+      "hits": [
+        {
+          "title": "Connection Pool Exhaustion",
+          "snippet": "<excerpt around matching terms>",
+          "source": "web-search-results",
+          "match_layer": "primary"
+        }
+      ]
+    },
+    {
+      "query": "retry configuration",
+      "hits": [
+        {
+          "title": "Retry Backoff Errors",
+          "snippet": "<excerpt around matching terms>",
+          "source": "web-search-results",
+          "match_layer": "trigram"
+        }
+      ]
+    }
+  ]
 }
 ```
 
