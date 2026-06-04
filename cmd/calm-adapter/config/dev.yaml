@@ -1,0 +1,14 @@
+# Dev config for the calm-adapter. Point the binary at it via:
+#   export CALM_ADAPTER_CONFIG_FILE=cmd/calm-adapter/config/dev.yaml
+# The api_key resolves CALM_DEFAULT_KEY at startup; no secrets are committed.
+# Any field can also be overridden by a CALM_ADAPTER_-prefixed env var
+# (e.g. CALM_ADAPTER_CALM_URL), which is how an MCP host typically configures it.
+calm:
+  url: http://localhost:8080
+  api_key: "[env:CALM_DEFAULT_KEY]"
+  client: calm-adapter
+  session_ttl_minutes: 120
+log:
+  level: info
+  format: json
+  file: "" # empty = stderr (stdout is the MCP protocol channel)

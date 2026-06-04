@@ -5,27 +5,27 @@ package main
 
 import (
 	"context"
-	"flag"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
 	"fmt"
-	"net/http"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	logging "github.com/one-harsh/context-logging"
 
-	"github.com/one-harsh/calm/internal/api/genapi"
-	"github.com/one-harsh/calm/internal/auth"
-	"github.com/one-harsh/calm/internal/obs"
+	"github.com/one-harsh/calm/internal/adapter/calm"
+	"github.com/one-harsh/calm/internal/adapter/config"
+	"github.com/one-harsh/calm/internal/adapter/mcp"
+	"github.com/one-harsh/calm/internal/secrets"
 )
 
-type adapterConfig struct {
-	calmURL     string
-	apiKey      string
-	sessionTTL  int
-	serviceName string
-}
+const (
+	serverName    = "calm-adapter"
+	serverVersion = "dev"
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -35,75 +35,81 @@ func main() {
 }
 
 func run() error {
-	cfg := adapterConfig{
-		serviceName: "calm-adapter",
-	}
-	flag.StringVar(&cfg.calmURL, "calm-url", "http://localhost:8080", "URL of the CALM service")
-	flag.StringVar(&cfg.apiKey, "api-key", "", "API key for the CALM service (empty for local mode)")
-	flag.IntVar(&cfg.sessionTTL, "session-ttl-minutes", 120, "session TTL in minutes")
-	flag.Parse()
-
-	logger, err := obs.NewLogger(cfg.serviceName, "dev", "local", "local", "info", "json")
+	cfg, err := config.Load(os.Getenv("CALM_ADAPTER_CONFIG_FILE"))
 	if err != nil {
 		return err
 	}
+
+	// stdout is the JSON-RPC protocol channel — logs must never touch it.
+	logOut := io.Writer(os.Stderr)
+	if cfg.Log.File != "" {
+		f, err := os.OpenFile(cfg.Log.File, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return fmt.Errorf("open log file: %w", err)
+		}
+		defer func() { _ = f.Close() }()
+		logOut = f
+	}
+	logger, err := logging.New(logging.Config{
+		Level:       cfg.Log.Level,
+		Format:      cfg.Log.Format,
+		Output:      logOut,
+		Service:     serverName,
+		Version:     serverVersion,
+		Environment: "local",
+		Region:      "local",
+	})
+	if err != nil {
+		return fmt.Errorf("init logger: %w", err)
+	}
 	defer func() { _ = logger.Sync() }()
+
+	idempotencyKey, err := newIdempotencyKey()
+	if err != nil {
+		return fmt.Errorf("generate idempotency key: %w", err)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-
-	logger.WithContext(ctx).Info(
-		"adapter starting",
-		logging.StringField("calm_url", cfg.calmURL),
+	ctx = logging.Bind(ctx,
+		logging.StringField("calm_url", cfg.Calm.URL),
+		logging.StringField("client", cfg.Calm.Client),
+		logging.StringField("idempotency_key", idempotencyKey),
 	)
 
-	client, err := genapi.NewClientWithResponses(cfg.calmURL, genapi.WithRequestEditorFn(apiKeyEditor(cfg.apiKey)))
+	var apiKey string
+	if cfg.Calm.APIKey != "" {
+		apiKey = secrets.New(logger).ReadSecret(ctx, cfg.Calm.APIKey)
+	}
+
+	client, err := calm.NewGenapiClient(cfg.Calm.URL, apiKey, idempotencyKey)
 	if err != nil {
-		return fmt.Errorf("init client: %w", err)
+		return err
 	}
 
-	if _, err := createSession(ctx, client, cfg.sessionTTL); err != nil {
-		// never-worse invariant: never fail because CALM is unavailable. Log and continue.
-		logger.WithContext(ctx).Warn(
-			"create session failed; continuing without CALM",
-			logging.ErrorField(err),
-		)
-	}
+	srv := mcp.NewServer(mcp.Config{
+		Calm:              client,
+		Logger:            logger,
+		ServerName:        serverName,
+		ServerVersion:     serverVersion,
+		DefaultClient:     cfg.Calm.Client,
+		SessionTTLMinutes: cfg.Calm.SessionTTLMinutes,
+	})
 
-	logger.WithContext(ctx).Info("adapter ready (mcp loop not implemented yet)")
-	<-ctx.Done()
-	logger.WithContext(ctx).Info("adapter shutting down")
+	logger.WithContext(ctx).Info("adapter starting")
+	if err := srv.Serve(ctx, os.Stdin, os.Stdout); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	logger.WithContext(ctx).Info("adapter stopped")
 	return nil
 }
 
-func apiKeyEditor(apiKey string) genapi.RequestEditorFn {
-	return func(_ context.Context, req *http.Request) error {
-		if apiKey != "" {
-			req.Header.Set(auth.HeaderAPIKey, apiKey)
-		}
-		return nil
-	}
-}
-
-func createSession(ctx context.Context, client *genapi.ClientWithResponses, ttl int) (string, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	labels := map[string]string{"agent": "calm-adapter"}
-	body := genapi.CreateSessionJSONRequestBody{
-		Labels:     &labels,
-		TtlMinutes: &ttl,
-	}
-
-	resp, err := client.CreateSessionWithResponse(reqCtx, &genapi.CreateSessionParams{}, body)
-	if err != nil {
+// newIdempotencyKey returns a stable per-process key so a retried session create
+// (e.g. a lost response after CALM committed) collapses to one session, not an orphan.
+func newIdempotencyKey() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return "", fmt.Errorf("create session: %s", resp.Status())
-	}
-	if resp.JSON201 == nil {
-		return "", fmt.Errorf("create session: unexpected empty body, status=%s", resp.Status())
-	}
-	return resp.JSON201.SessionToken, nil
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

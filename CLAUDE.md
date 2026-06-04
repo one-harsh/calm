@@ -142,12 +142,24 @@ internal/
   auth/                  API-key registry + namespace resolver
   obs/                   logging init, OTel wiring, CALM-specific field helpers
   config/                env-driven config loader
-adapter/                 packages used only by cmd/calm-adapter
-  mcp/                   stdio MCP protocol
-  extract/               event extraction from tool calls
-  exec/                  local subprocess execution (developer machine)
+  adapter/               packages used only by cmd/calm-adapter (self-contained; optionally carved into its own module later)
+    calm/                CALM client port + DTOs (genapi client confined to genapi_client.go)
+    config/              adapter config loader (viper); api_key is a secrets.Secret resolved in main via ReadSecret
+    mcp/                 stdio MCP protocol (JSON-RPC 2.0)
+    extract/             event extraction + source labeling from tool calls
+    exec/                local subprocess execution (developer machine)
 test/integration/        user-facing scenarios — see HLD's workload-scenarios section
 ```
+
+The adapter lives under `internal/` for the plain reason that only `cmd/calm-adapter`
+consumes it — it is never exported as a Go package (it's a binary you run, and CALM's
+public surface is the OpenAPI spec, not a client SDK; DL09). A boundary test keeps the
+adapter independent of the server's *non-portable* internals: it may import only
+**extraction-portable** server packages — `internal/api/genapi` (codegen from the spec;
+confined to `genapi_client.go` so the codegen swap is one file) and `internal/secrets`
+(slim, dependency-free, copied alongside at extraction) — and nothing else. That makes
+an optional future carve-out into its own distribution repo a lift: codegen the client
+from the spec, copy `secrets`, keep the adapter `internal/` in the new module.
 
 **Layered responsibility:**
 

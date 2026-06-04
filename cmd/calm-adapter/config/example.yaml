@@ -1,0 +1,17 @@
+# Annotated calm-adapter config. Load via CALM_ADAPTER_CONFIG_FILE; a file is
+# optional (defaults + CALM_ADAPTER_-prefixed env overrides apply without one).
+calm:
+  # Base URL of the CALM service the adapter calls.
+  url: http://localhost:8080
+  # Namespace API key. Use a bracketed [env:VAR] reference so no secret is
+  # committed; leave empty for a local CALM running without auth.
+  api_key: "[env:CALM_DEFAULT_KEY]"
+  # CALM client identifier for sessions this adapter opens. Overridden at runtime
+  # by the MCP host's clientInfo.name (e.g. claude-code) when provided.
+  client: calm-adapter
+  # Inactivity TTL for the adapter's CALM session (clamped to the operator ceiling).
+  session_ttl_minutes: 120
+log:
+  level: info # debug | info | warn | error
+  format: json # json | console
+  file: "" # path to a log file; empty = stderr (never stdout — that's the protocol channel)

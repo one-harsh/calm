@@ -10,6 +10,9 @@ boilerplate-file: ".mockery-header.txt"
 # keeps internal-helper interfaces (like the unexported `queryer` in db)
 # from being mocked just because they exist.
 packages:
+  github.com/one-harsh/calm/internal/adapter/calm:
+    interfaces:
+      Client:
   github.com/one-harsh/calm/internal/db:
     interfaces:
       ClientRepo:
