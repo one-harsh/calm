@@ -91,7 +91,7 @@ func TestGenapiIngest_MapsSummary(t *testing.T) {
 		jsonResp(w, http.StatusOK, `{"source":"s","sections_indexed":1,"sections_total":2,"summary":[{"title":"sec","preview":"prev"}],"summary_truncated":true,"distinctive_terms":["alpha"]}`)
 	})
 	got, err := c.Ingest(context.Background(), "sess-tok", calm.IngestInput{
-		Source: "s", Content: "c", ContentType: "code", Format: "log",
+		Source: "s", Content: "c", ContentType: "code", Format: calm.FormatLog,
 	})
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)

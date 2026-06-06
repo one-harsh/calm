@@ -7,6 +7,8 @@ services:
     build:
       context: deploy/dev/postgres
     image: calm-dev-postgres:17-pgts
+    # Default /dev/shm is 64m; parallel index builds overflow it → ENOSPC (SQLSTATE 53100).
+    shm_size: 256m
     command:
       - postgres
       - -c

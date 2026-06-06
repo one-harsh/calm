@@ -225,7 +225,7 @@ Six rules. Non-negotiable.
 
 **5. Content fidelity.** CALM decides *which* content to return. Never alters what's in it. A code block goes in, the same code block comes out.
 
-**6. Idempotent indexing.** Same source label indexed twice within a session? The second replaces the first. No stale duplicates from iterative workflows.
+**6. Idempotent indexing.** Same source label indexed twice within a session? The second replaces the first. No stale duplicates from iterative workflows. This makes a source label both the *identity* of content and the *dedup key*, so constructing labels that are stable yet collision-free — semantically distinct outputs never sharing one label — is a discipline every workload that ingests repeated or iterative tool output must get right.
 
 ---
 
@@ -301,7 +301,7 @@ The workload boxes are illustrative — three common patterns, not three privile
 
 When the agent wants to run code, the adapter runs it locally as a subprocess — it has access to the project directory, filesystem, git, local CLIs. It captures stdout and sends the output to CALM's `/v1/ingest`. CALM never sees or runs the code; it only receives the text output (see Decision Log [DL02](#dl02)).
 
-Platform hooks (PreToolUse, PostToolUse) on the coding-agent side fire on tool calls that don't go through CALM's own MCP tools — for instance, a developer-invoked Bash command. The hooks are thin shims that call CALM's HTTP API to ingest the tool output and post the corresponding event. The logic lives in CALM; the hooks just translate.
+The adapter captures tool output through its own explicit tools: the agent runs commands via the adapter's shell-command tool rather than the host's native shell, and the adapter ingests the captured output and posts the derived event. This explicit-tool path is the host-agnostic capture mechanism — it works on any agent that can call an MCP tool, regardless of whether the host exposes an extension surface of its own. Platform hooks (PreToolUse, PostToolUse) that intercept the host's *native* tools — capturing output from commands the agent runs outside the adapter — are an optional, host-specific enhancement: they require a hook surface the host may not provide, so they sit outside the baseline integration and are deferred. Where a host supports them, they are thin shims that translate to the same `/v1/ingest` and `/v1/events` calls the explicit-tool path uses.
 
 **Storage.** Postgres in production, with a BM25-capable extension (`pg_search` or `pg_textsearch`) and `pg_trgm` for the trigram layer.
 
@@ -355,30 +355,33 @@ Developer starts Claude Code session
   → Claude Code spawns MCP Adapter as child process on dev's machine
   → Adapter POST /v1/sessions; persists returned session_token in process memory
 
-  Developer asks agent to analyze a log file
-  → Agent calls a CALM MCP tool (e.g., calm_ingest_file)
-  → Adapter runs the code locally (has access to project dir, filesystem, git)
+  Developer asks agent to inspect a log file
+  → Agent calls the adapter's shell-command tool (calm_run_command) with `cat app.log`
+  → Adapter runs the command locally (has access to project dir, filesystem, git)
   → Captures stdout
   → Adapter POST /v1/ingest (X-CALM-Session-Token) { content, format: "log" }
   → CALM returns compact representation
-  → Adapter returns it as MCP tool response
+  → Adapter returns it as the MCP tool response
 
-  Agent also calls native Bash tool to run git log
-  → PostToolUse hook fires
-  → Hook POST /v1/ingest (X-CALM-Session-Token) { content, content_type: "prose" }
-  → Hook POST /v1/events (X-CALM-Session-Token) { events: [{type: "git_operation", priority: 2, data: { command: "git log" }}] }
-  → Raw git output is replaced with compact version in context
+  Agent runs `git log` the same way
+  → calm_run_command captures stdout
+  → Adapter POST /v1/ingest (X-CALM-Session-Token) { content, content_type: "prose" }
+  → Adapter POST /v1/events (X-CALM-Session-Token) { events: [{type: "git_operation", priority: 2, data: { command: "git log" }}] }
+  → Adapter returns the compact version as the tool response
+
+  (Optional, host-specific) A command run through the host's NATIVE shell — bypassing
+  the adapter — is captured only where the host exposes hooks: a PostToolUse hook fires
+  and performs the same ingest + event POST. Hosts without a hook surface route such
+  commands through calm_run_command instead; the capture is identical either way.
 
   Context compacts
-  → Platform fires SessionStart hook
-  → Hook GET /v1/snapshot (X-CALM-Session-Token)
-  → CALM returns priority-tiered state snapshot
-  → Hook injects snapshot into refreshed context
-  → Agent continues from where it left off
+  → (Optional, host-specific) Where the host exposes lifecycle hooks, a PreCompact /
+    SessionStart hook GETs /v1/snapshot and injects the priority-tiered snapshot into
+    the refreshed context, so the agent resumes from where it left off.
 
   Developer ends session
   → Claude Code kills MCP Adapter process
-  → Adapter's shutdown hook: DELETE /v1/sessions (X-CALM-Session-Token)
+  → Adapter deletes the session: DELETE /v1/sessions (X-CALM-Session-Token)
   → If adapter crashes without cleanup, inactivity TTL handles it
 ```
 
@@ -665,7 +668,7 @@ GET /v1/snapshot?budget_bytes=2048
 }
 ```
 
-Used by platform hooks (PreCompact, SessionStart) on the coding-agent side, and available to any workload that needs a compressed view of session state.
+Consumed by any workload that needs a compressed view of session state. On the coding-agent side, where the host exposes lifecycle hooks (PreCompact, SessionStart), those hooks GET this endpoint and inject the result on compaction or resume — an optional, host-specific enhancement rather than a baseline requirement.
 
 ---
 
@@ -940,7 +943,7 @@ The snapshot is built on demand from current events, not pre-computed and stored
 
 **Who calls this and when:**
 
-- **Coding agents:** Platform hooks fire on compaction (PreCompact) and session resume (SessionStart). The hook calls the snapshot endpoint and the MCP adapter injects the result into the refreshed context.
+- **Coding agents:** Where the host exposes lifecycle hooks (PreCompact, SessionStart), they fire on compaction and session resume, call the snapshot endpoint, and inject the result into the refreshed context. This is an optional, host-specific enhancement — hosts without a hook surface get no automatic snapshot injection; the adapter's explicit tools remain the baseline integration.
 - **Automated pipelines:** Typically not needed; the workflow engine's durable execution handles replay. The snapshot is available if the workload wants it for logging or debugging crash recovery.
 - **Internal LLM applications:** Available for session-resume scenarios. If the app supports reconnecting to an earlier conversation, the snapshot provides the state summary as a starting point for the workload's own reconstruction logic.
 

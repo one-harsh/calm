@@ -146,7 +146,7 @@ internal/
     calm/                CALM client port + DTOs (genapi client confined to genapi_client.go)
     config/              adapter config loader (viper); api_key is a secrets.Secret resolved in main via ReadSecret
     mcp/                 stdio MCP protocol (JSON-RPC 2.0)
-    extract/             event extraction + source labeling from tool calls
+    extract/             event extraction + source labeling from tool calls; LABELING.md is the canonical idempotent-indexing labeling/event contract
     exec/                local subprocess execution (developer machine)
 test/integration/        user-facing scenarios — see HLD's workload-scenarios section
 ```

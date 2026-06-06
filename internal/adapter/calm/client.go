@@ -20,11 +20,24 @@ type Client interface {
 	WriteEvents(ctx context.Context, sessionToken string, events []EventInput) error
 }
 
+type Format string
+
+const (
+	FormatLog        Format = "log"
+	FormatStacktrace Format = "stacktrace"
+	FormatCSV        Format = "csv"
+	FormatTSV        Format = "tsv"
+	FormatMetrics    Format = "metrics"
+	FormatJSON       Format = "json"
+	FormatMarkdown   Format = "markdown"
+	FormatText       Format = "text"
+)
+
 type IngestInput struct {
 	Source      string
 	Content     string
 	ContentType string
-	Format      string
+	Format      Format
 }
 
 type IngestSummary struct {
