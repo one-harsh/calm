@@ -174,19 +174,13 @@ paths:
     delete:
       operationId: deleteSession
       summary: Tear down a session and all its data
-      description: |
-        Sources, chunks, vocabulary, events, and labels cascade.
-        Response carries cascade counts so workloads can audit what was removed
-        without a follow-up read.
+      description: Tear down a session.
       tags: [sessions]
       parameters:
         - $ref: '#/components/parameters/SessionTokenHeader'
       responses:
-        '200':
+        '204':
           description: Session deleted
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/DeleteSessionResult' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -269,11 +263,10 @@ paths:
       operationId: search
       summary: Query indexed content within a session
       description: |
-        Three-layer fallback (primary tokenizer → trigram →
-        fuzzy) is internal. Layer 1 runs against both `chunks_fts_prose` and
-        `chunks_fts_code` and the two rankings are RRF-fused; results from both
-        tokenization paths come back in one ranked list. Workload does not scope
-        by content_type.
+        Two-layer fallback (primary tokenizer → trigram) is internal. Layer 1
+        runs against both `chunks_fts_prose` and `chunks_fts_code` and the two
+        rankings are RRF-fused; results from both tokenization paths come back
+        in one ranked list. Workload does not scope by content_type.
       tags: [search]
       parameters:
         - $ref: '#/components/parameters/SessionTokenHeader'
@@ -291,6 +284,39 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/feedback:
+    post:
+      operationId: feedback
+      summary: Report outcome for a value-producing call
+      description: |
+        Closes the outcome-attribution loop. Workloads post the
+        X-CALM-Correlation-Id they received from a prior /v1/ingest,
+        /v1/search, or /v1/snapshot response, plus an outcome enum. CALM
+        emits outcome-attributed metrics at receipt. Requires both the
+        namespace API key and the session token from the call being
+        attributed — feedback for a torn-down session is not possible;
+        workloads with delayed outcome signals must either keep the
+        session alive until feedback fires or accept no outcome
+        attribution for those calls.
+      tags: [feedback]
+      parameters:
+        - $ref: '#/components/parameters/SessionTokenHeader'
+        - $ref: '#/components/parameters/WorkloadRequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeedbackRequest' }
+      responses:
+        '204':
+          description: Feedback recorded
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/events:
     post:
@@ -482,10 +508,36 @@ components:
       name: name
       required: true
       schema: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-zA-Z0-9_-]+$' }
+    WorkloadRequestIdHeader:
+      in: header
+      name: X-Workload-Request-Id
+      required: false
+      schema: { type: string, maxLength: 256 }
+      description: |
+        Workload-supplied correlation token, echoed verbatim on the response
+        when present. Distinct from the server-minted X-CALM-Correlation-Id;
+        intended for the workload's own log/trace correlation. CALM does not
+        interpret the value.
+
+  headers:
+    XCALMCorrelationId:
+      description: Server-minted UUIDv7 correlation ID for this response. Present on every response (incl. 4xx/5xx).
+      schema: { type: string, format: uuid }
+      required: true
+    XWorkloadRequestId:
+      description: Echoed when the request carried a non-oversized `X-Workload-Request-Id`. Absent otherwise.
+      schema: { type: string, maxLength: 256 }
+    Traceresponse:
+      description: W3C trace-context. Emitted when the request carried a valid inbound `traceparent`. Absent otherwise.
+      schema: { type: string }
 
   responses:
     BadRequest:
-      description: Malformed request
+      description: |
+        Malformed request. Every response (this one included) carries the
+        observability headers declared under `components.headers` — the
+        binding is via Context middleware, not via per-response codegen, so
+        the spec describes them here in prose rather than per-operation.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -506,6 +558,14 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    Gone:
+      description: |
+        The feedback acceptance window for this correlation has expired.
+        The correlation_id's embedded UUIDv7 timestamp is older than the
+        namespace's configured feedback_ttl_minutes.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     PayloadTooLarge:
       description: Request body exceeded the configured size limit
       content:
@@ -513,6 +573,13 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     TooManyRequests:
       description: Per-namespace rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: |
+        Endpoint depends on a subsystem that is not yet implemented or is
+        temporarily disabled. The error `code` identifies which subsystem.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -609,12 +676,6 @@ components:
         events: { type: integer }
         labels: { type: integer }
 
-    DeleteSessionResult:
-      type: object
-      required: [cascaded]
-      properties:
-        cascaded: { $ref: '#/components/schemas/CascadeCounts' }
-
     SectionPreview:
       type: object
       required: [title]
@@ -709,13 +770,11 @@ components:
         source: { type: string }
         match_layer:
           type: string
-          enum: [primary, trigram, fuzzy]
+          enum: [primary, trigram]
           description: |
             Which fallback layer produced this hit. `primary` covers both the
-            prose and code FTS indexes (RRF-fused at layer 1) —
-            workloads do not see, and do not need to disambiguate, which
-            tokenizer matched. Frequent `fuzzy` hits suggest the indexed
-            vocabulary doesn't match what workloads search for.
+            prose and code FTS indexes (RRF-fused at layer 1) — workloads do
+            not see, and do not need to disambiguate, which tokenizer matched.
 
     SearchResult:
       type: object
@@ -797,6 +856,28 @@ components:
         events:
           type: array
           items: { $ref: '#/components/schemas/Event' }
+
+    FeedbackRequest:
+      type: object
+      required: [correlation_id, outcome]
+      additionalProperties: false
+      properties:
+        correlation_id:
+          type: string
+          format: uuid
+          description: |
+            The X-CALM-Correlation-Id value returned by a prior value-producing
+            call (/v1/ingest, /v1/search, /v1/snapshot). Canonical UUIDv7 text
+            (36 chars, hyphenated). The embedded timestamp gates the
+            feedback-acceptance window.
+        outcome:
+          type: string
+          enum: [success, retry, degraded]
+          description: |
+            Workload-state declaration of how the call's result fared. Unordered —
+            CALM does not interpret which outcome is "better"; the workload owns
+            the semantics. Recorded once per correlation; subsequent attempts
+            return 409.
 
     SourceSummary:
       type: object

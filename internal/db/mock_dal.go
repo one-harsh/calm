@@ -118,6 +118,53 @@ func (_c *MockDAL_Clients_Call) RunAndReturn(run func() ClientRepo) *MockDAL_Cli
 	return _c
 }
 
+// Correlations provides a mock function with no fields
+func (_m *MockDAL) Correlations() CorrelationsRepo {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Correlations")
+	}
+
+	var r0 CorrelationsRepo
+	if rf, ok := ret.Get(0).(func() CorrelationsRepo); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(CorrelationsRepo)
+		}
+	}
+
+	return r0
+}
+
+// MockDAL_Correlations_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Correlations'
+type MockDAL_Correlations_Call struct {
+	*mock.Call
+}
+
+// Correlations is a helper method to define mock.On call
+func (_e *MockDAL_Expecter) Correlations() *MockDAL_Correlations_Call {
+	return &MockDAL_Correlations_Call{Call: _e.mock.On("Correlations")}
+}
+
+func (_c *MockDAL_Correlations_Call) Run(run func()) *MockDAL_Correlations_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockDAL_Correlations_Call) Return(_a0 CorrelationsRepo) *MockDAL_Correlations_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockDAL_Correlations_Call) RunAndReturn(run func() CorrelationsRepo) *MockDAL_Correlations_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Events provides a mock function with no fields
 func (_m *MockDAL) Events() EventsRepo {
 	ret := _m.Called()

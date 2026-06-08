@@ -25,7 +25,9 @@ func TestLoad_HappyPath(t *testing.T) {
 	path := writeConfig(t, `
 service:
   service_name: calm
-  log_level: debug
+observability:
+  logging:
+    level: debug
 server:
   address: ":9090"
   request_timeout: 5s
@@ -43,8 +45,11 @@ namespaces:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Service.ServiceName != "calm" || cfg.Service.LogLevel != "debug" {
+	if cfg.Service.ServiceName != "calm" {
 		t.Errorf("service fields: %+v", cfg.Service)
+	}
+	if cfg.Observability.Logging.Level != "debug" {
+		t.Errorf("observability.logging.level: want debug, got %q", cfg.Observability.Logging.Level)
 	}
 	if cfg.Server.Address != ":9090" || cfg.Server.RequestTimeout != 5*time.Second {
 		t.Errorf("server fields: %+v", cfg.Server)
@@ -78,8 +83,11 @@ namespaces:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Service.ServiceName != "calm" || cfg.Service.LogFormat != "json" {
+	if cfg.Service.ServiceName != "calm" {
 		t.Errorf("defaults not applied to service: %+v", cfg.Service)
+	}
+	if cfg.Observability.Logging.Format != "json" {
+		t.Errorf("defaults not applied to observability.logging.format: got %q, want json", cfg.Observability.Logging.Format)
 	}
 	if cfg.Server.Address != ":8080" || cfg.Server.MaxIngestPayloadKB != 1024 {
 		t.Errorf("defaults not applied to server: %+v", cfg.Server)
@@ -400,7 +408,7 @@ namespaces:
     api_key: "[text:x]"
 `)
 	t.Setenv("CALM_SERVER_ADDRESS", ":7777")
-	t.Setenv("CALM_SERVICE_LOG_LEVEL", "warn")
+	t.Setenv("CALM_OBSERVABILITY_LOGGING_LEVEL", "warn")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -409,8 +417,8 @@ namespaces:
 	if cfg.Server.Address != ":7777" {
 		t.Errorf("env override server.address: want :7777, got %q", cfg.Server.Address)
 	}
-	if cfg.Service.LogLevel != "warn" {
-		t.Errorf("env override service.log_level: want warn, got %q", cfg.Service.LogLevel)
+	if cfg.Observability.Logging.Level != "warn" {
+		t.Errorf("env override observability.logging.level: want warn, got %q", cfg.Observability.Logging.Level)
 	}
 }
 

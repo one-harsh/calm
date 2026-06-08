@@ -32,6 +32,7 @@ func TestExtractSessionTokenRoutes_RealSpec(t *testing.T) {
 		"GET /v1/snapshot",
 		"POST /v1/ingest",
 		"POST /v1/search",
+		"POST /v1/feedback",
 	}
 	for _, key := range want {
 		method, path := splitRouteKey(key)

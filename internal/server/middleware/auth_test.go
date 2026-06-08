@@ -51,7 +51,7 @@ func rejectHandler(t *testing.T) http.Handler {
 // ----- Uncredentialed namespaces (default: require_client_credentials=false) -----
 
 func TestAuth_ValidAPIKey(t *testing.T) {
-	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil)
+	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil, nil)
 	called := false
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/x", nil)
 	req.Header.Set(auth.HeaderAPIKey, "goodkey")
@@ -68,7 +68,7 @@ func TestAuth_ValidAPIKey(t *testing.T) {
 }
 
 func TestAuth_MissingAPIKeyHeader(t *testing.T) {
-	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil)
+	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/x", nil)
 	rec := httptest.NewRecorder()
 
@@ -80,7 +80,7 @@ func TestAuth_MissingAPIKeyHeader(t *testing.T) {
 }
 
 func TestAuth_UnknownAPIKey(t *testing.T) {
-	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil)
+	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/x", nil)
 	req.Header.Set(auth.HeaderAPIKey, "wrongkey")
 	rec := httptest.NewRecorder()
@@ -96,7 +96,7 @@ func TestAuth_UncredentialedIgnoresAuthorizationHeader(t *testing.T) {
 	// Uncredentialed namespace: stray Authorization: Bearer header is
 	// ignored, not rejected. Workloads might present one by mistake or
 	// because they're configured for a credentialed namespace elsewhere.
-	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil)
+	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil, nil)
 	called := false
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/x", nil)
 	req.Header.Set(auth.HeaderAPIKey, "goodkey")
@@ -117,6 +117,7 @@ func TestAuth_Credentialed_ValidClientToken(t *testing.T) {
 		map[string]string{"goodkey": "production"},
 		nil,
 		map[string]bool{"production": true},
+		nil,
 	)
 	resolver := &stubClientResolver{}
 	resolver.bind("production", "ct-abc", "factory-pipeline")
@@ -148,6 +149,7 @@ func TestAuth_Credentialed_MissingClientToken(t *testing.T) {
 		map[string]string{"goodkey": "production"},
 		nil,
 		map[string]bool{"production": true},
+		nil,
 	)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
 	req.Header.Set(auth.HeaderAPIKey, "goodkey")
@@ -166,6 +168,7 @@ func TestAuth_Credentialed_InvalidClientToken(t *testing.T) {
 		map[string]string{"goodkey": "production"},
 		nil,
 		map[string]bool{"production": true},
+		nil,
 	)
 	resolver := &stubClientResolver{}
 	// No tokens bound — every lookup fails.
@@ -188,6 +191,7 @@ func TestAuth_Credentialed_RegistrationPathExempt(t *testing.T) {
 		map[string]string{"goodkey": "production"},
 		nil,
 		map[string]bool{"production": true},
+		nil,
 	)
 	called := false
 	req := httptest.NewRequest(http.MethodPost, "/v1/clients/new-client", nil)
@@ -209,6 +213,7 @@ func TestAuth_Credentialed_RotateTokenStillRequiresToken(t *testing.T) {
 		map[string]string{"goodkey": "production"},
 		nil,
 		map[string]bool{"production": true},
+		nil,
 	)
 	req := httptest.NewRequest(http.MethodPost, "/v1/clients/foo/rotate-token", nil)
 	req.Header.Set(auth.HeaderAPIKey, "goodkey")
@@ -228,6 +233,7 @@ func TestAuth_Credentialed_NonBearerScheme(t *testing.T) {
 		map[string]string{"goodkey": "production"},
 		nil,
 		map[string]bool{"production": true},
+		nil,
 	)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
 	req.Header.Set(auth.HeaderAPIKey, "goodkey")
@@ -247,6 +253,7 @@ func TestAuth_Credentialed_LowercaseBearerRejected(t *testing.T) {
 		map[string]string{"goodkey": "production"},
 		nil,
 		map[string]bool{"production": true},
+		nil,
 	)
 	resolver := &stubClientResolver{}
 	resolver.bind("production", "ct-abc", "factory")
@@ -265,7 +272,7 @@ func TestAuth_Credentialed_LowercaseBearerRejected(t *testing.T) {
 // ----- Unauthenticated paths -----
 
 func TestAuth_HealthExempt(t *testing.T) {
-	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil)
+	reg := auth.NewMemoryRegistry(map[string]string{"goodkey": "production"}, nil, nil, nil)
 	for _, path := range []string{"/v1/health", "/v1/version"} {
 		called := false
 		req := httptest.NewRequest(http.MethodGet, path, nil)

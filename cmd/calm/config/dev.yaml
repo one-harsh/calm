@@ -9,8 +9,13 @@ service:
   version: dev
   environment: local
   region: local
-  log_level: debug
-  log_format: json
+
+observability:
+  logging:
+    level: debug
+    format: json
+  otel:
+    enabled: false
 
 server:
   address: ":8080"

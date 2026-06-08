@@ -20,6 +20,7 @@ import (
 	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/config"
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/feedback"
 	"github.com/one-harsh/calm/internal/ingest"
 	"github.com/one-harsh/calm/internal/obs"
 	"github.com/one-harsh/calm/internal/secrets"
@@ -48,12 +49,13 @@ func run() error {
 
 	logger, err := obs.NewLogger(
 		cfg.Service.ServiceName, cfg.Service.Version, cfg.Service.Environment, cfg.Service.Region,
-		cfg.Service.LogLevel, cfg.Service.LogFormat,
+		cfg.Observability.Logging.Level, cfg.Observability.Logging.Format,
 	)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = logger.Sync() }()
+	obs.InitTracePropagation(cfg.Observability.OTel.Enabled)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -79,6 +81,7 @@ func run() error {
 	})
 	snapshotSvc := snapshot.New(store)
 	ingestSvc := ingest.New(store)
+	feedbackSvc := feedback.New(store.Correlations(), logger)
 	if err := clientSvc.SeedDefaults(openCtx, uncredentialedNamespaceNames(cfg.Namespaces)); err != nil {
 		return fmt.Errorf("seed clients: %w", err)
 	}
@@ -106,6 +109,7 @@ func run() error {
 			Snapshot: snapshotSvc,
 			Ingest:   ingestSvc,
 			Sources:  store.Sources(),
+			Feedback: feedbackSvc,
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: cfg.Sessions.DefaultTTLMinutes,
 				MaxTTLMinutes:     cfg.Sessions.MaxTTLMinutes,

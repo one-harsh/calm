@@ -14,8 +14,13 @@ service:
   version: dev
   environment: production           # local / staging / production
   region: us-east-1
-  log_level: info                   # debug / info / warn / error
-  log_format: json                  # json / console
+
+observability:
+  logging:
+    level: info                     # debug / info / warn / error
+    format: json                    # json / console
+  otel:
+    enabled: false                  # set true to install the W3C TraceContext propagator (extracts inbound `traceparent`, emits outbound `traceresponse`)
 
 server:
   address: ":8080"

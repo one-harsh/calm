@@ -51,20 +51,26 @@ type ChunksRepo interface {
 	Insert(ctx context.Context, sourceID int64, chunks []Chunk) error
 }
 
+type CorrelationsRepo interface {
+	UpdateOutcome(ctx context.Context, namespace string, sessionID int64, correlationID []byte, outcome string) (CorrelationRecord, error)
+}
+
 type DAL interface {
 	Clients() ClientRepo
 	Sessions() SessionRepo
 	Events() EventsRepo
 	Sources() SourcesRepo
 	Chunks() ChunksRepo
+	Correlations() CorrelationsRepo
 	WithTx(ctx context.Context, fn func(Repos) error) error
 }
 
 var (
-	_ ClientRepo  = (*clientRepo)(nil)
-	_ SessionRepo = (*sessionRepo)(nil)
-	_ EventsRepo  = (*eventsRepo)(nil)
-	_ SourcesRepo = (*sourcesRepo)(nil)
-	_ ChunksRepo  = (*chunksRepo)(nil)
-	_ DAL         = (*Store)(nil)
+	_ ClientRepo       = (*clientRepo)(nil)
+	_ SessionRepo      = (*sessionRepo)(nil)
+	_ EventsRepo       = (*eventsRepo)(nil)
+	_ SourcesRepo      = (*sourcesRepo)(nil)
+	_ ChunksRepo       = (*chunksRepo)(nil)
+	_ CorrelationsRepo = (*correlationsRepo)(nil)
+	_ DAL              = (*Store)(nil)
 )

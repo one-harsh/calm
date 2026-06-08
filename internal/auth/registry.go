@@ -22,15 +22,20 @@ type Registry interface {
 	RateFor(namespace string) (rate int, hasOverride bool)
 
 	RequiresClientCredentials(namespace string) bool
+
+	// FeedbackTTLFor returns the per-namespace feedback-acceptance window override;
+	// hasOverride=false → caller uses the system default.
+	FeedbackTTLFor(namespace string) (minutes int, hasOverride bool)
 }
 
 type memoryRegistry struct {
 	keys                map[string]string
 	rates               map[string]int
 	credentialsRequired map[string]bool
+	feedbackTTLs        map[string]int
 }
 
-func NewMemoryRegistry(keys map[string]string, rates map[string]int, credentialsRequired map[string]bool) Registry {
+func NewMemoryRegistry(keys map[string]string, rates map[string]int, credentialsRequired map[string]bool, feedbackTTLs map[string]int) Registry {
 	if keys == nil {
 		keys = map[string]string{}
 	}
@@ -40,7 +45,10 @@ func NewMemoryRegistry(keys map[string]string, rates map[string]int, credentials
 	if credentialsRequired == nil {
 		credentialsRequired = map[string]bool{}
 	}
-	return &memoryRegistry{keys: keys, rates: rates, credentialsRequired: credentialsRequired}
+	if feedbackTTLs == nil {
+		feedbackTTLs = map[string]int{}
+	}
+	return &memoryRegistry{keys: keys, rates: rates, credentialsRequired: credentialsRequired, feedbackTTLs: feedbackTTLs}
 }
 
 func (m *memoryRegistry) Resolve(apiKey string) (string, bool) {
@@ -57,6 +65,11 @@ func (m *memoryRegistry) RequiresClientCredentials(namespace string) bool {
 	return m.credentialsRequired[namespace]
 }
 
+func (m *memoryRegistry) FeedbackTTLFor(namespace string) (int, bool) {
+	minutes, ok := m.feedbackTTLs[namespace]
+	return minutes, ok
+}
+
 // BuildRegistry is Fatal on resolution failure, empty resolved key, or two namespaces resolving to the same value.
 func BuildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, reader secrets.SecretReader, logger *logging.Logger) Registry {
 	reg, err := buildRegistry(ctx, namespaces, reader, logger)
@@ -70,6 +83,7 @@ func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 	keys := make(map[string]string, len(namespaces))
 	rates := make(map[string]int, len(namespaces))
 	credentialsRequired := make(map[string]bool, len(namespaces))
+	feedbackTTLs := make(map[string]int, len(namespaces))
 	keyOrigin := make(map[string]string, len(namespaces))
 
 	for _, ns := range namespaces {
@@ -95,13 +109,17 @@ func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 		if ns.RequireClientCredentials {
 			credentialsRequired[ns.Name] = true
 		}
+		if ns.FeedbackTTLMinutes > 0 {
+			feedbackTTLs[ns.Name] = ns.FeedbackTTLMinutes
+		}
 	}
 
 	logger.WithContext(ctx).Info(
 		"registry loaded",
-		logging.IntField("namespace_count", len(namespaces)),
-		logging.IntField("rate_override_count", len(rates)),
-		logging.IntField("credentialed_namespace_count", len(credentialsRequired)),
+		logging.IntField("namespaces.loaded", len(namespaces)),
+		logging.IntField("namespaces.with_rate_override", len(rates)),
+		logging.IntField("namespaces.credentialed", len(credentialsRequired)),
+		logging.IntField("namespaces.with_feedback_ttl_override", len(feedbackTTLs)),
 	)
-	return NewMemoryRegistry(keys, rates, credentialsRequired), nil
+	return NewMemoryRegistry(keys, rates, credentialsRequired, feedbackTTLs), nil
 }

@@ -157,20 +157,13 @@ func (h *Handlers) DeleteSession(
 	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceDelete).Info("session closed",
 		obs.AuditInitiatorAPI,
 		obs.CloseReasonExplicit,
-		logging.IntField("session.delete.cascaded_events", result.Cascaded.Events),
-		logging.IntField("session.delete.cascaded_sources", result.Cascaded.Sources),
-		logging.IntField("session.delete.cascaded_chunks", result.Cascaded.Chunks),
-		logging.IntField("session.delete.cascaded_labels", result.Cascaded.Labels),
+		obs.CascadedEvents(result.Cascaded.Events),
+		obs.CascadedSources(result.Cascaded.Sources),
+		obs.CascadedChunks(result.Cascaded.Chunks),
+		obs.CascadedLabels(result.Cascaded.Labels),
 	)
 
-	return genapi.DeleteSession200JSONResponse(genapi.DeleteSessionResult{
-		Cascaded: genapi.CascadeCounts{
-			Sources: result.Cascaded.Sources,
-			Chunks:  result.Cascaded.Chunks,
-			Events:  result.Cascaded.Events,
-			Labels:  result.Cascaded.Labels,
-		},
-	}), nil
+	return genapi.DeleteSession204Response{}, nil
 }
 
 func (h *Handlers) GetSnapshot(ctx context.Context, request genapi.GetSnapshotRequestObject) (genapi.GetSnapshotResponseObject, error) {

@@ -112,6 +112,7 @@ func newCredentialedTestServer(t *testing.T) (apiClient *genapi.ClientWithRespon
 		map[string]string{testCredentialedKey: testCredentialedNamespace},
 		nil,
 		map[string]bool{testCredentialedNamespace: true},
+		nil,
 	)
 	clientSvc := clientreg.New(env.store, logging.Nop())
 
@@ -413,7 +414,7 @@ func TestRotateClientTokenHandler_CredentialedSessionsPersistAcrossRotation(t *t
 	if err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
-	if delResp.StatusCode() != http.StatusOK {
+	if delResp.StatusCode() != http.StatusNoContent {
 		t.Errorf("pre-rotation session should still exist after rotation: status = %d; body=%s",
 			delResp.StatusCode(), string(delResp.Body))
 	}

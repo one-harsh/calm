@@ -71,7 +71,7 @@ type SearchHit struct {
 	Title      string
 	Snippet    string
 	Source     string
-	MatchLayer string // "primary" | "trigram" | "fuzzy"
+	MatchLayer string // "primary" | "trigram"
 }
 
 type SearchResult struct {
@@ -134,4 +134,15 @@ type DeleteClientResult struct {
 	Client          string
 	DeletedSessions int
 	Cascaded        CascadeCounts
+}
+
+type CorrelationRecord struct {
+	CorrelationID      []byte
+	Namespace          string
+	SessionID          int64
+	RequestType        string
+	RequestMeta        []byte
+	Outcome            string
+	FeedbackReceivedAt time.Time
+	CreatedAt          time.Time
 }

@@ -33,12 +33,15 @@ var (
 
 	// Domain — business-meaningful states.
 
-	ErrSessionNotFound         = errors.New("db: session not found")
-	ErrSessionExists           = errors.New("db: session already exists")
-	ErrClientNotFound          = errors.New("db: client not found")
-	ErrClientExists            = errors.New("db: client already exists")
-	ErrClientProtected         = errors.New("db: cannot delete the default client")
-	ErrInvalidClientCredential = errors.New("db: invalid client credential")
+	ErrSessionNotFound            = errors.New("db: session not found")
+	ErrSessionExists              = errors.New("db: session already exists")
+	ErrClientNotFound             = errors.New("db: client not found")
+	ErrClientExists               = errors.New("db: client already exists")
+	ErrClientProtected            = errors.New("db: cannot delete the default client")
+	ErrInvalidClientCredential    = errors.New("db: invalid client credential")
+	ErrCorrelationNotFound        = errors.New("db: correlation not found")
+	ErrFeedbackAlreadySubmitted   = errors.New("db: feedback already submitted for this correlation")
+	ErrCorrelationsNotImplemented = errors.New("db: correlations DAL not implemented")
 
 	// Storage — umbrella for driver/tx failures. Always wrapped via
 	// fmt.Errorf("...: %w: %w", ErrStorageBackend, underlying) so callers

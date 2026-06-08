@@ -3,7 +3,7 @@
 
 // Package search implements ranked retrieval.
 //
-// Three-layer fallback: porter-stemmed BM25 → trigram substring → fuzzy
-// (Levenshtein over the indexed vocabulary). Returns exact indexed text
-// with smart snippet extraction; never summaries or paraphrases.
+// Two-layer fallback: porter-stemmed BM25 → trigram substring. Returns
+// exact indexed text with smart snippet extraction; never summaries or
+// paraphrases.
 package search

@@ -20,20 +20,22 @@ import (
 // atomicity goes through Store.WithTx — composing two Clients()/Sessions()
 // calls does NOT share a transaction.
 type Store struct {
-	db       *sql.DB
-	logger   *logging.Logger
-	clients  *clientRepo
-	sessions *sessionRepo
-	events   *eventsRepo
-	sources  *sourcesRepo
-	chunks   *chunksRepo
+	db           *sql.DB
+	logger       *logging.Logger
+	clients      *clientRepo
+	sessions     *sessionRepo
+	events       *eventsRepo
+	sources      *sourcesRepo
+	chunks       *chunksRepo
+	correlations *correlationsRepo
 }
 
-func (s *Store) Clients() ClientRepo   { return s.clients }
-func (s *Store) Sessions() SessionRepo { return s.sessions }
-func (s *Store) Events() EventsRepo    { return s.events }
-func (s *Store) Sources() SourcesRepo  { return s.sources }
-func (s *Store) Chunks() ChunksRepo    { return s.chunks }
+func (s *Store) Clients() ClientRepo            { return s.clients }
+func (s *Store) Sessions() SessionRepo          { return s.sessions }
+func (s *Store) Events() EventsRepo             { return s.events }
+func (s *Store) Sources() SourcesRepo           { return s.sources }
+func (s *Store) Chunks() ChunksRepo             { return s.chunks }
+func (s *Store) Correlations() CorrelationsRepo { return s.correlations }
 
 func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *logging.Logger) (*Store, error) {
 	conn, err := sql.Open("pgx", dsn)
@@ -66,6 +68,7 @@ func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *loggin
 	s.events = &eventsRepo{queryer: conn, logger: logger}
 	s.sources = &sourcesRepo{queryer: conn, logger: logger}
 	s.chunks = &chunksRepo{queryer: conn, logger: logger}
+	s.correlations = &correlationsRepo{queryer: conn, logger: logger}
 	return s, nil
 }
 

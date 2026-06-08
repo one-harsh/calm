@@ -27,6 +27,7 @@ import (
 	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/clientreg"
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/feedback"
 	"github.com/one-harsh/calm/internal/ingest"
 	"github.com/one-harsh/calm/internal/server"
 	"github.com/one-harsh/calm/internal/session"
@@ -87,6 +88,7 @@ func bootstrap() (*harness, error) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 	clientSvc := clientreg.New(store, logging.Nop())
 
@@ -107,6 +109,7 @@ func bootstrap() (*harness, error) {
 	})
 	snapshotSvc := snapshot.New(store)
 	ingestSvc := ingest.New(store)
+	feedbackSvc := feedback.New(store.Correlations(), logging.Nop())
 	handler, err := server.NewHandler(server.Config{
 		MaxIngestPayloadKB:   1024,
 		RateLimitPerSecond:   100,
@@ -126,6 +129,7 @@ func bootstrap() (*harness, error) {
 			Snapshot: snapshotSvc,
 			Ingest:   ingestSvc,
 			Sources:  store.Sources(),
+			Feedback: feedbackSvc,
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,

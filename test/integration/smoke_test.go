@@ -33,7 +33,7 @@ func TestHarness_RoutesResolve(t *testing.T) {
 	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 }
 
-func TestHarness_RequestIDPropagation(t *testing.T) {
+func TestHarness_CorrelationIDPropagation(t *testing.T) {
 	t.Parallel()
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, env.serverURL+"/v1/sources", nil)
@@ -45,8 +45,8 @@ func TestHarness_RequestIDPropagation(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
-	assert.NotEmpty(t, resp.Header.Get("X-Request-Id"),
-		"context middleware must stamp a request id on every response")
+	assert.NotEmpty(t, resp.Header.Get("X-CALM-Correlation-Id"),
+		"context middleware must stamp a correlation id on every response")
 }
 
 func TestHarness_OpenAPIValidationFiresBeforeHandler(t *testing.T) {

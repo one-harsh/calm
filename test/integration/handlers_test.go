@@ -276,23 +276,11 @@ func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
-	if resp.StatusCode() != http.StatusOK {
-		t.Fatalf("status = %d; want 200; body=%s", resp.StatusCode(), string(resp.Body))
+	if resp.StatusCode() != http.StatusNoContent {
+		t.Fatalf("status = %d; want 204; body=%s", resp.StatusCode(), string(resp.Body))
 	}
-	if resp.JSON200 == nil {
-		t.Fatal("JSON200 nil on 200")
-	}
-	if resp.JSON200.Cascaded.Labels != 2 {
-		t.Errorf("cascaded.labels = %d; want 2", resp.JSON200.Cascaded.Labels)
-	}
-	if resp.JSON200.Cascaded.Sources != 1 {
-		t.Errorf("cascaded.sources = %d; want 1", resp.JSON200.Cascaded.Sources)
-	}
-	if resp.JSON200.Cascaded.Chunks != 2 {
-		t.Errorf("cascaded.chunks = %d; want 2", resp.JSON200.Cascaded.Chunks)
-	}
-	if resp.JSON200.Cascaded.Events != 1 {
-		t.Errorf("cascaded.events = %d; want 1", resp.JSON200.Cascaded.Events)
+	if len(resp.Body) != 0 {
+		t.Errorf("204 response carried %d bytes of body; want empty", len(resp.Body))
 	}
 
 	if n := countRows(t, env.sqlDB,
@@ -306,6 +294,11 @@ func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 		); n != 0 {
 			t.Errorf("DB row count in %s = %d; want 0 after delete", tbl, n)
 		}
+	}
+	if n := countRows(t, env.sqlDB,
+		`SELECT COUNT(*) FROM chunks WHERE source_id = $1`, src,
+	); n != 0 {
+		t.Errorf("chunks row count after delete = %d; want 0 (cascade through sources)", n)
 	}
 
 	// HLD explicit-close requirement: clients.last_activity_at bumped so
@@ -334,7 +327,7 @@ func TestDeleteSessionHandler_BumpsClientActivityToNow(t *testing.T) {
 
 	resp, err := env.client.DeleteSessionWithResponse(context.Background(),
 		&genapi.DeleteSessionParams{XCALMSessionToken: s.SessionToken})
-	if err != nil || resp.StatusCode() != http.StatusOK {
+	if err != nil || resp.StatusCode() != http.StatusNoContent {
 		t.Fatalf("DeleteSession: err=%v status=%d", err, resp.StatusCode())
 	}
 
@@ -416,8 +409,8 @@ func TestDeleteSessionHandler_IdempotentSecondDeleteReturns404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first DeleteSession: %v", err)
 	}
-	if first.StatusCode() != http.StatusOK {
-		t.Fatalf("first call: status = %d; want 200", first.StatusCode())
+	if first.StatusCode() != http.StatusNoContent {
+		t.Fatalf("first call: status = %d; want 204", first.StatusCode())
 	}
 	second, err := env.client.DeleteSessionWithResponse(context.Background(),
 		&genapi.DeleteSessionParams{XCALMSessionToken: s.SessionToken})

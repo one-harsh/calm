@@ -83,10 +83,10 @@ func (r *sourcesRepo) List(ctx context.Context, namespace string, sessionID int6
 	return out, nil
 }
 
-// HLD-DEVIATION: the HLD search section specifies a three-layer fallback
-// (BM25 RRF → trigram → fuzzy) with title-weighted ranking; smoke does a
-// single case-insensitive literal-substring scan over title+content,
-// unranked (id order), and tags every hit match_layer="primary".
+// HLD-DEVIATION: the HLD search section specifies a two-layer fallback
+// (BM25 RRF → trigram) with title-weighted ranking; smoke does a single
+// case-insensitive literal-substring scan over title+content, unranked
+// (id order), and tags every hit match_layer="primary".
 func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInput) ([]SearchResult, error) {
 	if namespace == "" {
 		return nil, ErrNamespaceRequired

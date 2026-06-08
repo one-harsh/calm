@@ -20,7 +20,7 @@ The shared deployment shape makes this worse, not better. A team running an inte
 
 - **No visibility into context quality.** Teams can't answer basic questions: how much of the token spend goes to data the model never uses? When a session degrades, is the model failing or is the context being polluted? Without instrumentation, the answer is a guess.
 
-- **Token spend scales with data volume, not with value.** Real tool outputs — logs, API responses, query results, file dumps — typically compress by an order of magnitude into a compact representation that preserves what the model actually needs: section titles, preview lines, and a searchable vocabulary of indexed terms. The raw content stays in a queryable store; only the compact form enters context. Specific compression ratios and per-team spend impact will be quantified against a workload-representative benchmark; the structural argument holds regardless of where the empirical numbers land.
+- **Token spend scales with data volume, not with value.** Real tool outputs — logs, API responses, query results, file dumps — typically compress by an order of magnitude into a compact representation that preserves what the model actually needs: section titles, preview lines, and a searchable vocabulary of indexed terms. The raw content stays in a queryable store; only the compact form enters context. Specific compression ratios and per-team spend impact vary by workload mix and content shape; the structural argument holds regardless of empirical numbers.
 
 ## Cost of inaction
 
@@ -32,7 +32,7 @@ Two dimensions, both real:
 
 ## Measurable quality
 
-CALM's claim to save tokens is instrumented, not asserted. Every session exposes signals — re-ingest rate, intent coverage, search-match-layer distribution, snapshot injection frequency, and more (§10 documents the full set) — that let operators detect quiet degradation alongside their existing workload-side outcome metrics (task completion, retry rates, user corrections). The risk that compression silently hurts answer quality is real; CALM's value isn't credible without making that risk observable.
+Both the cost and the quality dimensions are instrumented, not asserted. Every session exposes signals — re-ingest rate, intent coverage, search-match-layer distribution, snapshot injection frequency, and more (§10 documents the full set) — that let operators measure recovered token spend AND detect when compression is quietly degrading answer quality, alongside their existing workload-side outcome metrics (task completion, retry rates, user corrections). Cost and quality are CALM's twin observable concerns, both load-bearing.
 
 ## Other related work
 
@@ -65,6 +65,8 @@ This problem space has parallel efforts. [context-mode](https://github.com/mksgl
 - **Not a prompt engineering tool.** CALM manages what data is available for context — it doesn't touch prompts themselves, doesn't inject system messages, doesn't shape the model's reasoning patterns.
 
 - **Doesn't replace compaction.** Compaction is the LLM platform's responsibility. CALM reduces how often it fires and how much state is lost when it does, but doesn't eliminate the need.
+
+- **Not a workflow record.** A CALM session has one durable service state: active. Explicit close or TTL expiry deletes the session and all its child rows; no terminal state — completed, failed, abandoned — is retained. Workload outcomes are workload-resident, correlated via workload-side telemetry and via labels attached at session creation. Operators who need long-tail row-level retention configure an exporter sink to operator-resident storage (Postgres, OTLP, file, multi-sink); CALM does not mandate a sink. See Decision Log [DL14](#dl14).
 
 - **Not for solo install.** CALM is shared infrastructure deployed by a team or platform-ops engineer. Running a single-process CALM against a local data store on an individual developer's laptop is explicitly out of scope; that case is well-served by simpler tools optimized for single-process MCP.
 
@@ -147,7 +149,7 @@ Format-hinted (workload passes an optional `format` field):
 
 If no hint is provided, auto-detection handles the basics. New format-aware chunkers slot in behind the same interface.
 
-Workloads can pass `intents` (up to 3) alongside content to shape the compact summary's ordering. When intents are provided and content exceeds a configurable size threshold, CALM runs a search per intent against the just-indexed content and fuses the per-intent rankings via Reciprocal Rank Fusion (RRF) to order `summary`. The per-intent search uses the same three-layer fallback as workload-issued `/v1/search` queries — one search semantics, no carve-out for the ingest path. Each section in the summary declares which intents it addresses through a `matches` array — derived from the section's rank in each intent's individual top-K results, not from raw scores (see Decision Log [DL05](#dl05)).
+Workloads can pass `intents` (up to 3) alongside content to shape the compact summary's ordering. When intents are provided and content exceeds a configurable size threshold, CALM runs a search per intent against the just-indexed content and fuses the per-intent rankings via Reciprocal Rank Fusion (RRF) to order `summary`. The per-intent search uses the same two-layer fallback as workload-issued `/v1/search` queries — one search semantics, no carve-out for the ingest path. Each section in the summary declares which intents it addresses through a `matches` array — derived from the section's rank in each intent's individual top-K results, not from raw scores (see Decision Log [DL05](#dl05)).
 
 The summary always contains all indexed section titles; intents shape *ordering*, not inclusion. There is no binary match-or-fallback semantics — sections matching no intents simply appear lower in the ordering with empty `matches`. Without `intents`, the summary is in document order and `matches` is omitted per section.
 
@@ -155,15 +157,16 @@ The compact representation also carries a **distinctive-terms** vocabulary deriv
 
 ### Knowledge Store
 
-The query layer over the ingested content. Search uses ranked retrieval with a multi-layer fallback:
+The query layer over the ingested content. Search uses ranked retrieval with a two-layer fallback:
 
 1. **Stemmed / identifier-preserving search.** Porter stemming on prose-shaped chunks ("caching" matches "cached"); identifier-preserving tokenization with no stemming on code-shaped chunks (`getUserById` survives as a single token). Tokenization branches on the chunk's `content_type` to give each shape its appropriate strategy (see Decision Log [DL06](#dl06)). AND across query terms first; falls back to OR.
 2. **Trigram substring matching.** Partial-term matches that the layer-1 tokenizers miss — `connPool` finds `connectionPool`.
-3. **Fuzzy correction.** Levenshtein distance against the per-session indexed vocabulary — `postres` corrects to `postgres` and re-runs through layers 1 and 2.
 
 Results are exact indexed text with smart snippet extraction around matching terms. No summaries, no paraphrases.
 
 BM25 ranking weights title fields higher than content, so heading matches surface first. Backed by a BM25-capable Postgres extension (`pg_search` or `pg_textsearch`) with `pg_trgm` for the trigram layer. The choice of BM25 over vector/embedding search is discussed in Decision Log [DL07](#dl07).
+
+Search responses are byte-budgeted: workloads pass a response-level byte budget on each `/v1/search` call, and an allocator across queries decides which exact-text hits fit. The default allocator (rank-round) preserves multi-query coverage by offering every query's first candidate before any query's second; alternative allocators — score-proportional, knapsack-greedy, equal-budget, and MMR diversification — are configurable per namespace, with per-request override available. The allocator reports per-query omission counts so workloads can observe when budgets were tight. See Decision Log [DL15](#dl15).
 
 ### Session State
 
@@ -207,7 +210,7 @@ Representative payloads:
 
 **Capture path.** Workloads POST events to `/v1/events`. The MCP adapter does this on behalf of the coding agent it serves — inspecting tool calls passing through it and deriving event records from the tool name, input, and result. Internal LLM applications and pipelines POST events directly from their own code.
 
-**Snapshot is a generic event store.** State reconstruction returns events ordered by priority and recency within a byte budget. CALM does not interpret events' content to build a structured state representation — workloads needing structured shapes build them in their own middleware from the returned event stream. Pluggable per-client snapshot strategies are deferred as part of MVP scoping (see Decision Log [DL08](#dl08)).
+**Snapshot is a generic event store.** State reconstruction returns events ordered by priority and recency within a byte budget. CALM does not interpret events' content to build a structured state representation — workloads needing structured shapes build them in their own middleware from the returned event stream. Pluggable per-client snapshot strategies are not part of CALM's surface (see Decision Log [DL08](#dl08)).
 
 ---
 
@@ -259,7 +262,7 @@ Six rules. Non-negotiable.
 │  ┌────────────────────────────────────────────────────────┐   │
 │  │                      HTTP API                          │   │
 │  │  /v1/sessions  /v1/ingest  /v1/search  /v1/events      │   │
-│  │  /v1/snapshot  /v1/sources       /v1/manage/*          │   │
+│  │  /v1/snapshot  /v1/sources  /v1/feedback  /v1/manage/* │   │
 │  └────────┬──────────┬─────────┬──────────┬───────────────┘   │
 │           │          │         │          │                   │
 │  ┌────────▼──────────▼───┐  ┌──▼──────────▼───────────────┐   │
@@ -277,7 +280,7 @@ Six rules. Non-negotiable.
 │  │                                                        │   │
 │  │  - BM25 ranked search                                  │   │
 │  │  - Tokenization branches on content_type               │   │
-│  │  - Trigram → Fuzzy fallback                            │   │
+│  │  - Trigram fallback                                    │   │
 │  │  - Smart snippet extraction                            │   │
 │  │  - Per-session vocabulary index                        │   │
 │  └───────────────────────┬────────────────────────────────┘   │
@@ -391,6 +394,18 @@ Developer starts Claude Code session
 
 The API is HTTP REST with JSON request and response bodies (see Decision Log [DL09](#dl09) for the protocol choice). All requests carry the namespace API key via the `X-CALM-API-Key` header. API keys are mapped to namespaces in service configuration (see Decision Log [DL10](#dl10)); CALM resolves the key to its namespace — a content-agnostic partition, not a hierarchical tenant (see Decision Log [DL11](#dl11)) — and enforces it on every operation. Workloads never pass a namespace directly. Per-workload attribution comes from the `client` identifier. In namespaces configured with `require_client_credentials: true`, workloads additionally present a per-client bearer token via `Authorization: Bearer <token>` — that token authenticates the client identity, replacing the body-field claim with a server-verified credential. The MCP adapter follows the same model — developers configure the adapter binary with the team's namespace API key and the adapter self-identifies via the registered client (token in credentialed mode, name in body otherwise).
 
+## Response headers
+
+Every CALM response carries three observability headers:
+
+- **`X-CALM-Correlation-Id`** — server-minted UUIDv7 unique to this request. Present on every response (2xx, 4xx, 5xx). Workloads retain this for per-call correlation in their own logs and observability surfaces.
+- **`X-Workload-Request-Id`** — echoed when the workload provided one on the inbound request. Optional, intended for the workload's own log correlation; CALM never uses it internally. Bounded to 256 characters; longer values are rejected with 400.
+- **`traceresponse`** — W3C trace-context. Emitted on responses to requests that carried a valid inbound `traceparent`; the header carries the trace-id from the inbound context. Workloads with OTel-compatible tracing infrastructure join their distributed trace to CALM's span chain. Requests without an inbound `traceparent` receive no `traceresponse` — CALM does not start unsolicited server spans for the purpose of populating this header.
+
+These three are independent — workloads opt into whichever subset their observability stack supports.
+
+## Path groups
+
 Two path groups on the same service:
 
 - `/v1/*` — core API. Called by workloads in the hot path. Every request is scoped to a session. The session must belong to the API key's namespace.
@@ -400,7 +415,7 @@ Two path groups on the same service:
 
 ## Integration contract
 
-Every workload that uses CALM follows the same six-obligation pattern. The shape is uniform across internal LLM applications, automated pipelines, and the MCP adapter; only the surrounding code differs by workload.
+Every workload that uses CALM follows the same six-obligation pattern, plus an optional seventh for workloads with outcome signals. The shape is uniform across internal LLM applications, automated pipelines, and the MCP adapter; only the surrounding code differs by workload.
 
 0. **Register the workload's client at install time.** `POST /v1/clients/{name}` once per workload-deployment. Establishes the client as a first-class entity in the namespace. Returns 409 if the name is already taken; workloads that intend restart-safety catch 409 and treat as success. In namespaces configured with `require_client_credentials: true`, registration returns a one-time client token that the workload must persist and present via `Authorization: Bearer <token>` on subsequent operations — providing real per-workload isolation within a shared namespace. Lost tokens require `POST /v1/clients/{name}/rotate-token` (requires the current token) or operator intervention via the management API.
 
@@ -416,7 +431,9 @@ Every workload that uses CALM follows the same six-obligation pattern. The shape
 
 5. **Tear down explicitly when work completes.** `DELETE /v1/sessions` (with `X-CALM-Session-Token`) at end of work. If the workload crashes or disconnects, inactivity TTL handles the cleanup.
 
-The MCP adapter implements this contract on behalf of the coding agent it serves — calling createSession, persisting the returned session_token, calling ingest as tool calls pass through, posting events derived from the tool calls, deleting the session on shutdown. Internal LLM applications and automated pipelines implement the same five obligations directly from their own middleware. Any HTTP client in any language that satisfies these obligations is CALM-compatible. CALM ships reference middleware as working examples of the contract, not as libraries to take a hard dependency on.
+6. **(Optional) Post outcome feedback when you can.** `POST /v1/feedback` (with `X-CALM-Session-Token`) referencing the `X-CALM-Correlation-Id` from a value-producing call (`/v1/ingest`, `/v1/search`, `/v1/snapshot`), plus an outcome enum (`success | retry | degraded`). Workloads with outcome signals (eval harnesses with ground truth, pipelines with step verifiers, slackbots with user-reaction signals) post within the feedback TTL window while the session is still alive. Workloads without outcome signals (notably the MCP adapter) skip this obligation. Workloads whose outcome signal arrives only after session teardown (delayed human review, batch verifiers) either keep the session alive until feedback fires or accept no outcome attribution for those calls — the session-token requirement is the within-namespace forgery boundary.
+
+The MCP adapter implements this contract on behalf of the coding agent it serves — calling createSession, persisting the returned session_token, calling ingest as tool calls pass through, posting events derived from the tool calls, deleting the session on shutdown. Internal LLM applications and automated pipelines implement the same six obligations directly from their own middleware; workloads with outcome signals additionally post feedback (see obligation 6). Any HTTP client in any language that satisfies these obligations is CALM-compatible. CALM ships reference middleware as working examples of the contract, not as libraries to take a hard dependency on.
 
 ---
 
@@ -458,22 +475,9 @@ Creates a session. CALM mints the session credential server-side. The namespace 
 
 ### `DELETE /v1/sessions`
 
-Tears down a session. The target session is identified by `X-CALM-Session-Token`. All indexed content and events for this session are deleted (cascading via FK). If the workload doesn't call this, inactivity TTL handles cleanup.
+Tears down a session. The target session is identified by `X-CALM-Session-Token`. All indexed content and events for this session are removed. If the workload doesn't call this, inactivity TTL handles cleanup.
 
-**Response (200):**
-
-```json
-{
-  "cascaded": {
-    "sources": 12,
-    "chunks": 84,
-    "events": 47,
-    "labels": 3
-  }
-}
-```
-
-The cascade counts let the workload (and any audit logging) record what was removed without a follow-up read.
+**Response (204):** No body.
 
 ### `POST /v1/ingest`
 
@@ -564,14 +568,16 @@ Requires the `X-CALM-Session-Token` header.
 {
   "queries": ["connection timeout", "retry configuration"],
   "source": "web-search-results",
-  "limit": 3
+  "limit": 3,
+  "budget_bytes": 4096
 }
 ```
 
 - `source` — optional. Scopes the search to a specific source label.
 - `limit` — maximum results per query.
+- `budget_bytes` — optional. Response-level byte budget across all queries. Defaults to 4 KB; bounded by an operator-configurable ceiling (default 64 KB). Over-ceiling requests are clamped, not rejected (parallel to session-TTL clamping; the response echoes the committed value).
 
-Returns exact indexed text with smart snippets around matching terms. The multi-layer fallback (primary tokenizer → trigram → fuzzy) is internal — the workload just sends a query and gets ranked results.
+Returns exact indexed text with smart snippets around matching terms. The two-layer fallback (primary tokenizer → trigram) is internal — the workload just sends a query and gets ranked results.
 
 Search is not scoped by `content_type`. A session that has indexed a mix of prose and code chunks (e.g., a coding-agent run that ingested both API docs and source files) gets results from both tokenization paths in one ranked list — the layer-1 query runs against both the prose and code FTS indexes and the two rankings are fused (see [§7](#7-data-model--storage) for the fusion mechanics). The workload sees a single result list and does not need to know which tokenizer matched.
 
@@ -579,9 +585,12 @@ Search is not scoped by `content_type`. A session that has indexed a mix of pros
 
 ```json
 {
+  "budget_bytes": 4096,
+  "byte_budget_used": 1893,
   "results": [
     {
       "query": "connection timeout",
+      "budget_omitted": 0,
       "hits": [
         {
           "title": "Connection Pool Exhaustion",
@@ -593,6 +602,7 @@ Search is not scoped by `content_type`. A session that has indexed a mix of pros
     },
     {
       "query": "retry configuration",
+      "budget_omitted": 2,
       "hits": [
         {
           "title": "Retry Backoff Errors",
@@ -606,7 +616,17 @@ Search is not scoped by `content_type`. A session that has indexed a mix of pros
 }
 ```
 
-`match_layer` is one of `primary`, `trigram`, `fuzzy` — indicating which fallback layer produced the match. `primary` covers both the prose and code FTS indexes (which are RRF-fused at layer 1, per [§7](#7-data-model--storage)) — the workload does not see, and does not need to disambiguate, which tokenizer the underlying chunk was indexed with. Operators use `match_layer` to spot quality issues (frequent `fuzzy` matches suggest the indexed vocabulary doesn't match what workloads search for).
+Result assembly is byte-budgeted. The allocator runs in rank rounds: every query's first-ranked candidate is offered before any query's second, every second before any third. A candidate is included only when its compact-JSON-serialized size (UTF-8 bytes of its standalone `SearchHit` representation) fits the remaining budget. Snippets are never further truncated — their sizing was already settled at index time by smart-snippet extraction.
+
+Per-query `budget_omitted` reports the count of otherwise-returnable candidates (from that query's top-`limit` set) that were not included because the budget didn't accommodate them. Response-level `byte_budget_used` reports the actual bytes consumed. `budget_bytes` echoes the committed budget (after operator-ceiling clamping); workloads detect clamping by comparing requested vs echoed.
+
+Overshoot rule: if no candidate fits the budget, the first-considered candidate (query[0]'s first-ranked hit) is included anyway, with `byte_budget_used` reflecting the actual size. This preserves the never-worse property — workloads with too-tight budgets still receive their highest-confidence content rather than an empty result. Parallel to the snapshot endpoint's P1 overshoot rule (§8). See Decision Log [DL15](#dl15).
+
+The default allocator is rank-round. Operators select alternatives per namespace via configuration; workloads may override per request by setting `X-CALM-Allocator-Variant` (when the namespace allows override). Supported variants: `rank-round` (default — multi-query coverage), `score-proportional` (allocates proportionally to per-query rank scores), `knapsack-greedy` (DP knapsack maximizing sum-of-relevance), `equal-budget` (`budget / N` per query), `mmr` (Maximal Marginal Relevance — diversifies against near-duplicate hits across queries). All variants honor the same budget contract: no overshoot beyond the first-considered candidate, no snippet truncation, per-query `budget_omitted` accounting unchanged.
+
+`match_layer` is one of `primary`, `trigram` — indicating which fallback layer produced the match. `primary` covers both the prose and code FTS indexes (which are RRF-fused at layer 1, per [§7](#7-data-model--storage)) — the workload does not see, and does not need to disambiguate, which tokenizer the underlying chunk was indexed with. The field is diagnostic context: operators read it alongside `search.hit_rate` and `search.zero_results` when investigating quality issues, not as a standalone signal.
+
+The response surface deliberately excludes raw BM25/RRF scores, tokenizer identity (which FTS index produced each match — `match_layer=primary` covers both), per-request ranking weights, and generated explanations of result ordering. Exposing these would tempt workloads to re-rank or filter results based on signals CALM doesn't standardize across deployments or time. The diagnostic surface (`match_layer`, `byte_budget_used`, `budget_bytes`, per-query `budget_omitted`) is the full set of observability fields the response carries.
 
 ### `GET /v1/sources`
 
@@ -661,6 +681,12 @@ GET /v1/snapshot?budget_bytes=2048
 ```json
 {
   "byte_budget_used": 1893,
+  "omitted_by_priority": {
+    "1": 0,
+    "2": 5,
+    "3": 18,
+    "4": 12
+  },
   "events": [
     { "type": "user_decision", "priority": 1, "data": {}, "created_at": "..." },
     { "type": "error_observed", "priority": 2, "data": {}, "created_at": "..." }
@@ -668,7 +694,38 @@ GET /v1/snapshot?budget_bytes=2048
 }
 ```
 
+The response carries explicit coverage diagnostics: `omitted_by_priority` breaks the omission count down by priority tier (1-4). Workloads detect budget pressure via `sum(omitted_by_priority) > 0`; the returned event count is `events.length`; the session's total event count is `events.length + sum(omitted_by_priority)`. The P1 overshoot rule remains intact — if no event fits and the most-recent P1 alone exceeds the budget, that one event is returned anyway and `byte_budget_used > budget_bytes` signals the overshoot.
+
 Consumed by any workload that needs a compressed view of session state. On the coding-agent side, where the host exposes lifecycle hooks (PreCompact, SessionStart), those hooks GET this endpoint and inject the result on compaction or resume — an optional, host-specific enhancement rather than a baseline requirement.
+
+### `POST /v1/feedback`
+
+Records per-call workload outcome that joins CALM's internal signals at metric emission time. Workloads with outcome signals (eval harnesses with ground truth, pipelines with step verifiers, slackbots with user-reaction signals) post feedback referencing the `X-CALM-Correlation-Id` from a value-producing call (`/v1/ingest`, `/v1/search`, `/v1/snapshot`). Workloads without outcome signals don't call this endpoint.
+
+Requires the `X-CALM-Session-Token` header.
+
+```json
+{
+  "correlation_id": "019e9638-bf05-7402-ad13-540049ea9480",
+  "outcome": "success"
+}
+```
+
+- `correlation_id` — the UUIDv7 value from the `X-CALM-Correlation-Id` response header of the originating call. Required.
+- `outcome` — workload-state declaration. One of `success`, `retry`, `degraded`. Required. Unordered — CALM does not interpret which outcome is "better"; the workload owns the semantics.
+
+**Response paths:**
+
+| Status | Code | Cause |
+|---|---|---|
+| 204 | — | Feedback recorded |
+| 400 | `invalid_outcome` | `outcome` not in enum |
+| 400 | `invalid_correlation_id` | `correlation_id` not a valid UUIDv7 |
+| 404 | `correlation_not_found` | correlation row absent within the resolved session — forgery attempt or stale workload state |
+| 409 | `feedback_already_submitted` | second feedback for the same correlation_id |
+| 410 | `feedback_window_expired` | correlation_id's UUIDv7 timestamp is older than the feedback TTL window |
+
+Feedback must arrive within the per-namespace feedback TTL window (default 60 minutes from the originating call; configurable per namespace, bounded `[1, 1440]`). The handler enforces this via the embedded UUIDv7 timestamp in `correlation_id` — no DB lookup is required to determine if a feedback POST is in-window. The `correlation_id` is one-shot: a successful feedback POST cannot be revised by a subsequent POST. Correlations that never receive feedback contribute to the implicit coverage gap, which operators compute as `(total value-producing calls) − (feedback received)` from existing counters.
 
 ---
 
@@ -682,7 +739,7 @@ Lists sessions in the API key's namespace. Supports filtering by client and arbi
 GET /v1/manage/sessions?client=factory-pipeline&labels.env=production
 ```
 
-Returns session metadata — labels, the client they belong to, creation time, last activity time, event counts. Session credentials are not surfaced; operators correlate by `client` and labels.
+Returns metadata for currently-active sessions in the namespace — labels, the client they belong to, creation time, last activity time, event counts. Session credentials are not surfaced; operators correlate by `client` and labels. CALM does not retain terminal-state records (see Decision Log [DL14](#dl14)); closed or TTL-expired sessions are not queryable.
 
 ### `DELETE /v1/manage/sessions`
 
@@ -693,15 +750,7 @@ DELETE /v1/manage/sessions?client=slackbot&labels.env=staging&dry_run=true
 → { "affected_sessions": 47 }
 
 DELETE /v1/manage/sessions?client=slackbot&labels.env=staging
-→ {
-    "deleted_sessions": 47,
-    "cascaded": {
-      "sources": 188,
-      "chunks": 1240,
-      "events": 632,
-      "labels": 96
-    }
-  }
+→ { "deleted_sessions": 47 }
 ```
 
 For namespace lifecycle management — "staging environment reset, wipe all sessions belonging to this client."
@@ -720,11 +769,11 @@ Lists clients in the API key's namespace.
 }
 ```
 
-Read-only at v1 — operators can see which clients exist and their activity, but per-client policy configuration is deferred as part of MVP scoping. Useful for spotting typo-clients and dead workloads.
+Read-only — operators can see which clients exist and their activity. Per-client policy configuration is not part of the management API surface. Useful for spotting typo-clients and dead workloads.
 
 ### `DELETE /v1/manage/clients/{client}`
 
-Removes a client and all its sessions. Cascading delete through `sessions.client` FK — all the client's sessions, sources, chunks, events, and labels are removed.
+Removes a client and all its sessions — all the client's sessions, sources, chunks, events, and labels are removed.
 
 ```
 DELETE /v1/manage/clients/slackbot-old?dry_run=true
@@ -733,13 +782,7 @@ DELETE /v1/manage/clients/slackbot-old?dry_run=true
 DELETE /v1/manage/clients/slackbot-old
 → {
     "deleted_client": "slackbot-old",
-    "deleted_sessions": 12,
-    "cascaded": {
-      "sources": 48,
-      "chunks": 312,
-      "events": 188,
-      "labels": 24
-    }
+    "deleted_sessions": 12
   }
 ```
 
@@ -844,7 +887,7 @@ Two FTS indexes are maintained alongside `chunks`, with each chunk routed to one
 
 **Layer-1 fusion.** A search query at layer 1 (the primary-tokenizer layer) runs against both indexes. Each index produces a BM25-ranked result list (top `2 × limit` per index, to give the fusion enough material). The two lists are fused via Reciprocal Rank Fusion with `k = 60` (the conventional default), and the top-`limit` results returned. The two indexes are fused at every layer-1 query; there is no caller-side scoping to only-prose or only-code.
 
-**Layer 2 and beyond.** The `pg_trgm` trigram index over `chunks.content` is a single index serving layer 2 (substring fallback) — no fusion at that layer. Layer 3 (fuzzy correction against `vocabulary`) re-runs the corrected query through layers 1 and 2; results from layer 3 can themselves be RRF-fused at layer 1 if the corrected query matches both content-type indexes.
+**Layer 2.** The `pg_trgm` trigram index over `chunks.content` is a single index serving layer 2 (substring fallback) — no fusion at that layer.
 
 This is a distinct RRF use from the intent-ordering RRF on ingest (DL05): there, RRF fuses *per-intent rankings* to order the compact summary; here, RRF fuses *per-tokenizer rankings* within a single search query. Same algorithm, different inputs, different purposes.
 
@@ -852,7 +895,7 @@ BM25 field weights: title at 2.0, content at 1.0. Heading matches surface first.
 
 ### Vocabulary
 
-Distinct terms extracted from ingested content per session. Powers the distinctive-terms output in the ingest response and the fuzzy correction layer.
+Distinct terms extracted from ingested content per session. Powers the distinctive-terms output in the ingest response.
 
 ```
 vocabulary
@@ -888,12 +931,32 @@ Deduplication: before inserting, the last N events in the session (configurable,
 
 FIFO eviction: max events per session is capped (default 1000). When exceeded, the lowest-priority oldest events are deleted first. P1 events are never evicted while lower-priority events exist.
 
+### Correlations
+
+Per-call observability rows. Created on every value-producing call (`/v1/ingest`, `/v1/search`, `/v1/snapshot`); identified by the call's `X-CALM-Correlation-Id` (UUIDv7, stored raw as 16 bytes). The row holds enough context for outcome-attributed metric emission when feedback arrives.
+
+```
+correlations
+  correlation_id        BYTEA PRIMARY KEY            -- UUIDv7 (16 bytes raw)
+  session_id            BIGINT                       -- FK to sessions(id) ON DELETE CASCADE
+  request_type          TEXT NOT NULL                -- 'ingest' | 'search' | 'snapshot'
+  request_meta          JSONB NOT NULL               -- signal-pertinent dimensions at call time
+  outcome               TEXT NOT NULL DEFAULT 'unset' -- UPDATEd by feedback handler
+  feedback_received_at  TIMESTAMPTZ                  -- nullable; null until feedback arrives
+  created_at            TIMESTAMPTZ NOT NULL
+  INDEX (session_id)
+```
+
+`request_meta` carries the signal dimensions the metric emitter needs to label the outcome-attributed metric series — for an ingest call: `source`, intent zero-match flag, summary truncated flag; for a search call: `match_layer` distribution, `allocator` variant, `budget_omitted` total; for a snapshot call: `omitted_by_priority` summary. The shape is workload-emitter-specific; CALM does not interpret it beyond its role in metric labeling at feedback receipt.
+
+Feedback received within the TTL window UPDATEs `outcome` and `feedback_received_at` on the existing row, and emits the outcome-attributed metric. The `correlation_id` PK enforces single-shot — a second feedback for the same correlation hits a 409 at the handler. The handler enforces the feedback-acceptance window via the embedded UUIDv7 timestamp + per-namespace `feedback_ttl_minutes`; no stored `expires_at` is required. Rows are removed when the session is torn down (explicit close or inactivity TTL). Correlations that never receive feedback contribute to the `outcome=unset` aggregate, which operators compute as `(total value-producing calls) − (feedback received)` via PromQL — CALM does not emit an explicit `outcome=unset` metric series.
+
 ## Cleanup
 
 Two paths, whichever fires first:
 
-- **Explicit close.** Workload calls `DELETE /v1/sessions` with `X-CALM-Session-Token`. Everything under that session — sources, chunks, vocabulary, events, labels — is deleted via cascade. The `clients.last_activity_at` for the session's client is updated.
-- **Inactivity TTL.** A background scanner finds sessions where `now() - last_activity > ttl_minutes` and deletes them. Same cascade as explicit close. Catches workloads that crash or disconnect without calling DELETE.
+- **Explicit close.** Workload calls `DELETE /v1/sessions` with `X-CALM-Session-Token`. Everything under that session — sources, chunks, vocabulary, events, labels, correlations — is removed. The `clients.last_activity_at` for the session's client is updated.
+- **Inactivity TTL.** A background scanner finds sessions where `now() - last_activity > ttl_minutes` and removes them. Catches workloads that crash or disconnect without calling DELETE.
 
 The TTL scan interval is configurable; default 60 seconds.
 
@@ -903,13 +966,15 @@ The TTL scan interval is configurable; default 60 seconds.
 
 The research into semantic search without embeddings identified a high-impact technique: LLM-generated document enrichment at index time (synthetic queries, summaries, key concepts stored as separate boosted FTS fields). This closes 50–70% of the gap to dense neural retrieval with zero query-time overhead.
 
-This is deferred as premature optimization. CALM's typical content — logs, metrics, stack traces, CLI output, structured tool responses — has predictable vocabulary that BM25 with the three-layer fallback handles well. The ephemeral session model also limits the amortization window for enrichment. The schema can accommodate enrichment fields without structural changes if search quality data later justifies it.
+This is deferred as premature optimization. CALM's typical content — logs, metrics, stack traces, CLI output, structured tool responses — has predictable vocabulary that BM25 with the two-layer fallback handles well. The ephemeral session model also limits the amortization window for enrichment. The schema can accommodate enrichment fields without structural changes if search quality data later justifies it.
 
 ---
 
 # 8. Session Lifecycle
 
 Sessions are explicit. Created by the workload, used during the workload's unit of work, torn down when done. CALM does not auto-create sessions — a request bearing an unknown `X-CALM-Session-Token` returns 404 (see Decision Log [DL03](#dl03)). The token is server-minted; presenting one CALM didn't issue (or one whose session has been deleted or TTL-expired) is structurally distinguishable from a fresh create request.
+
+A CALM session has one durable service state: **active**. Explicit close or TTL expiry deletes the session and all its child rows; no terminal state — completed, failed, abandoned, expired — is retained. Aggregate observability (counts, distributions, rates labeled by namespace and client) is emitted via OpenTelemetry to the operator's metric backend. Operators who need long-tail row-level retention configure an exporter sink to operator-resident storage (Postgres, OTLP, file, multi-sink); CALM does not mandate a sink, does not expose terminal-state queries, and does not retain a durable session ledger. See Decision Log [DL14](#dl14).
 
 ## Creation
 
@@ -939,7 +1004,7 @@ CALM reads the session's events, sorts them by `(priority asc, created_at desc)`
 
 The snapshot is built on demand from current events, not pre-computed and stored. It's cheap — a database read plus serialization, single-digit milliseconds for typical session sizes.
 
-**Budget overflow.** If higher-priority events alone exceed the budget, CALM still returns the most recent P1 events that fit and sets `budget_exceeded: true` on the response. The workload gets a partial snapshot rather than nothing; it can request a larger budget on retry if its context allows. If even the single most-critical event (the most-recent P1) exceeds the entire budget on its own, CALM returns that one event anyway — overshooting the budget rather than returning an empty snapshot — consistent with P1 being state that must survive reconstruction at all costs. Lower-priority tiers get no such exception: if no event fits and none is P1, the snapshot is empty with `budget_exceeded: true`.
+**Budget overflow.** If higher-priority events alone exceed the budget, CALM still returns the most recent P1 events that fit; `omitted_by_priority` shows which tiers got cut. The workload gets a partial snapshot rather than nothing; it can request a larger budget on retry if its context allows. If even the single most-critical event (the most-recent P1) exceeds the entire budget on its own, CALM returns that one event anyway — overshooting the budget rather than returning an empty snapshot — consistent with P1 being state that must survive reconstruction at all costs; the overshoot is visible via `byte_budget_used > budget_bytes`. Lower-priority tiers get no such exception: if no event fits and none is P1, the events array is empty and `omitted_by_priority` reflects what got cut.
 
 **Who calls this and when:**
 
@@ -951,9 +1016,9 @@ The snapshot is built on demand from current events, not pre-computed and stored
 
 Two paths, whichever fires first.
 
-**Explicit close.** Workload calls `DELETE /v1/sessions` with `X-CALM-Session-Token`. Everything under that session — sources, chunks, vocabulary, events, labels — is deleted via cascade. The workload is done and says so.
+**Explicit close.** Workload calls `DELETE /v1/sessions` with `X-CALM-Session-Token`. Everything under that session — sources, chunks, vocabulary, events, labels, correlations — is removed. The workload is done and says so.
 
-**Inactivity TTL.** A background scanner finds sessions where `now() - last_activity > ttl_minutes` and deletes them. Same cascade as explicit close. Catches workloads that crashed, disconnected, or didn't clean up.
+**Inactivity TTL.** A background scanner finds sessions where `now() - last_activity > ttl_minutes` and removes them. Catches workloads that crashed, disconnected, or didn't clean up.
 
 TTL is configurable per session at creation time (clamped to an operator-set ceiling). Default depends on the workload pattern — a pipeline step might set 30 minutes; an interactive session might set 4 hours; an MCP adapter session might leave the deployment default.
 
@@ -1083,9 +1148,14 @@ These are the numbers that answer "is CALM paying for itself."
 
 - `search.hit_rate` — percentage of queries that returned at least one result
 - `search.zero_results` — count of queries with no matches
-- `search.match_layer` — distribution across `primary`, `trigram`, and `fuzzy`. If `fuzzy` is firing frequently, the indexed vocabulary doesn't match query vocabulary — a signal that the workload's content shape may need a different chunking strategy.
+- `search.match_layer` — distribution across `primary` and `trigram`. Diagnostic context, not an action trigger. When other metrics (`search.hit_rate`, `search.zero_results`, `ingest.reingest_rate`) surface a quality issue, the match_layer distribution helps explain what the fallback was doing — for example, a drop in `hit_rate` combined with elevated trigram rate suggests workload query patterns are shifting away from what layer-1 tokenization handles cleanly.
 - `search.latency_ms` — per-query latency
 - `ingest.intent.coverage` — when intents are provided on ingest, the average fraction of sections in the response with non-empty `matches`. Low coverage suggests workloads are providing intents that don't align with the content vocabulary.
+
+The search-budget metrics below carry an `allocator` label identifying which variant produced the budgeted result, enabling A/B comparison across `rank-round`, `score-proportional`, `knapsack-greedy`, `equal-budget`, and `mmr`.
+
+- `search.budget_exhausted` — count of `/v1/search` calls where budget forced at least one omission (any `budget_omitted > 0` across the response's queries). Elevated rates suggest workloads consistently request too-tight budgets or that the content set has hits exceeding typical budget sizes.
+- `search.results.omitted` — total count of `SearchHit` omissions across all queries due to budget exhaustion.
 
 ### Session lifecycle
 
@@ -1103,7 +1173,33 @@ Cost metrics tell you CALM is saving tokens. These tell you whether the model is
 - `ingest.reingest_rate` — how often the same source label is re-indexed within a session. A workload re-ingesting a source it already indexed is a signal that the compact representation wasn't sufficient.
 - `search.after_ingest_rate` — how often a `/v1/search` call follows a `/v1/ingest` on the same source within the same session turn. Expected behavior for iterative workflows; elevated rates on first turns suggest compact summaries aren't landing.
 - `snapshot.injection_count` — how often `/v1/snapshot` is called. Tracks how frequently session continuity is actually exercised, not just available.
+- `snapshot.events.returned` — counter of events included in snapshot responses, summed across calls.
+- `snapshot.events.omitted` — counter of events the snapshot budget forced to drop, summed across calls.
+- `snapshot.priority.coverage` — gauge of events returned at each priority divided by total events at that priority, labeled by priority (1–4). Operators monitor for sustained tier degradation — e.g., P1 coverage falling below 100% repeatedly indicates session events are structurally exceeding the snapshot budget.
 - `ingest.intent.zero_match_rate` — when intents are provided, the percentage of ingest calls where every section ended up with an empty `matches` array (no section was addressed by any intent). High rates suggest the intents don't align with the content's vocabulary — a signal to revisit either the intent phrasing or the workload's chunking strategy for that content type.
+
+### Outcome attribution
+
+When a workload posts feedback referencing a value-producing call's `correlation_id`, CALM emits outcome-attributed metric series mirroring the signal-bearing metrics, labeled with the declared outcome.
+
+**Direct feedback counters** (labeled by namespace + client):
+
+- `feedback.received_total` — count of successful `/v1/feedback` POSTs, additionally labeled by `outcome` (`success`, `retry`, `degraded`).
+- `feedback.late_arrival_total` — count of `/v1/feedback` POSTs rejected with 410 because the correlation's UUIDv7 timestamp was outside the per-namespace feedback TTL window. Elevated rates suggest workloads consistently miss the TTL — either widen the TTL or fix the integration's feedback latency.
+
+**Outcome-attributed mirror metrics.** For each signal-bearing metric, an `outcome_attributed.<family>` series is emitted at feedback receipt, carrying the same dimensions as the original plus `outcome` and `client` labels:
+
+- `outcome_attributed.search.match_layer{layer=primary|trigram, outcome=...}`
+- `outcome_attributed.search.budget_exhausted{allocator=..., outcome=...}`
+- `outcome_attributed.ingest.reingest_rate{outcome=...}`
+- `outcome_attributed.ingest.intent.zero_match_rate{outcome=...}`
+- `outcome_attributed.snapshot.priority.coverage{priority=..., outcome=...}`
+
+Operators query: "of the search calls where `match_layer=trigram` fired, what fraction got outcome `degraded`?" → `outcome_attributed.search.match_layer{layer=trigram, outcome=degraded} / outcome_attributed.search.match_layer{layer=trigram}`. With `client` labels, the same query partitions by workload.
+
+**Implicit coverage gap.** Workloads that don't post feedback (notably the MCP adapter) don't contribute to any `outcome_attributed.*` series. Their traffic shows up in the underlying signal metrics (`search.match_layer`, etc.) but not in the outcome-attributed counterparts. Operators compute the unmeasured portion as `(total value-producing calls) − sum(outcome_attributed by outcome)` per signal family — the gap is the operator's `outcome=unset` view.
+
+The outcome-attribution pattern is opt-in workload-side: workloads with outcome signals post feedback; workloads without don't. CALM does not emit anything to fill the gap automatically.
 
 ### Service health
 
@@ -1121,7 +1217,7 @@ Traces help diagnose latency — is it the database, the chunking, or the search
 
 ## Structured Logging
 
-JSON-formatted logs to stdout. Each log entry includes: timestamp, level, namespace, client, session id (when applicable — the surrogate id; raw session tokens are credentials and never logged), endpoint, and request-specific fields. No unstructured string messages.
+JSON-formatted logs to stdout. Each log entry includes: timestamp, level, namespace, client, session id (when applicable — the surrogate id; raw session tokens are credentials and never logged), endpoint, `correlation_id` (the `X-CALM-Correlation-Id` minted for the request), W3C trace fields (`trace_id`, `span_id` when CALM has produced a span), and request-specific fields. No unstructured string messages.
 
 Key events at INFO level:
 
@@ -1149,7 +1245,7 @@ Namespace isolation is enforced as **invisibility** — cross-namespace access r
 
 ## Quality risk
 
-CALM's primary risk is not availability or cost — it's the possibility that filtering content saves tokens while quietly degrading the model's answers. A workload may never notice because the session runs faster and cheaper, but the model missed a critical detail that was filtered out or buried in a low-ranked chunk.
+Of CALM's twin observable concerns, quality is the harder to detect. Token spend shows up in workload bills directly; degraded answer quality can be invisible to a workload that runs faster and cheaper but missed a critical detail that was filtered out or buried in a low-ranked chunk.
 
 The answer quality metrics above are the detection mechanism. Elevated re-ingest rates, high intent zero-match rates, and frequent search-after-ingest patterns are all signals that CALM is not surfacing the right content. These should be monitored from first production deployment and reviewed alongside workload-side outcome metrics (task completion, retry rates, user corrections) that the workload's owners already track.
 
@@ -1163,7 +1259,7 @@ CALM adds a round trip to every tool call it manages. The tool call itself takes
 
 **Ingest (no intents):** 50–100 ms in practice. The hottest path — every managed tool call hits it. Involves chunking and indexing into FTS.
 
-**Ingest (with intents):** `base + 30–50 ms per intent` for the per-intent search and RRF aggregation. With 1–3 intents at typical payload sizes, this lands in the 80–250 ms range. The per-intent cost is the same search workload-issued `/v1/search` queries make — full three-layer fallback (see [DL05](#dl05)). Linear in intent count, not in content size or vocabulary. The upper end may exceed the workload's 200 ms middleware timeout, in which case the workload falls back to raw context per invariant #1 (see [DL04](#dl04)) — correct behavior, not failure. Workloads needing guaranteed intent ordering should size intent count and payload accordingly.
+**Ingest (with intents):** `base + 30–50 ms per intent` for the per-intent search and RRF aggregation. With 1–3 intents at typical payload sizes, this lands in the 80–250 ms range. The per-intent cost is the same search workload-issued `/v1/search` queries make — full two-layer fallback (see [DL05](#dl05)). Linear in intent count, not in content size or vocabulary. The upper end may exceed the workload's 200 ms middleware timeout, in which case the workload falls back to raw context per invariant #1 (see [DL04](#dl04)) — correct behavior, not failure. Workloads needing guaranteed intent ordering should size intent count and payload accordingly.
 
 **Search:** 50–100 ms in practice. Called on follow-up queries against previously indexed content.
 
@@ -1181,15 +1277,11 @@ Every request validates the session token against the namespace. Without caching
 
 The cache is keyed by `(namespace, session_token)` jointly — the raw token, not the hash, because the cache sits at the service-API surface above the hashing boundary. Value is `(session_id surrogate, client, TTL config, created_at)`. LRU with a size cap (e.g., 10,000 entries). Explicitly invalidated when a session is deleted. No time-based TTL — the mapping is correct until the session is closed, so time-based expiry would be arbitrary. Active sessions stay hot naturally because they're accessed on every request. Abandoned sessions drift to the LRU tail and get evicted.
 
-### Search result cache (deferred to v2)
+### Search result cache
 
-A per-session LRU cache of search results — keyed by `(namespace, session_token, query, source)`, invalidated on ingest into the session — was specified for v1 but is **deferred to v2 pending a multi-pod topology decision**.
+Search result caching is not part of CALM's design. Cache invalidation works within a single pod; under multi-pod deployment with round-robin load balancing, ingest may land on pod A while a subsequent search hits pod B, and pod B's cache for that session would be stale until LRU eviction. Unlike the session-metadata cache, search-result staleness doesn't self-heal (the cached result is returned, not re-validated against the DB).
 
-The gap: cache invalidation works within a single pod. Under multi-pod deployment with round-robin load balancing, ingest may land on pod A while a subsequent search hits pod B; pod B's cache for that session is stale until LRU eviction, and *serves stale results* in the meantime. Unlike the session-metadata cache, search-result staleness doesn't self-heal (the cached result is returned, not re-validated against the DB).
-
-For v1, cold-search latency targets (50–100 ms) are met without the cache — it was a perf optimization for repeat-query patterns, not a load-bearing budget mechanism. Removing it from v1 is the simplest correct option in any deployment topology.
-
-When the cache returns in v2, the most likely shape is: the LB hashes on `X-CALM-Session-Token` (already on every session-touching request) to pin a session to a pod, and cache invalidation stays in-process. No new wire-contract change is needed; the header is already there for auth.
+Cold-search latency targets (50–100 ms) are met without a result cache — it would be a perf optimization for repeat-query patterns, not a load-bearing budget mechanism. The natural shape if added later: the LB hashes on `X-CALM-Session-Token` (already on every session-touching request) to pin a session to a pod, keeping cache invalidation in-process. No new wire-contract change is needed; the header is already there for auth.
 
 ## What the targets assume
 
@@ -1216,6 +1308,9 @@ Hard limits, not tuning guidelines. CALM enforces these and returns explicit err
 - **Max events per session:** 1000 (already specified in §7). FIFO eviction by lowest priority, oldest first.
 - **Max search queries per call:** 10. More than 10 queries in a single `/v1/search` call are rejected with 400.
 - **Max snapshot budget:** 8 KB. Workloads can request less via `budget_bytes`, but not more.
+- **Max search budget:** 64 KB default ceiling, operator-configurable. Workloads request via `budget_bytes` on `/v1/search`; over-ceiling requests are clamped to the ceiling rather than rejected (parallel to TTL clamping). Default request budget when omitted is 4 KB.
+- **Max `X-Workload-Request-Id` length:** 256 characters. Inbound values exceeding this are rejected with 400.
+- **Feedback TTL:** 60 minutes default per namespace; configurable in `[1, 1440]` (1 min to 24 hours). Sets the feedback-acceptance window for `/v1/feedback`; enforced by the handler via the embedded UUIDv7 timestamp in `correlation_id`. No background scanner; row cleanup happens at session teardown.
 - **Rate limiting (three tiers, in-app, per-pod token buckets, burst = 2× rate).** Tier order: IP → namespace → global. IP is pre-Auth (cheapest check that doesn't need namespace context). Namespace runs *before* global at the post-Auth tier — this is load-bearing for the namespace-isolation invariant. With global-first, a misbehaving namespace would burn global tokens on requests it was always going to 429 at the namespace tier, leaking its overload pressure into other namespaces' shared global headroom. Namespace-first keeps each namespace's misbehavior contained to its own bucket.
     1. **Per-IP, pre-auth.** Bounded per-client-IP bucket sitting *before* the Auth middleware. Defends against unauthenticated DDoS that would otherwise saturate registry-lookup CPU on every bad-key attempt. Bounded store (idle buckets evicted under fanout). The in-app middleware is a backstop; production deployments should also enforce IP rate limits at the LB layer, and configure `trust_proxy_headers` correctly when behind a trusted LB.
     2. **Per-namespace** (primary). A runaway workload (looping pipeline, misconfigured MCP adapter, internal LLM app in an error spiral) cannot flood CALM or saturate the shared database. Rate comes from the namespace registry, falling back to the global default.
@@ -1326,15 +1421,7 @@ Alternatives considered:
 
 The per-section `matches` array is the minimum useful per-intent signal — it tells the caller which intents a section addresses without exposing scoring machinery that would muddle the ordering semantics.
 
-**Layer behavior on intent search.** Intent search uses the same search semantics as workload-issued `/v1/search` queries — full three-layer fallback: layer 1 RRF fusion across the prose and code FTS indexes, layer 2 trigram fallback via `pg_trgm` if layer 1 underfills the limit, layer 3 Levenshtein correction against the session's `vocabulary` table if layers 1+2 return zero hits. One operation, one set of observable behaviors, one mental model.
-
-Considered alternative: skip layer 3 for intent search, since intents are workload-provided (typo-free in the common case) and Levenshtein-against-vocabulary scales with session vocabulary size. Rejected because:
-
-- **Two search semantics is a contract surface.** One behavior for `/v1/search`, another for the intent path means every consumer of the search primitive has to choose which behavior they want. Single semantics is simpler and harder to misuse.
-- **No measurement justifies the carve-out yet.** v1's latency budget (§11) accommodates the full three-layer cost via the per-intent budget increment. Splitting the semantics today is speculative optimization without data.
-- **Marginal value of layer 3 remains for vocabulary-adjacent terms.** Intent term `timeout` against chunk vocabulary `timeouts` / `timeouted`, where porter stemming doesn't bridge and trigram similarity falls below threshold, can still be caught by layer 3. Not common, but not zero.
-
-The optimization remains available as a follow-up if measurement shows layer 3 cost dominating intent-ingest latency in production. v1 ships the simpler path; perf tuning is a follow-up exercise grounded in measurement, not pre-stamped in the architecture.
+**Layer behavior on intent search.** Intent search uses the same two-layer semantics as workload-issued `/v1/search` queries — layer 1 RRF fusion across the prose and code FTS indexes, layer 2 trigram fallback via `pg_trgm` if layer 1 underfills the limit. One operation, one set of observable behaviors, one mental model.
 
 ### DL06
 
@@ -1352,7 +1439,7 @@ The architectural cost is two FTS indexes (one per tokenizer, with chunks dispat
 
 **FTS with BM25 over vector/embedding search**
 
-Vector search requires an embedding model — either a remote API (latency, cost, availability dependency) or a local model (memory, deployment complexity). CALM's typical content is technical — logs, stack traces, metrics, CLI output, structured tool responses — with predictable vocabulary. BM25 with porter stemming, trigram substring matching, and fuzzy correction handles this well. The semantic gap that embeddings solve ("authentication failures" matching "login errors") is a natural-language problem that the three-layer fallback partially addresses, and the ephemeral session model limits the payoff of an embedding dependency.
+Vector search requires an embedding model — either a remote API (latency, cost, availability dependency) or a local model (memory, deployment complexity). CALM's typical content is technical — logs, stack traces, metrics, CLI output, structured tool responses — with predictable vocabulary. BM25 with porter stemming and trigram substring matching handles this well. The semantic gap that embeddings solve ("authentication failures" matching "login errors") is a natural-language problem that the two-layer fallback partially addresses, and the ephemeral session model limits the payoff of an embedding dependency.
 
 Research identified a middle path: LLM-generated document enrichment at index time, which closes 50-70% of the gap to neural retrieval without an embedding dependency. This is deferred as premature optimization but the schema can accommodate it without structural changes if search quality data justifies it later.
 
@@ -1364,7 +1451,7 @@ CALM's snapshot endpoint returns events ordered by priority and recency, accumul
 
 The alternative — a built-in snapshot strategy shaped around a particular workload (e.g., coding-agent state: active files, errors, decisions, tasks) — was rejected. Under team-first deployment with heterogeneous workloads, no single state shape generalizes. A slackbot's snapshot is about active threads; an eval harness's about the current run; a custom internal app may not need a snapshot at all. Building one workload's state model into CALM's snapshot privileges that workload's shape and forces others to either accept the wrong shape or build their own state model anyway.
 
-A pluggable strategy mechanism (operator registers per-client snapshot logic; CALM dispatches at snapshot time) is deferred as part of MVP scoping. If multiple workloads in a single deployment need the same structured shape, that's the signal to build it. The current design discipline is *expressiveness without commitment*: the event schema is rich enough that any future strategy could read it, and the HTTP response shape is generic enough to be extended without breaking existing workloads — but no interface, plugin registry, or per-client `snapshot_strategy` column exists today.
+A pluggable strategy mechanism (operator registers per-client snapshot logic; CALM dispatches at snapshot time) is not part of CALM's surface. The evidence gate for adding one: multiple workloads in a single deployment independently implement the same structured reduction. The current design discipline is *expressiveness without commitment*: the event schema is rich enough that a future strategy could read it, and the HTTP response shape is generic enough to be extended without breaking existing workloads — but no interface, plugin registry, or per-client `snapshot_strategy` column exists.
 
 ### DL09
 
@@ -1409,13 +1496,13 @@ The data-access layer is abstracted as a port boundary to enable testing in isol
 
 Rejected alternatives:
 
-- **SQLite** — limited FTS5 (no real BM25/IDF), single-writer, no `pg_trgm` equivalent for trigram indexing, no `fuzzystrmatch` for Levenshtein.
-- **MySQL / MariaDB** — InnoDB FTS isn't BM25 and isn't configurable. No trigram-index equivalent of `pg_trgm`. No native Levenshtein. No partial indexes (which CALM uses to route prose vs. code chunks into separate FTS indexes per [DL06](#dl06)). JSON support is less mature than JSONB. Delivering the three-layer search architecture would require bolting Elasticsearch or Tantivy on the side, breaking the "single store, no external search system" property.
+- **SQLite** — limited FTS5 (no real BM25/IDF), single-writer, no `pg_trgm` equivalent for trigram indexing.
+- **MySQL / MariaDB** — InnoDB FTS isn't BM25 and isn't configurable. No trigram-index equivalent of `pg_trgm`. No partial indexes (which CALM uses to route prose vs. code chunks into separate FTS indexes per [DL06](#dl06)). JSON support is less mature than JSONB. Delivering the search architecture would require bolting Elasticsearch or Tantivy on the side, breaking the "single store, no external search system" property.
 - **Portable data-access layer with multiple backend implementations** — false flexibility. Doubles maintenance surface (every storage operation needs N implementations + parity tests) for a portability story with no concrete demand.
 - **Embedded KV (BoltDB / BadgerDB)** — no full-text search, no relational queries for the management API, no way to express FTS partial indexes.
 - **Distributed SQL (CockroachDB, TiDB)** — Postgres-wire-compatible but lacks the BM25 extensions; operational complexity exceeds what the use case demands.
 
-Why Postgres specifically: BM25 via `pg_search` or `pg_textsearch` ([DL07](#dl07) rationale), `pg_trgm` for trigram fallback, `fuzzystrmatch` for Levenshtein, JSONB for opaque event data, partial indexes for the prose/code routing, atomic transactions for re-index (invariant #6). Single backend, no external search system, no exotic dependencies.
+Why Postgres specifically: BM25 via `pg_search` or `pg_textsearch` ([DL07](#dl07) rationale), `pg_trgm` for trigram fallback, JSONB for opaque event data, partial indexes for the prose/code routing, atomic transactions for re-index (invariant #6). Single backend, no external search system, no exotic dependencies.
 
 Re-introducing a portability layer requires HLD discussion before code lands.
 
@@ -1426,5 +1513,38 @@ Re-introducing a portability layer requires HLD discussion before code lands.
 CALM manages what enters context during a session. What the agent remembers across sessions is a different system — the agent's long-term memory layer. The industry consensus (MemGPT, Mem0, LangMem, AgeMem) draws the same boundary: short-term/working memory is session-scoped, long-term memory is a separate persistent store. CALM is the working memory manager. Cross-session knowledge is the agent's responsibility.
 
 This keeps CALM simple. No promotion mechanisms, no corpus lifecycle management, no deciding what's worth keeping. Content expires with the session.
+
+### DL14
+
+**Session is an active scope, not a durable workflow record**
+
+A CALM session has one durable service state: active. Explicit close or TTL expiry deletes the session and all its child rows; CALM retains no terminal state — completed, failed, abandoned, expired. Aggregate observability (counts, distributions, rates labeled by namespace and client) is emitted via OpenTelemetry to the operator's metric backend; row-level retention beyond the active scope, when an operator needs it, is delegated to an exporter sink (Postgres, OTLP, file, multi-sink) that receives short-lived observability rows before deletion. CALM does not mandate a sink and does not expose terminal-state queries.
+
+The alternative — durable terminal session records, à la workflow engines (Temporal, Airflow, durable-execution platforms) — was considered and rejected. Three reasons, jointly load-bearing.
+
+*First, workload outcomes are workload-resident.* Whether a session "succeeded" is defined by the workload's own task semantics, not by anything CALM observes. A coding-agent session "succeeded" if the user accepted the agent's work; a pipeline step "succeeded" if its downstream verifier passed. CALM's vantage is the data path, never the control path; building a terminal-state taxonomy here would require CALM to interpret outcomes it cannot define.
+
+*Second, aggregate observability is sufficient for cross-session analytics.* Counters and histograms emitted via OpenTelemetry — labeled by namespace and client — answer cross-session questions ("what is the per-workload distribution of session durations? of event counts? of search hit rates?") without per-row persistence. Per-row forensics, when needed, live in workload-side telemetry the workload already operates.
+
+*Third, the exporter seam is the right escape hatch.* Operators who genuinely need long-tail row-level retention configure an exporter sink that receives short-lived rows before deletion. This delegates retention to operator-resident storage rather than embedding a workflow ledger into CALM. CALM does not mandate a sink, and which sink implementations ship in the binary is an LLD choice.
+
+This is distinct from [DL13](#dl13) (session-scoped *content* storage, no cross-session memory). DL13 governs the content-scope axis: what gets indexed and how it expires. DL14 governs the lifecycle-shape axis: what state a session can be in and how its termination is recorded. Cross-session content sharing (DL13) and terminal session records (DL14) are independent product-boundary decisions.
+
+### DL15
+
+**Response-level byte budget for `/v1/search`**
+
+`/v1/search` accepts a workload-controlled `budget_bytes` value that caps the total bytes of serialized `SearchHit` objects across all queries in the response. A deterministic rank-round allocator across queries decides which exact-text hits fit — every query's first-ranked candidate is offered before any query's second, every second before any third. Each candidate is accounted as its compact JSON UTF-8 representation; included only when its size fits the remaining budget; snippets are never further truncated. Per-query `budget_omitted` reports the count of otherwise-returnable candidates (from that query's top-`limit` set) that were not included. Default budget is 4 KB; bounded by an operator-configurable ceiling (default 64 KB). Over-ceiling requests are clamped, not rejected (per [DL04](#dl04)'s never-worse stance; parallel to session-TTL clamping).
+
+The allocator is pluggable. Five variants ship: **rank-round** (default — offers every query's first-ranked candidate before any query's second, preserving multi-query coverage); **score-proportional** (allocates budget proportionally to per-query rank scores); **knapsack-greedy** (DP knapsack maximizing sum-of-relevance under budget); **equal-budget** (`budget / N` per query); **MMR** (Maximal Marginal Relevance — re-ranks for diversity against near-duplicate hits across queries). Operators set the namespace default; workloads override per request via `X-CALM-Allocator-Variant` (gated by a namespace flag). All variants honor the same budget contract: no overshoot beyond the first-considered candidate, no snippet truncation, per-query `budget_omitted` accounting unchanged. Rank-round is the default because it preserves multi-query coverage — no single query's tail starves another query's head, which is the canonical complaint about count-based and score-proportional allocators.
+
+Considered alternatives:
+
+- **No byte budget at all** — return all hits up to `limit`, workload sizes its own context downstream. Rejected: count caps don't predict bytes (a hit could be 100 B or 10 KB), so workloads can't reason about context consumption; the diagnostic surface (`byte_budget_used`, `budget_omitted`) becomes the means by which workloads observe budget pressure.
+- **Per-query budget instead of response-level.** Each query gets its own `budget_bytes`. Rejected: workloads' downstream context windows are response-level concerns — they care about total bytes consumed, not which query produced which bytes. Per-query budgets force workloads to do response-level summation client-side. Response-level matches what workloads actually budget against. Workloads that want per-query control can issue separate `/v1/search` calls per query.
+- **Per-hit count limit only** (the existing `limit`). Rejected for the same reason as no-budget — counts don't predict bytes; the diagnostic surface is moot without a byte axis. `limit` and `budget_bytes` are not alternatives but composable gates: both apply, the tighter wins.
+- **Single fixed allocator (rank-round only).** Rejected: workloads' optimal allocation depends on their query patterns. Multi-query searches over independent topics benefit from rank-round's coverage preservation; searches over near-duplicate queries benefit from MMR's diversity; cost-sensitive workloads with stable query relevance distributions can prefer knapsack-greedy. Pluggability lets operators tune per namespace without code changes, and per-request override lets workloads A/B test for their specific access patterns. The variants are a small, well-understood set — not an open plugin surface.
+
+**Overshoot rule.** When no candidate fits the budget, the first-considered candidate (query[0]'s first-ranked hit) is included anyway — `byte_budget_used` reflects the actual size, exceeding the requested budget. This preserves the never-worse property (invariant #1): workloads with budget-too-small misconfigurations still receive their highest-confidence content rather than an empty result. Workloads detect overshoot by comparing `byte_budget_used` against the echoed `budget_bytes`. Parallel to the snapshot endpoint's P1 overshoot rule (§8).
 
 ---

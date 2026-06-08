@@ -58,8 +58,9 @@ func NewHandler(cfg Config, deps Deps) (http.Handler, error) {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Recovery(deps.Logger))
-	r.Use(middleware.Context())
+	r.Use(middleware.Context(deps.Logger))
 	r.Use(middleware.Logging(deps.Logger))
+	r.Use(middleware.WorkloadRequestID())
 	r.Use(middleware.RateLimitIP(cfg.RateLimitPerIPPerSecond, cfg.TrustProxyHeaders, deps.Logger))
 	r.Use(middleware.Auth(deps.Registry, deps.ClientResolver, deps.Logger))
 	r.Use(middleware.RateLimitNamespaceAndGlobal(

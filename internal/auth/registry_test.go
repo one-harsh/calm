@@ -31,6 +31,7 @@ func TestMemoryRegistry_Resolve(t *testing.T) {
 			"production": 500,
 		},
 		nil,
+		nil,
 	)
 
 	cases := []struct {
@@ -64,6 +65,7 @@ func TestMemoryRegistry_RateFor(t *testing.T) {
 			"production": 500,
 		},
 		nil,
+		nil,
 	)
 
 	cases := []struct {
@@ -87,7 +89,7 @@ func TestMemoryRegistry_RateFor(t *testing.T) {
 }
 
 func TestMemoryRegistry_NilMapsAcceptable(t *testing.T) {
-	reg := NewMemoryRegistry(nil, nil, nil)
+	reg := NewMemoryRegistry(nil, nil, nil, nil)
 
 	if ns, ok := reg.Resolve("anything"); ok {
 		t.Errorf("Resolve on empty registry returned (%q, true); want (\"\", false)", ns)
@@ -105,6 +107,7 @@ func TestMemoryRegistry_RequiresClientCredentials(t *testing.T) {
 		map[string]string{"k1": "credentialed-ns", "k2": "uncredentialed-ns"},
 		nil,
 		map[string]bool{"credentialed-ns": true},
+		nil,
 	)
 	cases := []struct {
 		ns   string

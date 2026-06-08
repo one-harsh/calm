@@ -20,6 +20,7 @@ packages:
       EventsRepo:
       SourcesRepo:
       ChunksRepo:
+      CorrelationsRepo:
       DAL:
   github.com/one-harsh/calm/internal/secrets:
     interfaces:

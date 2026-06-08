@@ -62,7 +62,7 @@ The HLD **may** reference:
 - **External wire contract** — HTTP paths, headers, JSON field names, status codes. This is the customer contract; both HLD and code follow it by definition.
 - **Storage schema** — table/column names, SQL types, indexes, constraints. The data model is part of the design; the SQL is one precise notation for it (an ERD would do equally well).
 - **External standards and dependencies** — Postgres, BM25, RRF, sha256, TLS, OpenTelemetry, Kubernetes, MCP, JSON. These exist independently of CALM's implementation.
-- **External-extension surface** — `pg_search`, `pg_textsearch`, `pg_trgm`, `fuzzystrmatch`. These are operator-visible deployment dependencies, not internal code.
+- **External-extension surface** — `pg_search`, `pg_textsearch`, `pg_trgm`. These are operator-visible deployment dependencies, not internal code.
 
 The rule of thumb: if a fact about CALM survives a rewrite in a different language by a different team, it belongs in the HLD. If it depends on this codebase's specific shape — package layout, type names, library choices, lint rules — it belongs in CLAUDE.md or in the code itself, not in the HLD.
 
@@ -134,7 +134,7 @@ internal/
     handlers/            thin handlers implementing genapi.ServerInterface
     genapi/              generated from docs/api/openapi.yaml — DO NOT EDIT
   ingest/                chunking, format detection, intent filtering
-  search/                3-layer fallback (porter → trigram → fuzzy)
+  search/                2-layer fallback (porter → trigram)
   events/                event capture + priority-range validation (1–4)
   snapshot/              generic event-store snapshot builder (HLD DL08)
   session/               session lifecycle + TTL scanner
@@ -185,26 +185,39 @@ from the spec, copy `secrets`, keep the adapter `internal/` in the new module.
 
   ```
   Recovery
-    → Context (RequestID + OTel trace extraction)
+    → Context (correlation-id mint + W3C trace extract+respond + logging-context bind)
       → Logging (start log + on-completion summary)
-        → RateLimit:IP (per-IP, pre-auth → 429)
-          → Auth (API key → namespace)
-            → RateLimit:NS+Global (per-namespace + global aggregate → 429)
-              → BodySizeLimit (1MB cap → 413)
-                → Timeout (per-request budgets)
-                  → OpenAPIValidator (kin-openapi against embedded spec)
-                    → SessionResolve (X-CALM-Session-Token → SessionMetadata; post-handler Touch on 2xx)
-                      → Handler
+        → WorkloadRequestID (length-validate + echo X-Workload-Request-Id; 400 on >256)
+          → RateLimit:IP (per-IP, pre-auth → 429)
+            → Auth (API key → namespace)
+              → RateLimit:NS+Global (per-namespace + global aggregate → 429)
+                → BodySizeLimit (1MB cap → 413)
+                  → Timeout (per-request budgets)
+                    → OpenAPIValidator (kin-openapi against embedded spec)
+                      → SessionResolve (X-CALM-Session-Token → SessionMetadata; post-handler Touch on 2xx)
+                        → Handler
   ```
 
 - **Recovery** is outermost and holds a reference to the base logger so it can record panics even if `ctx` was never hydrated by Context middleware.
-- **Context** must run before Logging so every log line carries `request_id` and trace IDs.
+- **Context** must run before Logging so every log line carries `correlation_id` and trace IDs.
 - **Logging** runs before Auth so failed-auth attempts are still recorded with full context.
+- **WorkloadRequestID** runs *after* Logging — that way the 400 path on oversized `X-Workload-Request-Id` still emits a normal completion log line. It runs before RateLimit:IP so a malformed workload-id is rejected without burning rate-limit tokens.
 - **RateLimit:IP** sits before Auth so unauthenticated DDoS can't burn registry-lookup CPU on every bad-key attempt.
 - **Auth** must run before RateLimit:NS+Global (the namespace tier reads the auth-stamped namespace from context).
 - **RateLimit:NS+Global** checks namespace tier first, then global aggregate. Namespace-first is load-bearing for namespace-isolation: with global-first, a misbehaving namespace would burn shared global tokens on requests it was always going to 429 at its own tier, leaking overload pressure across the isolation boundary.
 - **BodySizeLimit** before Timeout — rejecting an oversized body shouldn't consume the timeout budget.
 - **SessionResolve** is presence-based on `X-CALM-Session-Token`: when set, it calls `session.Service.Lookup` (404 on miss or cross-namespace), stuffs `SessionMetadata` into context via `session.WithMetadata`, and best-effort `Touch`es after 2xx. Sits after OpenAPIValidator so the validator catches missing-required-header before a DB lookup. Handlers read via `session.MetadataFromContext(ctx)` — they never touch the raw token.
+
+## Correlation IDs and the response-header surface
+
+Three IDs live on the request/response path; they answer different questions and must not be conflated.
+
+- **`X-CALM-Correlation-Id`** is server-minted UUIDv7 in `internal/server/middleware/context.go`. Handlers read it via the context-bound value (`logging.Bind` already exposes it as `correlation_id` on every log line and audit event) and never mint their own. The middleware sets it on every response — including 4xx/5xx error paths — and emits it whether or not the workload sent an inbound correlation header. UUIDv7 (not v4) is load-bearing: the embedded ms timestamp drives the feedback-TTL window check without a stored `expires_at` or background scanner.
+- **`X-Workload-Request-Id`** is workload-supplied, optional, echoed on the response when present. Length cap (≤256 chars) is enforced by the dedicated `WorkloadRequestID` middleware (which sits after Logging so the 400 path still emits a completion log line); the OpenAPI spec parameter declaration on `/v1/feedback` is documentation, not the enforcement mechanism. Workload uses this header to join CALM-side records to its own request log; CALM treats it as opaque.
+- **`traceparent` / `traceresponse`** — inbound `traceparent` is extracted by the OTel propagator (already wired). Outbound `traceresponse` is **not** emitted by Go OTel HTTP middleware by default — `context.go` sets it explicitly. Don't remove that line during refactors thinking the OTel SDK handles it.
+- Logging-context bind happens once at middleware time (`logging.Bind(ctx, ...)`); downstream code inherits `correlation_id` / `trace_id` / `span_id` automatically. No per-call-site re-binding.
+- Audit events inherit the three fields via the logging-context chain — don't manually add them to audit payloads.
+- See HLD's response-headers section for the design intent; the three IDs are not interchangeable and adding a fourth without HLD discussion is a fork.
 
 ## Transactions live in services, not the DAL
 
@@ -216,6 +229,32 @@ from the spec, copy `secrets`, keep the adapter `internal/` in the new module.
 - **Validation locus:** business-rule validation (ranges, required fields, non-empty) lives in the service; the DAL keeps structural/domain sentinels (FK/PK/constraint → sentinel) and the namespace-isolation guard.
 - **Namespace-isolation folds into the statement that touches the data — one canonical guard, no separate verify step.** The `sessions`/`clients` surface predicates on namespace directly; child tables (sources/events) reach it with an inline `EXISTS (SELECT 1 FROM sessions WHERE id = <session_id> AND namespace = …)` — a `WHERE` predicate on reads, inside the `INSERT … SELECT … WHERE EXISTS` on writes. EXISTS, not a JOIN: it's the one form that fits reads and writes alike (you can't `JOIN` an `INSERT`) and avoids column-name collisions with `session_events`. Cross-namespace collapses to the table's natural no-match: empty for list/search reads (consistent with `sessionRepo.List`), `ErrSessionNotFound` for point lookups/writes via no-rows-returned (consistent with `Get`/`Create`). Defense-in-depth only — `SessionResolve` 404s cross-namespace before the handler. The chunk leaf-write primitives (`DeleteForSource`, `Insert`) are the deliberate exception: they key off a `source_id` minted only by the namespace-verified `Upsert` in the same transaction — a capability, like the FK-cascade children on session delete — so re-guarding would diverge from the cascade pattern and burden the thinnest primitive. (`verifySessionInNamespace` is a transitional shim for `eventsRepo.Write` only.)
 - **Rollout is incremental** (DL: services-own-tx). `sourcesRepo.Index` migrated (→ `ingest.Service`); `eventsRepo.Write`, `sessionRepo.{Create,Delete,DeleteByID,DeleteAll}`, `clientRepo.Delete` still open their own `inTx` until migrated. Until then `inTx` has those callers in addition to `WithTx`.
+
+## Outcome attribution: correlations + feedback
+
+CALM captures a `correlations` row per value-producing call and updates it when the workload reports back via `/v1/feedback`. Disciplines:
+
+- **Every 2xx response from a value-producing handler (ingest / search / snapshot) INSERTs a correlation row before returning.** The service layer owns the INSERT (per the services-own-tx discipline); the DAL is the leaf primitive. The correlation_id comes from the context-bound value set by the Context middleware — not minted at the handler.
+- **The INSERT is best-effort.** A failed INSERT logs WARN and does **not** fail the request — the value-producing operation already succeeded; missing observability never blocks the workload (`never-worse` invariant). If you find yourself wrapping a value-producing operation and a correlation INSERT in one transaction, you've inverted the discipline.
+- **`request_meta` JSONB carries CALM-derived signal dimensions only** — `match_layer` distribution, `allocator` variant, `intent_zero_match` flag, `omitted_by_priority`, `budget_omitted_total`, etc. Workload-supplied fields (e.g., the workload's `source` label) stay in JSONB and **must not** become metric labels at feedback-receipt emission time. This is the cardinality discipline; any new field added to `request_meta` is a candidate for label-set inflation if you're not careful.
+- **Outcome enum is `success | retry | degraded`, period.** `unset` is the DB default for never-received feedback — it is not a value the workload submits and not a metric series CALM emits. Operators compute the coverage gap via PromQL. Adding a fourth outcome value is HLD-touching.
+- **Feedback handler is single-shot via PK.** A second submission for the same `correlation_id` returns 409. The PK enforces it; don't add application-level "already-submitted" checks ahead of the UPDATE — race-free is the DB's job.
+- **410 path is computable without a DB lookup.** Parse the inbound `correlation_id` as UUIDv7, extract the embedded ms timestamp, compare against the namespace's `feedback_ttl_minutes`. No `expires_at` column, no scanner, no row read.
+- See HLD's outcome-attribution section, DL14 (active-only session), and the response-headers contract for the design intent.
+
+## Session lifecycle: active-only, teardown mechanism agnostic
+
+- **A session has exactly one durable service state: active.** No `completed / failed / abandoned / expired` lifecycle states. Workload outcomes live on `correlations.outcome`, **not** on `sessions`. Don't add columns to `sessions` reflecting workload outcome; don't add management endpoints querying terminal sessions. Both are HLD-touching (DL14).
+- **Teardown mechanism is implementer's choice.** HLD's API contract, data model, and session lifecycle sections are mechanism-agnostic on whether session removal is sync FK cascade, chunked sync cascade, async background reclaim, or sessions-only soft-mark with async reclaim. Today's implementation is sync FK cascade; alternatives are LLD-level work items, not HLD changes. If transitional code temporarily diverges from the canonical mechanism during a change, mark it `// HLD-DEVIATION:` with the reason.
+- **Wire contract is fixed and independent of mechanism.** `DELETE /v1/sessions` returns 204 No Content. Management DELETE endpoints return `{deleted_sessions: N}` (scope confirmation) only — no nested `cascaded` block. Cascade row counts emit as INFO log fields (`session.delete.cascaded_*`); the DAL computes them internally for the log even though they no longer appear on the wire.
+- **Long-tail row-level retention is delegated to operator-resident exporter sinks** (HLD-named seam in DL14). Not a v1 code-level concern; reserved for the WI-54 Phase F path.
+
+## Search allocator is pluggable behind one interface
+
+- **Five variants** (`rank-round` default; `score-proportional`, `knapsack-greedy`, `equal-budget`, `mmr`) live behind a single allocator interface in `internal/search`. A new variant goes behind the same interface; never branch on variant identity in handler or service code.
+- **Per-namespace YAML config (`search.default_allocator`) selects the default**; per-request `X-CALM-Allocator-Variant` overrides when `search.allow_allocator_override: true`. When override is not allowed, the header is silently ignored — **never 400**; the header is a hint, not a contract, same shape as the `client` field on session-create in uncredentialed namespaces.
+- **`allocator=<variant>` is a bounded metric label** (cardinality = 5). Never accept caller-supplied variant strings as labels — the discipline is identical to `match_layer` and the outcome enum. New variant = code change, not a config string.
+- See DL15 (whole-response byte budget + allocator pluggability) for the design intent.
 
 ## Logging > comments
 

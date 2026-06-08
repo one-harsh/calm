@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/feedback"
 )
 
 func TestMapSessionError_KnownSentinels(t *testing.T) {
@@ -86,6 +87,80 @@ func TestMapSessionError_DetailNeverLeaksInternalString(t *testing.T) {
 		m, _ := mapSessionError(sentinel)
 		if strings.HasPrefix(m.Detail, "db:") || strings.Contains(m.Detail, sentinel.Error()) {
 			t.Errorf("mapSessionError(%v) detail = %q; must not leak internal sentinel text", sentinel, m.Detail)
+		}
+	}
+}
+
+func TestMapFeedbackError_KnownSentinels(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want errorMapping
+	}{
+		{"ErrFeedbackWindowExpired", feedback.ErrFeedbackWindowExpired, errorMapping{http.StatusGone, "feedback_window_expired", "correlation_id is older than the feedback acceptance window"}},
+		{"ErrInvalidCorrelationID", feedback.ErrInvalidCorrelationID, errorMapping{http.StatusBadRequest, "invalid_correlation_id", "correlation_id is not a valid UUIDv7"}},
+		{"ErrCorrelationNotFound", db.ErrCorrelationNotFound, errorMapping{http.StatusNotFound, "correlation_not_found", "correlation not found within the resolved session"}},
+		{"ErrFeedbackAlreadySubmitted", db.ErrFeedbackAlreadySubmitted, errorMapping{http.StatusConflict, "feedback_already_submitted", "feedback already submitted for this correlation"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := mapFeedbackError(tc.err)
+			if !ok {
+				t.Fatalf("mapFeedbackError(%v): ok=false; want true", tc.err)
+			}
+			if got != tc.want {
+				t.Errorf("mapFeedbackError(%v) = %+v; want %+v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMapFeedbackError_WrappedSentinels(t *testing.T) {
+	// Wrap-tolerance: errors.Is sees through %w wrapping (DAL impl wraps via
+	// multi-%w with ErrStorageBackend; the sentinel still surfaces).
+	wrapped := fmt.Errorf("dal: %w", db.ErrCorrelationNotFound)
+	got, ok := mapFeedbackError(wrapped)
+	if !ok {
+		t.Fatal("wrapped ErrCorrelationNotFound: ok=false; want true")
+	}
+	if got.Status != http.StatusNotFound || got.Code != "correlation_not_found" {
+		t.Errorf("wrapped ErrCorrelationNotFound = %+v; want 404 + correlation_not_found", got)
+	}
+}
+
+func TestMapFeedbackError_UnmappedReturnsFalse(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"unrelated error", errors.New("unexpected")},
+		{"nil", nil},
+		{"context.Canceled", context.Canceled},
+		{"session sentinel — wrong family", db.ErrSessionNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := mapFeedbackError(tc.err)
+			if ok {
+				t.Errorf("mapFeedbackError(%v): ok=true want false; got %+v", tc.err, got)
+			}
+			if (got != errorMapping{}) {
+				t.Errorf("mapFeedbackError(%v) returned non-zero mapping on unmapped err: %+v", tc.err, got)
+			}
+		})
+	}
+}
+
+func TestMapFeedbackError_DetailNeverLeaksInternalString(t *testing.T) {
+	for _, sentinel := range []error{
+		feedback.ErrFeedbackWindowExpired,
+		feedback.ErrInvalidCorrelationID,
+		db.ErrCorrelationNotFound,
+		db.ErrFeedbackAlreadySubmitted,
+	} {
+		m, _ := mapFeedbackError(sentinel)
+		if strings.HasPrefix(m.Detail, "db:") || strings.HasPrefix(m.Detail, "feedback:") || strings.Contains(m.Detail, sentinel.Error()) {
+			t.Errorf("mapFeedbackError(%v) detail = %q; must not leak internal sentinel text", sentinel, m.Detail)
 		}
 	}
 }

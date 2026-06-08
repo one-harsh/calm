@@ -19,19 +19,37 @@ import (
 )
 
 const (
-	maxNamespaceLength = 64
-	minRatePerSecond   = 1
-	maxRatePerSecond   = 100000
+	maxNamespaceLength        = 64
+	minRatePerSecond          = 1
+	maxRatePerSecond          = 100000
+	minFeedbackTTLMinutes     = 1
+	maxFeedbackTTLMinutes     = 1440
+	defaultFeedbackTTLMinutes = 60
 )
 
 var namespaceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type Config struct {
-	Service    ServiceConfig     `mapstructure:"service"`
-	Server     ServerConfig      `mapstructure:"server"`
-	Sessions   SessionsConfig    `mapstructure:"sessions"`
-	Storage    StorageConfig     `mapstructure:"storage"`
-	Namespaces []NamespaceConfig `mapstructure:"namespaces"`
+	Service       ServiceConfig       `mapstructure:"service"`
+	Server        ServerConfig        `mapstructure:"server"`
+	Sessions      SessionsConfig      `mapstructure:"sessions"`
+	Storage       StorageConfig       `mapstructure:"storage"`
+	Observability ObservabilityConfig `mapstructure:"observability"`
+	Namespaces    []NamespaceConfig   `mapstructure:"namespaces"`
+}
+
+type ObservabilityConfig struct {
+	Logging LoggingConfig `mapstructure:"logging"`
+	OTel    OTelConfig    `mapstructure:"otel"`
+}
+
+type LoggingConfig struct {
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
+}
+
+type OTelConfig struct {
+	Enabled bool `mapstructure:"enabled"`
 }
 
 type ServiceConfig struct {
@@ -39,8 +57,6 @@ type ServiceConfig struct {
 	Version     string `mapstructure:"version"`
 	Environment string `mapstructure:"environment"`
 	Region      string `mapstructure:"region"`
-	LogLevel    string `mapstructure:"log_level"`
-	LogFormat   string `mapstructure:"log_format"`
 }
 
 type ServerConfig struct {
@@ -76,6 +92,7 @@ type NamespaceConfig struct {
 	APIKey                   secrets.Secret `mapstructure:"api_key"`
 	RatePerSecond            int            `mapstructure:"rate_per_second"`
 	RequireClientCredentials bool           `mapstructure:"require_client_credentials"`
+	FeedbackTTLMinutes       int            `mapstructure:"feedback_ttl_minutes"`
 }
 
 // Load reads the YAML at path, applies CALM_-prefixed env overrides, validates.
@@ -114,8 +131,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("service.version", "dev")
 	v.SetDefault("service.environment", "local")
 	v.SetDefault("service.region", "local")
-	v.SetDefault("service.log_level", "info")
-	v.SetDefault("service.log_format", "json")
+	v.SetDefault("observability.logging.level", "info")
+	v.SetDefault("observability.logging.format", "json")
 
 	v.SetDefault("server.address", ":8080")
 	v.SetDefault("server.request_timeout", 2*time.Second)
@@ -220,6 +237,18 @@ func validate(cfg *Config) error {
 			}
 			if ns.RatePerSecond > maxRatePerSecond {
 				return fmt.Errorf("namespaces[%d] (%s): rate_per_second %d above maximum (%d)", i, ns.Name, ns.RatePerSecond, maxRatePerSecond)
+			}
+		}
+
+		if ns.FeedbackTTLMinutes < 0 {
+			return fmt.Errorf("namespaces[%d] (%s): feedback_ttl_minutes must be >= 0 (0 means use the %d-minute default)", i, ns.Name, defaultFeedbackTTLMinutes)
+		}
+		if ns.FeedbackTTLMinutes > 0 {
+			if ns.FeedbackTTLMinutes < minFeedbackTTLMinutes {
+				return fmt.Errorf("namespaces[%d] (%s): feedback_ttl_minutes %d below minimum (%d)", i, ns.Name, ns.FeedbackTTLMinutes, minFeedbackTTLMinutes)
+			}
+			if ns.FeedbackTTLMinutes > maxFeedbackTTLMinutes {
+				return fmt.Errorf("namespaces[%d] (%s): feedback_ttl_minutes %d above maximum (%d)", i, ns.Name, ns.FeedbackTTLMinutes, maxFeedbackTTLMinutes)
 			}
 		}
 	}

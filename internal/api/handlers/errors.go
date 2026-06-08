@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/feedback"
 )
 
 type errorMapping struct {
@@ -91,6 +92,23 @@ func mapSearchError(err error) (m errorMapping, ok bool) {
 		return errorMapping{http.StatusBadRequest, "invalid_request", "limit must be a positive integer"}, true
 	case errors.Is(err, db.ErrNamespaceRequired):
 		return errorMapping{http.StatusBadRequest, "invalid_request", "namespace is required"}, true
+	default:
+		return errorMapping{}, false
+	}
+}
+
+func mapFeedbackError(err error) (m errorMapping, ok bool) {
+	switch {
+	case errors.Is(err, feedback.ErrFeedbackWindowExpired):
+		return errorMapping{http.StatusGone, "feedback_window_expired", "correlation_id is older than the feedback acceptance window"}, true
+	case errors.Is(err, feedback.ErrInvalidCorrelationID):
+		return errorMapping{http.StatusBadRequest, "invalid_correlation_id", "correlation_id is not a valid UUIDv7"}, true
+	case errors.Is(err, db.ErrCorrelationNotFound):
+		return errorMapping{http.StatusNotFound, "correlation_not_found", "correlation not found within the resolved session"}, true
+	case errors.Is(err, db.ErrFeedbackAlreadySubmitted):
+		return errorMapping{http.StatusConflict, "feedback_already_submitted", "feedback already submitted for this correlation"}, true
+	case errors.Is(err, db.ErrCorrelationsNotImplemented):
+		return errorMapping{http.StatusServiceUnavailable, "feedback_dal_unavailable", "feedback storage is not yet available; retry once the operator enables it"}, true
 	default:
 		return errorMapping{}, false
 	}
