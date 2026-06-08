@@ -82,7 +82,7 @@ func buildFileRead(c cmd, inv Invocation) (classification, bool) {
 }
 
 func buildList(c cmd, inv Invocation) (classification, bool) {
-	ident, ok := relIdents(c.pathArgs(), inv)
+	ident, ok := relIdents(operandsOrCwd(c), inv)
 	if !ok {
 		return classification{}, false
 	}
@@ -91,12 +91,21 @@ func buildList(c cmd, inv Invocation) (classification, bool) {
 }
 
 func buildFind(c cmd, inv Invocation) (classification, bool) {
-	ident, ok := relIdents(c.pathArgs(), inv)
+	ident, ok := relIdents(operandsOrCwd(c), inv)
 	if !ok {
 		return classification{}, false
 	}
 	id := labelID{domain: domainSearch, verb: "find", ident: ident}
 	return classification{id: id, mode: Replace, content: contentTypeProse}, true
+}
+
+// operandsOrCwd defaults to "." (the cwd) when a listing command has no path operand —
+// bare `ls`/`find` list the cwd, so without this two cwds would collide on one label.
+func operandsOrCwd(c cmd) []string {
+	if paths := c.pathArgs(); len(paths) > 0 {
+		return paths
+	}
+	return []string{"."}
 }
 
 func buildGrep(c cmd, inv Invocation) (classification, bool) {

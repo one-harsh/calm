@@ -6,6 +6,7 @@ package extract
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 )
@@ -400,6 +401,29 @@ func TestPersistenceSafety_TraceSanitizedRedactedTruncated(t *testing.T) {
 			t.Errorf("blank stderr should yield empty snippet")
 		}
 	})
+
+	t.Run("tail_truncation_keeps_valid_utf8", func(t *testing.T) {
+		// A multibyte rune straddling the truncation boundary must not leave a
+		// partial leading codepoint in the snippet.
+		got := traceSnippet("你" + strings.Repeat("b", maxTraceSnippet-1))
+		if !utf8.ValidString(got) {
+			t.Errorf("snippet is not valid UTF-8: %q", got)
+		}
+		if len(got) > maxTraceSnippet {
+			t.Errorf("trace length %d exceeds %d", len(got), maxTraceSnippet)
+		}
+	})
+}
+
+func TestDerivePlan_BareListingUsesCwd(t *testing.T) {
+	root, _ := DerivePlan(Invocation{Command: "ls", Cwd: "/work", WorkspaceRoot: "/work"}, okResult())
+	sub, _ := DerivePlan(Invocation{Command: "ls", Cwd: "/work/pkg", WorkspaceRoot: "/work"}, okResult())
+	if root.LatestSource == sub.LatestSource {
+		t.Errorf("bare ls in different dirs must not collide: both %q", root.LatestSource)
+	}
+	if sub.LatestSource != "calm:v1:file:list:pkg" {
+		t.Errorf("bare ls in subdir = %q; want calm:v1:file:list:pkg", sub.LatestSource)
+	}
 }
 
 func TestCommandSummary_NoRawArgs(t *testing.T) {

@@ -115,6 +115,9 @@ normalization happens *before* the grammar is built:
 - **All operands** form the identity — `cat a b` → `calm:v1:file:read:a:b`, never just
   `read:a` — so a multi-operand command can't alias onto a single-operand label. If any
   operand can't be resolved, the whole command falls back to `coexist`.
+- **Bare listings** — `ls` / `find` with no path operand list the cwd, so the cwd
+  (workspace-relative) becomes the identity; otherwise the same command from two
+  directories would collide on one label.
 - **Glob patterns** (`*.go`) resolve to an unstable identity (the expansion is not
   fixed), so they fall back to `coexist`.
 
@@ -181,11 +184,11 @@ targets the latest identity).
 
 ## 8. Extensibility & capture model
 
-Rules are a registry of `{matcher, builder}`: each recognized command family has an
-explicit builder that produces its identity and capture mode (`buildFileRead`,
-`buildGrep`, `buildGit`, …). **Adding a recognized command is a small builder plus a
-registry row** — each builder is self-contained, so a command's full labeling behavior
-reads in one place rather than being spread across shared interpreter flags.
+Rules are a registry of `{matcher, builder}`: each recognized command family pairs a
+matcher with an explicit builder that produces its identity and capture mode. **Adding a
+recognized command is a small builder plus a registry row** — each builder is
+self-contained, so a command's full labeling behavior reads in one place rather than
+being spread across shared interpreter flags.
 
 Capture runs through the adapter's explicit shell-command tool — the substrate
 both target agents share (Claude Code's `Bash`, Codex's `shell`/`exec`).

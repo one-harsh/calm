@@ -68,7 +68,8 @@ func traceSnippet(stderr string) string {
 	// falls outside it, defeating the regex and persisting raw secret material.
 	s = redactSecrets(sanitizeText(s))
 	if len(s) > maxTraceSnippet {
-		s = s[len(s)-maxTraceSnippet:]
+		// Byte-slice the tail, then drop a leading partial codepoint the slice may split.
+		s = strings.ToValidUTF8(s[len(s)-maxTraceSnippet:], "")
 	}
 	return strings.TrimSpace(s)
 }
