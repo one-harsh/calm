@@ -4,6 +4,9 @@ dir: "{{.InterfaceDir}}"
 filename: "mock_{{.InterfaceNameSnake}}.go"
 mockname: "Mock{{.InterfaceName}}"
 boilerplate-file: ".mockery-header.txt"
+issue-845-fix: true
+resolve-type-alias: false
+disable-version-string: true
 
 # Port interfaces listed explicitly. New ports added to a package require
 # adding the interface here — small maintenance cost, and the explicit list
