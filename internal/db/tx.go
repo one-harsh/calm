@@ -42,21 +42,23 @@ func inTx(ctx context.Context, q queryer, fn func(*sql.Tx) error) error {
 }
 
 type Repos struct {
-	Clients  ClientRepo
-	Sessions SessionRepo
-	Events   EventsRepo
-	Sources  SourcesRepo
-	Chunks   ChunksRepo
+	Clients      ClientRepo
+	Sessions     SessionRepo
+	Events       EventsRepo
+	Sources      SourcesRepo
+	Chunks       ChunksRepo
+	Correlations CorrelationsRepo
 }
 
 func (s *Store) WithTx(ctx context.Context, fn func(Repos) error) error {
 	return inTx(ctx, s.db, func(tx *sql.Tx) error {
 		return fn(Repos{
-			Clients:  &clientRepo{queryer: tx, logger: s.logger},
-			Sessions: &sessionRepo{queryer: tx, logger: s.logger},
-			Events:   &eventsRepo{queryer: tx, logger: s.logger},
-			Sources:  &sourcesRepo{queryer: tx, logger: s.logger},
-			Chunks:   &chunksRepo{queryer: tx, logger: s.logger},
+			Clients:      &clientRepo{queryer: tx, logger: s.logger},
+			Sessions:     &sessionRepo{queryer: tx, logger: s.logger},
+			Events:       &eventsRepo{queryer: tx, logger: s.logger},
+			Sources:      &sourcesRepo{queryer: tx, logger: s.logger},
+			Chunks:       &chunksRepo{queryer: tx, logger: s.logger},
+			Correlations: &correlationsRepo{queryer: tx, logger: s.logger},
 		})
 	})
 }

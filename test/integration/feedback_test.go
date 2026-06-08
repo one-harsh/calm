@@ -5,8 +5,10 @@ package integration
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -103,18 +105,79 @@ func TestFeedback_TornDownSessionReturns404SessionNotFound(t *testing.T) {
 	}
 }
 
-func TestFeedback_InWindowReturns503PendingDAL(t *testing.T) {
-	// Until the correlations DAL lands, the in-window path runs through the
-	// stub UpdateOutcome which returns ErrCorrelationsNotImplemented; the
-	// handler maps that to 503 + feedback_dal_unavailable so workloads see a
-	// clean "feature not yet available" status instead of a 500. When the
-	// real DAL ships, this test pivots to assert the actual 204/404/409 paths
-	// it currently t.Skip's below.
-	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
-	s := seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, 60)
+func TestFeedback_HappyPathRecordsOutcome(t *testing.T) {
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+	correlationID := ingestForCorrelation(t, client, sess.SessionToken)
 
-	resp, err := env.client.FeedbackWithResponse(context.Background(),
-		&genapi.FeedbackParams{XCALMSessionToken: s.SessionToken},
+	resp, err := client.FeedbackWithResponse(context.Background(),
+		&genapi.FeedbackParams{XCALMSessionToken: sess.SessionToken},
+		genapi.FeedbackJSONRequestBody{
+			CorrelationId: correlationID,
+			Outcome:       genapi.FeedbackRequestOutcomeSuccess,
+		})
+	if err != nil {
+		t.Fatalf("Feedback: %v", err)
+	}
+	if resp.StatusCode() != http.StatusNoContent {
+		t.Fatalf("status = %d; want 204; body=%s", resp.StatusCode(), string(resp.Body))
+	}
+
+	var outcome string
+	var feedbackAt sql.NullTime
+	if err := env.sqlDB.QueryRowContext(
+		context.Background(),
+		`SELECT outcome, feedback_received_at FROM correlations WHERE correlation_id = $1`,
+		correlationID[:],
+	).Scan(&outcome, &feedbackAt); err != nil {
+		t.Fatalf("read back correlation: %v", err)
+	}
+	if outcome != "success" {
+		t.Errorf("outcome = %q; want success", outcome)
+	}
+	if !feedbackAt.Valid {
+		t.Error("feedback_received_at = NULL; want set")
+	}
+}
+
+func TestFeedback_DoubleSubmit409(t *testing.T) {
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+	correlationID := ingestForCorrelation(t, client, sess.SessionToken)
+
+	first, err := client.FeedbackWithResponse(context.Background(),
+		&genapi.FeedbackParams{XCALMSessionToken: sess.SessionToken},
+		genapi.FeedbackJSONRequestBody{
+			CorrelationId: correlationID,
+			Outcome:       genapi.FeedbackRequestOutcomeSuccess,
+		})
+	if err != nil || first.StatusCode() != http.StatusNoContent {
+		t.Fatalf("first submission: err=%v status=%d body=%s", err, first.StatusCode(), string(first.Body))
+	}
+
+	second, err := client.FeedbackWithResponse(context.Background(),
+		&genapi.FeedbackParams{XCALMSessionToken: sess.SessionToken},
+		genapi.FeedbackJSONRequestBody{
+			CorrelationId: correlationID,
+			Outcome:       genapi.FeedbackRequestOutcomeRetry,
+		})
+	if err != nil {
+		t.Fatalf("Feedback (second): %v", err)
+	}
+	if second.StatusCode() != http.StatusConflict {
+		t.Errorf("status = %d; want 409 (already submitted); body=%s", second.StatusCode(), string(second.Body))
+	}
+	if !strings.Contains(string(second.Body), "feedback_already_submitted") {
+		t.Errorf("body = %s; want error code feedback_already_submitted", string(second.Body))
+	}
+}
+
+func TestFeedback_UnknownCorrelation404(t *testing.T) {
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+
+	resp, err := client.FeedbackWithResponse(context.Background(),
+		&genapi.FeedbackParams{XCALMSessionToken: sess.SessionToken},
 		genapi.FeedbackJSONRequestBody{
 			CorrelationId: mustNewV7(t),
 			Outcome:       genapi.FeedbackRequestOutcomeSuccess,
@@ -122,32 +185,163 @@ func TestFeedback_InWindowReturns503PendingDAL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Feedback: %v", err)
 	}
-	if resp.StatusCode() != http.StatusServiceUnavailable {
-		t.Errorf("status = %d; want 503 (transitional state); body=%s", resp.StatusCode(), string(resp.Body))
+	if resp.StatusCode() != http.StatusNotFound {
+		t.Errorf("status = %d; want 404 (unknown correlation); body=%s", resp.StatusCode(), string(resp.Body))
 	}
-	if !strings.Contains(string(resp.Body), "feedback_dal_unavailable") {
-		t.Errorf("body = %s; want error code feedback_dal_unavailable", string(resp.Body))
+	if !strings.Contains(string(resp.Body), "correlation_not_found") {
+		t.Errorf("body = %s; want error code correlation_not_found", string(resp.Body))
 	}
-}
-
-func TestFeedback_HappyPathAcceptsAndEmitsMetric(t *testing.T) {
-	t.Skip("requires WI-44b correlations DAL (CorrelationsRepo.UpdateOutcome)")
-}
-
-func TestFeedback_DoubleSubmit409(t *testing.T) {
-	t.Skip("requires WI-44b correlations DAL")
-}
-
-func TestFeedback_UnknownCorrelation404(t *testing.T) {
-	t.Skip("requires WI-44b correlations DAL")
 }
 
 func TestFeedback_CrossSessionWithinNamespace404(t *testing.T) {
-	t.Skip("requires WI-44b correlations DAL — session-id filter on UpdateOutcome")
+	sessA := createSessionForTest(t, testNamespace)
+	sessB := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+	correlationFromA := ingestForCorrelation(t, client, sessA.SessionToken)
+
+	// Workload presents session B's token while referencing session A's correlation.
+	// DAL filter on (session_id) collapses this to 404.
+	resp, err := client.FeedbackWithResponse(context.Background(),
+		&genapi.FeedbackParams{XCALMSessionToken: sessB.SessionToken},
+		genapi.FeedbackJSONRequestBody{
+			CorrelationId: correlationFromA,
+			Outcome:       genapi.FeedbackRequestOutcomeSuccess,
+		})
+	if err != nil {
+		t.Fatalf("Feedback: %v", err)
+	}
+	if resp.StatusCode() != http.StatusNotFound {
+		t.Errorf("status = %d; want 404 (cross-session within namespace); body=%s", resp.StatusCode(), string(resp.Body))
+	}
+
+	// Sanity-check the row was not mutated under session B's request.
+	var outcome string
+	if err := env.sqlDB.QueryRowContext(
+		context.Background(),
+		`SELECT outcome FROM correlations WHERE correlation_id = $1`,
+		correlationFromA[:],
+	).Scan(&outcome); err != nil {
+		t.Fatalf("read back correlation: %v", err)
+	}
+	if outcome != "unset" {
+		t.Errorf("outcome = %q; want unset (session B's feedback should not have landed)", outcome)
+	}
+}
+
+func TestFeedback_ConcurrentSubmitOnlyOneWinsRestAre409(t *testing.T) {
+	// Two-callers race: GetWithLockedRow's row lock serializes the transactions
+	// so exactly one POST returns 204; every other concurrent POST blocks on
+	// the lock, then observes feedback_received_at SET, and exits via the
+	// public 409 path. A 404 here would mean the loser slipped past Get with
+	// feedback_received_at IS NULL and the UpdateOutcome guard converted the
+	// race into a misleading "correlation not found".
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+	correlationID := ingestForCorrelation(t, client, sess.SessionToken)
+
+	const callers = 10
+	var (
+		startBarrier sync.WaitGroup
+		readyBarrier sync.WaitGroup
+		done         sync.WaitGroup
+	)
+	startBarrier.Add(1)
+	readyBarrier.Add(callers)
+	done.Add(callers)
+	statuses := make([]int, callers)
+	bodies := make([]string, callers)
+	for i := 0; i < callers; i++ {
+		go func(idx int) {
+			defer done.Done()
+			readyBarrier.Done()
+			startBarrier.Wait()
+			resp, err := client.FeedbackWithResponse(context.Background(),
+				&genapi.FeedbackParams{XCALMSessionToken: sess.SessionToken},
+				genapi.FeedbackJSONRequestBody{
+					CorrelationId: correlationID,
+					Outcome:       genapi.FeedbackRequestOutcomeSuccess,
+				})
+			if err != nil {
+				statuses[idx] = -1
+				bodies[idx] = err.Error()
+				return
+			}
+			statuses[idx] = resp.StatusCode()
+			bodies[idx] = string(resp.Body)
+		}(i)
+	}
+	readyBarrier.Wait()
+	startBarrier.Done()
+	done.Wait()
+
+	var success, conflict, other int
+	var otherStatuses []int
+	for i, s := range statuses {
+		switch s {
+		case http.StatusNoContent:
+			success++
+		case http.StatusConflict:
+			conflict++
+		default:
+			other++
+			otherStatuses = append(otherStatuses, s)
+			t.Logf("caller %d: status=%d body=%s", i, s, bodies[i])
+		}
+	}
+	if success != 1 {
+		t.Errorf("204 count = %d; want exactly 1", success)
+	}
+	if conflict != callers-1 {
+		t.Errorf("409 count = %d; want %d", conflict, callers-1)
+	}
+	if other != 0 {
+		t.Errorf("unexpected statuses %v (404 here is the race-loser-as-not-found bug)", otherStatuses)
+	}
 }
 
 func TestFeedback_CrossNamespaceReturns404(t *testing.T) {
-	t.Skip("requires WI-44b correlations DAL — namespace filter on UpdateOutcome")
+	sessA := createSessionForTest(t, testNamespace)
+	sessB := createSessionForTest(t, testTenantANamespace)
+	clientA := env.clientForNamespace(t, testNamespace)
+	clientB := env.clientForNamespace(t, testTenantANamespace)
+	correlationFromA := ingestForCorrelation(t, clientA, sessA.SessionToken)
+
+	// Tenant B's API key + tenant B's session, referencing tenant A's correlation.
+	// EXISTS-on-sessions in the UPDATE collapses cross-namespace to 404.
+	resp, err := clientB.FeedbackWithResponse(context.Background(),
+		&genapi.FeedbackParams{XCALMSessionToken: sessB.SessionToken},
+		genapi.FeedbackJSONRequestBody{
+			CorrelationId: correlationFromA,
+			Outcome:       genapi.FeedbackRequestOutcomeSuccess,
+		})
+	if err != nil {
+		t.Fatalf("Feedback: %v", err)
+	}
+	if resp.StatusCode() != http.StatusNotFound {
+		t.Errorf("status = %d; want 404 (cross-namespace); body=%s", resp.StatusCode(), string(resp.Body))
+	}
+}
+
+// ingestForCorrelation issues a real ingest against the given session and
+// returns the server-minted correlation_id from the response header. This is
+// the path a workload follows to obtain the value it posts back to /v1/feedback.
+func ingestForCorrelation(t *testing.T, client *genapi.ClientWithResponses, sessionToken string) uuid.UUID {
+	t.Helper()
+	resp, err := client.IngestWithResponse(context.Background(),
+		&genapi.IngestParams{XCALMSessionToken: sessionToken},
+		genapi.IngestJSONRequestBody{Source: "feedback-test", Content: "alpha\n\nbeta"})
+	if err != nil {
+		t.Fatalf("ingestForCorrelation: %v", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("ingestForCorrelation: status=%d body=%s", resp.StatusCode(), string(resp.Body))
+	}
+	raw := resp.HTTPResponse.Header.Get("X-CALM-Correlation-Id")
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		t.Fatalf("ingestForCorrelation: parse %q: %v", raw, err)
+	}
+	return id
 }
 
 // mustNewV7 mints a fresh UUIDv7 or fails the test.

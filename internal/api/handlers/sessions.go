@@ -181,13 +181,14 @@ func (h *Handlers) GetSnapshot(ctx context.Context, request genapi.GetSnapshotRe
 		return nil, errors.New("session metadata not present in request context")
 	}
 	namespace := auth.NamespaceFromContext(ctx)
+	correlationID := correlationIDOrNil(ctx, h.deps.Logger, "snapshot")
 
 	budget := snapshot.DefaultBudgetBytes
 	if request.Params.BudgetBytes != nil {
 		budget = *request.Params.BudgetBytes
 	}
 
-	result, err := h.deps.Snapshot.Build(ctx, namespace, md.ID, budget)
+	result, err := h.deps.Snapshot.Build(ctx, namespace, md.ID, correlationID, budget)
 	if err != nil {
 		if m, ok := mapEventsError(err); ok {
 			body := genapi.Error{Error: m.Code, Detail: &m.Detail}

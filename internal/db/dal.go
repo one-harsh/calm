@@ -52,6 +52,8 @@ type ChunksRepo interface {
 }
 
 type CorrelationsRepo interface {
+	Insert(ctx context.Context, namespace string, sessionID int64, correlationID []byte, requestType string, requestMeta []byte) error
+	GetWithLockedRow(ctx context.Context, namespace string, sessionID int64, correlationID []byte) (CorrelationRecord, error)
 	UpdateOutcome(ctx context.Context, namespace string, sessionID int64, correlationID []byte, outcome string) (CorrelationRecord, error)
 }
 

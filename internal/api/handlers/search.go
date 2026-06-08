@@ -35,6 +35,7 @@ func (h *Handlers) Search(
 		return nil, errors.New("session metadata not present in request context")
 	}
 	namespace := auth.NamespaceFromContext(ctx)
+	correlationID := correlationIDOrNil(ctx, h.deps.Logger, "search")
 
 	in := db.SearchInput{SessionID: md.ID, Queries: request.Body.Queries, Limit: defaultSearchLimit}
 	if request.Body.Source != nil {
@@ -44,7 +45,7 @@ func (h *Handlers) Search(
 		in.Limit = *request.Body.Limit
 	}
 
-	results, err := h.deps.Sources.Search(ctx, namespace, in)
+	results, err := h.deps.Search.Search(ctx, namespace, md.ID, correlationID, in)
 	if err != nil {
 		if m, ok := mapSearchError(err); ok {
 			body := genapi.Error{Error: m.Code, Detail: &m.Detail}

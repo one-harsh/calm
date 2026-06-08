@@ -29,6 +29,7 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 	"github.com/one-harsh/calm/internal/feedback"
 	"github.com/one-harsh/calm/internal/ingest"
+	"github.com/one-harsh/calm/internal/search"
 	"github.com/one-harsh/calm/internal/server"
 	"github.com/one-harsh/calm/internal/session"
 	"github.com/one-harsh/calm/internal/snapshot"
@@ -107,9 +108,10 @@ func bootstrap() (*harness, error) {
 		IdempotencyKeyTTL:  time.Hour,
 		IdempotencyKeySize: 10_000,
 	})
-	snapshotSvc := snapshot.New(store)
-	ingestSvc := ingest.New(store)
-	feedbackSvc := feedback.New(store.Correlations(), logging.Nop())
+	snapshotSvc := snapshot.New(store, logging.Nop())
+	ingestSvc := ingest.New(store, logging.Nop())
+	searchSvc := search.New(store, logging.Nop())
+	feedbackSvc := feedback.New(store, logging.Nop())
 	handler, err := server.NewHandler(server.Config{
 		MaxIngestPayloadKB:   1024,
 		RateLimitPerSecond:   100,
@@ -128,7 +130,7 @@ func bootstrap() (*harness, error) {
 			Events:   store.Events(),
 			Snapshot: snapshotSvc,
 			Ingest:   ingestSvc,
-			Sources:  store.Sources(),
+			Search:   searchSvc,
 			Feedback: feedbackSvc,
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,

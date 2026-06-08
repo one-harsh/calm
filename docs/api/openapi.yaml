@@ -316,7 +316,6 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '410': { $ref: '#/components/responses/Gone' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/events:
     post:
@@ -573,13 +572,6 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     TooManyRequests:
       description: Per-namespace rate limit exceeded
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/Error' }
-    ServiceUnavailable:
-      description: |
-        Endpoint depends on a subsystem that is not yet implemented or is
-        temporarily disabled. The error `code` identifies which subsystem.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

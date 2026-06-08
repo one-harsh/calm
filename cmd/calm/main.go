@@ -23,6 +23,7 @@ import (
 	"github.com/one-harsh/calm/internal/feedback"
 	"github.com/one-harsh/calm/internal/ingest"
 	"github.com/one-harsh/calm/internal/obs"
+	"github.com/one-harsh/calm/internal/search"
 	"github.com/one-harsh/calm/internal/secrets"
 	"github.com/one-harsh/calm/internal/server"
 	"github.com/one-harsh/calm/internal/session"
@@ -79,9 +80,10 @@ func run() error {
 		IdempotencyKeyTTL:  cfg.Sessions.IdempotencyKeyTTL,
 		IdempotencyKeySize: cfg.Sessions.IdempotencyKeySize,
 	})
-	snapshotSvc := snapshot.New(store)
-	ingestSvc := ingest.New(store)
-	feedbackSvc := feedback.New(store.Correlations(), logger)
+	snapshotSvc := snapshot.New(store, logger)
+	ingestSvc := ingest.New(store, logger)
+	searchSvc := search.New(store, logger)
+	feedbackSvc := feedback.New(store, logger)
 	if err := clientSvc.SeedDefaults(openCtx, uncredentialedNamespaceNames(cfg.Namespaces)); err != nil {
 		return fmt.Errorf("seed clients: %w", err)
 	}
@@ -108,7 +110,7 @@ func run() error {
 			Events:   store.Events(),
 			Snapshot: snapshotSvc,
 			Ingest:   ingestSvc,
-			Sources:  store.Sources(),
+			Search:   searchSvc,
 			Feedback: feedbackSvc,
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: cfg.Sessions.DefaultTTLMinutes,

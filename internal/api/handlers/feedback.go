@@ -59,10 +59,6 @@ func (h *Handlers) Feedback(ctx context.Context, request genapi.FeedbackRequestO
 				return genapi.Feedback400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse{
 					Error: m.Code, Detail: &m.Detail,
 				}}, nil
-			case http.StatusServiceUnavailable:
-				return genapi.Feedback503JSONResponse{ServiceUnavailableJSONResponse: genapi.ServiceUnavailableJSONResponse{
-					Error: m.Code, Detail: &m.Detail,
-				}}, nil
 			}
 		}
 		if !isContextError(err) {

@@ -107,8 +107,6 @@ func mapFeedbackError(err error) (m errorMapping, ok bool) {
 		return errorMapping{http.StatusNotFound, "correlation_not_found", "correlation not found within the resolved session"}, true
 	case errors.Is(err, db.ErrFeedbackAlreadySubmitted):
 		return errorMapping{http.StatusConflict, "feedback_already_submitted", "feedback already submitted for this correlation"}, true
-	case errors.Is(err, db.ErrCorrelationsNotImplemented):
-		return errorMapping{http.StatusServiceUnavailable, "feedback_dal_unavailable", "feedback storage is not yet available; retry once the operator enables it"}, true
 	default:
 		return errorMapping{}, false
 	}

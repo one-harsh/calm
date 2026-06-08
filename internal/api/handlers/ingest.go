@@ -34,6 +34,7 @@ func (h *Handlers) Ingest(
 		return nil, errors.New("session metadata not present in request context")
 	}
 	namespace := auth.NamespaceFromContext(ctx)
+	correlationID := correlationIDOrNil(ctx, h.deps.Logger, "ingest")
 
 	in := ingest.Input{Source: request.Body.Source, Content: request.Body.Content}
 	if request.Body.Format != nil {
@@ -54,7 +55,7 @@ func (h *Handlers) Ingest(
 		)
 	}
 
-	result, err := h.deps.Ingest.Ingest(ctx, namespace, md.ID, in)
+	result, err := h.deps.Ingest.Ingest(ctx, namespace, md.ID, correlationID, in)
 	if err != nil {
 		if m, ok := mapIngestError(err); ok {
 			body := genapi.Error{Error: m.Code, Detail: &m.Detail}

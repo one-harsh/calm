@@ -8,19 +8,26 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
+	logging "github.com/one-harsh/context-logging"
+
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/obs"
 )
 
 // DefaultBudgetBytes is applied for a non-positive budget. Matches the API
 // contract's default for GET /v1/snapshot.
 const DefaultBudgetBytes = 2048
 
+const requestTypeSnapshot = "snapshot"
+
 type Service struct {
-	store db.DAL
+	store  db.DAL
+	logger *logging.Logger
 }
 
-func New(store db.DAL) *Service {
-	return &Service{store: store}
+func New(store db.DAL, logger *logging.Logger) *Service {
+	return &Service{store: store, logger: logger}
 }
 
 type Result struct {
@@ -29,7 +36,7 @@ type Result struct {
 	BudgetExceeded bool
 }
 
-func (s *Service) Build(ctx context.Context, namespace string, sessionID int64, budgetBytes int) (Result, error) {
+func (s *Service) Build(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, budgetBytes int) (Result, error) {
 	if budgetBytes <= 0 {
 		budgetBytes = DefaultBudgetBytes
 	}
@@ -63,7 +70,26 @@ func (s *Service) Build(ctx context.Context, namespace string, sessionID int64, 
 		break
 	}
 
-	return Result{Events: included, ByteBudgetUsed: used, BudgetExceeded: exceeded}, nil
+	result := Result{Events: included, ByteBudgetUsed: used, BudgetExceeded: exceeded}
+	s.captureCorrelation(ctx, namespace, sessionID, correlationID, result)
+	return result, nil
+}
+
+func (s *Service) captureCorrelation(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, result Result) {
+	meta, err := json.Marshal(map[string]any{
+		"byte_budget_used": result.ByteBudgetUsed,
+		"budget_exceeded":  result.BudgetExceeded,
+		"event_count":      len(result.Events),
+	})
+	if err != nil {
+		s.logger.WithContext(ctx).Warn("correlation marshal failed",
+			obs.RequestType(requestTypeSnapshot), logging.ErrorField(err))
+		return
+	}
+	if err := s.store.Correlations().Insert(ctx, namespace, sessionID, correlationID[:], requestTypeSnapshot, meta); err != nil {
+		s.logger.WithContext(ctx).Warn("correlation insert failed",
+			obs.RequestType(requestTypeSnapshot), logging.ErrorField(err))
+	}
 }
 
 // wireSize is an event's serialized JSON size — the unit the byte budget

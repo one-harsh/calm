@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS correlations;
 DROP TABLE IF EXISTS session_events;
 DROP TABLE IF EXISTS vocabulary;
 DROP TABLE IF EXISTS chunks;

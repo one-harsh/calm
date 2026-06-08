@@ -24,6 +24,116 @@ func (_m *MockCorrelationsRepo) EXPECT() *MockCorrelationsRepo_Expecter {
 	return &MockCorrelationsRepo_Expecter{mock: &_m.Mock}
 }
 
+// GetWithLockedRow provides a mock function with given fields: ctx, namespace, sessionID, correlationID
+func (_m *MockCorrelationsRepo) GetWithLockedRow(ctx context.Context, namespace string, sessionID int64, correlationID []byte) (CorrelationRecord, error) {
+	ret := _m.Called(ctx, namespace, sessionID, correlationID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetWithLockedRow")
+	}
+
+	var r0 CorrelationRecord
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64, []byte) (CorrelationRecord, error)); ok {
+		return rf(ctx, namespace, sessionID, correlationID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64, []byte) CorrelationRecord); ok {
+		r0 = rf(ctx, namespace, sessionID, correlationID)
+	} else {
+		r0 = ret.Get(0).(CorrelationRecord)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, int64, []byte) error); ok {
+		r1 = rf(ctx, namespace, sessionID, correlationID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockCorrelationsRepo_GetWithLockedRow_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetWithLockedRow'
+type MockCorrelationsRepo_GetWithLockedRow_Call struct {
+	*mock.Call
+}
+
+// GetWithLockedRow is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - sessionID int64
+//   - correlationID []byte
+func (_e *MockCorrelationsRepo_Expecter) GetWithLockedRow(ctx interface{}, namespace interface{}, sessionID interface{}, correlationID interface{}) *MockCorrelationsRepo_GetWithLockedRow_Call {
+	return &MockCorrelationsRepo_GetWithLockedRow_Call{Call: _e.mock.On("GetWithLockedRow", ctx, namespace, sessionID, correlationID)}
+}
+
+func (_c *MockCorrelationsRepo_GetWithLockedRow_Call) Run(run func(ctx context.Context, namespace string, sessionID int64, correlationID []byte)) *MockCorrelationsRepo_GetWithLockedRow_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(int64), args[3].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockCorrelationsRepo_GetWithLockedRow_Call) Return(_a0 CorrelationRecord, _a1 error) *MockCorrelationsRepo_GetWithLockedRow_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockCorrelationsRepo_GetWithLockedRow_Call) RunAndReturn(run func(context.Context, string, int64, []byte) (CorrelationRecord, error)) *MockCorrelationsRepo_GetWithLockedRow_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Insert provides a mock function with given fields: ctx, namespace, sessionID, correlationID, requestType, requestMeta
+func (_m *MockCorrelationsRepo) Insert(ctx context.Context, namespace string, sessionID int64, correlationID []byte, requestType string, requestMeta []byte) error {
+	ret := _m.Called(ctx, namespace, sessionID, correlationID, requestType, requestMeta)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Insert")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64, []byte, string, []byte) error); ok {
+		r0 = rf(ctx, namespace, sessionID, correlationID, requestType, requestMeta)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockCorrelationsRepo_Insert_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Insert'
+type MockCorrelationsRepo_Insert_Call struct {
+	*mock.Call
+}
+
+// Insert is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - sessionID int64
+//   - correlationID []byte
+//   - requestType string
+//   - requestMeta []byte
+func (_e *MockCorrelationsRepo_Expecter) Insert(ctx interface{}, namespace interface{}, sessionID interface{}, correlationID interface{}, requestType interface{}, requestMeta interface{}) *MockCorrelationsRepo_Insert_Call {
+	return &MockCorrelationsRepo_Insert_Call{Call: _e.mock.On("Insert", ctx, namespace, sessionID, correlationID, requestType, requestMeta)}
+}
+
+func (_c *MockCorrelationsRepo_Insert_Call) Run(run func(ctx context.Context, namespace string, sessionID int64, correlationID []byte, requestType string, requestMeta []byte)) *MockCorrelationsRepo_Insert_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(int64), args[3].([]byte), args[4].(string), args[5].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockCorrelationsRepo_Insert_Call) Return(_a0 error) *MockCorrelationsRepo_Insert_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockCorrelationsRepo_Insert_Call) RunAndReturn(run func(context.Context, string, int64, []byte, string, []byte) error) *MockCorrelationsRepo_Insert_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // UpdateOutcome provides a mock function with given fields: ctx, namespace, sessionID, correlationID, outcome
 func (_m *MockCorrelationsRepo) UpdateOutcome(ctx context.Context, namespace string, sessionID int64, correlationID []byte, outcome string) (CorrelationRecord, error) {
 	ret := _m.Called(ctx, namespace, sessionID, correlationID, outcome)

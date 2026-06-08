@@ -5,21 +5,29 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
+
+	"github.com/google/uuid"
+	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/obs"
 )
 
 const (
 	summaryCap = 50
 	previewMax = 200
+
+	requestTypeIngest = "ingest"
 )
 
 type Service struct {
-	store db.DAL
+	store  db.DAL
+	logger *logging.Logger
 }
 
-func New(store db.DAL) *Service {
-	return &Service{store: store}
+func New(store db.DAL, logger *logging.Logger) *Service {
+	return &Service{store: store, logger: logger}
 }
 
 type Input struct {
@@ -44,7 +52,7 @@ type Result struct {
 	DistinctiveTerms []string
 }
 
-func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64, in Input) (Result, error) {
+func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, in Input) (Result, error) {
 	if in.Source == "" {
 		return Result{}, db.ErrSourceRequired
 	}
@@ -81,7 +89,7 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 
 	// HLD-DEVIATION: distinctive_terms requires the vocabulary doc_freq table
 	// (HLD ingest section); smoke returns none.
-	return Result{
+	result := Result{
 		Source:           in.Source,
 		Created:          created,
 		SectionsIndexed:  indexed,
@@ -89,7 +97,26 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 		SummaryTruncated: truncated,
 		Summary:          summary,
 		DistinctiveTerms: []string{},
-	}, nil
+	}
+	s.captureCorrelation(ctx, namespace, sessionID, correlationID, result)
+	return result, nil
+}
+
+func (s *Service) captureCorrelation(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, result Result) {
+	meta, err := json.Marshal(map[string]any{
+		"sections_indexed":  result.SectionsIndexed,
+		"sections_total":    result.SectionsTotal,
+		"summary_truncated": result.SummaryTruncated,
+	})
+	if err != nil {
+		s.logger.WithContext(ctx).Warn("correlation marshal failed",
+			obs.RequestType(requestTypeIngest), logging.ErrorField(err))
+		return
+	}
+	if err := s.store.Correlations().Insert(ctx, namespace, sessionID, correlationID[:], requestTypeIngest, meta); err != nil {
+		s.logger.WithContext(ctx).Warn("correlation insert failed",
+			obs.RequestType(requestTypeIngest), logging.ErrorField(err))
+	}
 }
 
 func (s *Service) ListSources(ctx context.Context, namespace string, sessionID int64) ([]db.SourceSummary, error) {

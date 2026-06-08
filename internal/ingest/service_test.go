@@ -5,15 +5,27 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+	logging "github.com/one-harsh/context-logging"
 	"github.com/stretchr/testify/mock"
 
 	"github.com/one-harsh/calm/internal/db"
 )
+
+func mustCorrelationID(t *testing.T) uuid.UUID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid.NewV7: %v", err)
+	}
+	return id
+}
 
 func TestChunk_MarkdownSplitsAtHeadings(t *testing.T) {
 	content := "intro line\n\n# First\nbody one\n\n## Second\nbody two\n"
@@ -59,25 +71,33 @@ func TestChunk_HonorsContentTypeHint(t *testing.T) {
 }
 
 type ingestMocks struct {
-	sources *db.MockSourcesRepo
-	chunks  *db.MockChunksRepo
+	sources      *db.MockSourcesRepo
+	chunks       *db.MockChunksRepo
+	correlations *db.MockCorrelationsRepo
 }
 
 // newMockService wires the service over a MockDAL whose WithTx invokes the
 // closure with mock repos, so tests set expectations on the composed ops.
+// Correlations runs outside WithTx (best-effort capture); the mock allows
+// any number of post-success Insert calls.
 func newMockService(t *testing.T) (*Service, ingestMocks) {
 	t.Helper()
 	m := ingestMocks{
-		sources: db.NewMockSourcesRepo(t),
-		chunks:  db.NewMockChunksRepo(t),
+		sources:      db.NewMockSourcesRepo(t),
+		chunks:       db.NewMockChunksRepo(t),
+		correlations: db.NewMockCorrelationsRepo(t),
 	}
 	dal := db.NewMockDAL(t)
 	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, fn func(db.Repos) error) error {
-			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks})
+			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Correlations: m.correlations})
 		},
 	).Maybe()
-	return New(dal), m
+	dal.EXPECT().Correlations().Return(m.correlations).Maybe()
+	m.correlations.EXPECT().Insert(
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+	).Return(nil).Maybe()
+	return New(dal, logging.Nop()), m
 }
 
 // expectIndex sets the happy-path WithTx composition: upsert (namespace-scoped) →
@@ -92,7 +112,7 @@ func TestIngest_HappyBuildsSummary(t *testing.T) {
 	svc, m := newMockService(t)
 	m.expectIndex(1, "out", true)
 
-	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "alpha\n\nbeta"})
+	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "out", Content: "alpha\n\nbeta"})
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
@@ -120,7 +140,7 @@ func TestIngest_ReindexReportsNotCreated(t *testing.T) {
 	svc, m := newMockService(t)
 	m.expectIndex(1, "out", false)
 
-	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "alpha"})
+	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "out", Content: "alpha"})
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
@@ -134,7 +154,7 @@ func TestIngest_EmptyContentIndexesNothing(t *testing.T) {
 	// DeleteForSource is still called (clears prior content); Insert no-ops on zero chunks.
 	m.expectIndex(1, "out", true)
 
-	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "out", Content: "   "})
+	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "out", Content: "   "})
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
@@ -160,7 +180,7 @@ func TestIngest_TruncatesSummaryAt50(t *testing.T) {
 		}
 		fmt.Fprintf(&sb, "paragraph %d", i)
 	}
-	res, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "big", Content: sb.String()})
+	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "big", Content: sb.String()})
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}
@@ -180,7 +200,7 @@ func TestIngest_TruncatesSummaryAt50(t *testing.T) {
 
 func TestIngest_EmptySourceRejected(t *testing.T) {
 	svc, _ := newMockService(t) // WithTx must NOT be reached
-	_, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "", Content: "y"})
+	_, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "", Content: "y"})
 	if !errors.Is(err, db.ErrSourceRequired) {
 		t.Fatalf("err = %v; want ErrSourceRequired", err)
 	}
@@ -190,8 +210,71 @@ func TestIngest_SessionNotFoundPropagates(t *testing.T) {
 	svc, m := newMockService(t)
 	m.sources.EXPECT().Upsert(mock.Anything, "ns-a", int64(1), "x").Return(int64(0), false, db.ErrSessionNotFound).Once()
 
-	_, err := svc.Ingest(context.Background(), "ns-a", 1, Input{Source: "x", Content: "y"})
+	_, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "x", Content: "y"})
 	if !errors.Is(err, db.ErrSessionNotFound) {
 		t.Fatalf("err = %v; want ErrSessionNotFound", err)
+	}
+}
+
+func TestIngest_PersistsCorrelationOnSuccess(t *testing.T) {
+	corrID := mustCorrelationID(t)
+	m := ingestMocks{
+		sources:      db.NewMockSourcesRepo(t),
+		chunks:       db.NewMockChunksRepo(t),
+		correlations: db.NewMockCorrelationsRepo(t),
+	}
+	dal := db.NewMockDAL(t)
+	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, fn func(db.Repos) error) error {
+			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Correlations: m.correlations})
+		},
+	).Once()
+	dal.EXPECT().Correlations().Return(m.correlations).Once()
+	m.expectIndex(1, "out", true)
+	m.correlations.EXPECT().Insert(
+		mock.Anything, "ns-a", int64(1), corrID[:], "ingest",
+		mock.MatchedBy(func(meta []byte) bool {
+			var got map[string]any
+			if err := json.Unmarshal(meta, &got); err != nil {
+				return false
+			}
+			_, hasIndexed := got["sections_indexed"]
+			_, hasTotal := got["sections_total"]
+			_, hasTruncated := got["summary_truncated"]
+			return hasIndexed && hasTotal && hasTruncated
+		}),
+	).Return(nil).Once()
+	svc := New(dal, logging.Nop())
+
+	if _, err := svc.Ingest(context.Background(), "ns-a", 1, corrID, Input{Source: "out", Content: "alpha"}); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+}
+
+func TestIngest_CorrelationInsertFailureDoesNotBreakIngest(t *testing.T) {
+	m := ingestMocks{
+		sources:      db.NewMockSourcesRepo(t),
+		chunks:       db.NewMockChunksRepo(t),
+		correlations: db.NewMockCorrelationsRepo(t),
+	}
+	dal := db.NewMockDAL(t)
+	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, fn func(db.Repos) error) error {
+			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Correlations: m.correlations})
+		},
+	).Once()
+	dal.EXPECT().Correlations().Return(m.correlations).Once()
+	m.expectIndex(1, "out", true)
+	m.correlations.EXPECT().Insert(
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+	).Return(errors.New("correlations table dropped")).Once()
+	svc := New(dal, logging.Nop())
+
+	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "out", Content: "alpha"})
+	if err != nil {
+		t.Fatalf("Ingest returned err %v; capture failure must not bubble", err)
+	}
+	if res.Source != "out" {
+		t.Errorf("Source = %q; want out", res.Source)
 	}
 }

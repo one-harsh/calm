@@ -43,6 +43,7 @@ func Context(logger *logging.Logger) func(http.Handler) http.Handler {
 				correlationStr := correlationID.String()
 				w.Header().Set(correlationIDHeader, correlationStr)
 				ctx = logging.Bind(ctx, obs.CorrelationID(correlationStr))
+				ctx = obs.WithCorrelationID(ctx, correlationID)
 			}
 
 			if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {

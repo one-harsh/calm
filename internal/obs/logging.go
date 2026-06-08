@@ -58,6 +58,7 @@ const (
 	KeyCorrelationID           = "correlation_id"
 	KeyFeedbackOutcome         = "feedback_outcome"
 	KeyReferencedCorrelationID = "feedback.referenced_correlation_id"
+	KeyRequestType             = "request_type"
 )
 
 var (
@@ -130,4 +131,8 @@ func FeedbackOutcome(value string) logging.LoggingField {
 
 func ReferencedCorrelationID(value string) logging.LoggingField {
 	return logging.StringField(KeyReferencedCorrelationID, value)
+}
+
+func RequestType(value string) logging.LoggingField {
+	return logging.StringField(KeyRequestType, value)
 }

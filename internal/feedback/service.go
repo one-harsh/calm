@@ -21,23 +21,19 @@ var (
 )
 
 type Service struct {
-	correlations db.CorrelationsRepo
-	logger       *logging.Logger
-	now          func() time.Time
+	store  db.DAL
+	logger *logging.Logger
+	now    func() time.Time
 }
 
-func New(correlations db.CorrelationsRepo, logger *logging.Logger) *Service {
+func New(store db.DAL, logger *logging.Logger) *Service {
 	return &Service{
-		correlations: correlations,
-		logger:       logger,
-		now:          time.Now,
+		store:  store,
+		logger: logger,
+		now:    time.Now,
 	}
 }
 
-// Receive enforces the feedback-acceptance window via the embedded UUIDv7
-// timestamp — no DB read on the 410 path. On the in-window path, delegates
-// to the DAL's UpdateOutcome, which filters on (namespace, correlation_id,
-// session_id) so cross-session attempts within the same namespace 404.
 func (s *Service) Receive(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, outcome string, ttlMinutes int) (db.CorrelationRecord, error) {
 	if correlationID.Version() != 7 {
 		return db.CorrelationRecord{}, fmt.Errorf("%w: version %d", ErrInvalidCorrelationID, correlationID.Version())
@@ -49,5 +45,21 @@ func (s *Service) Receive(ctx context.Context, namespace string, sessionID int64
 		return db.CorrelationRecord{}, ErrFeedbackWindowExpired
 	}
 
-	return s.correlations.UpdateOutcome(ctx, namespace, sessionID, correlationID[:], outcome)
+	var rec db.CorrelationRecord
+	err := s.store.WithTx(ctx, func(r db.Repos) error {
+		existing, err := r.Correlations.GetWithLockedRow(ctx, namespace, sessionID, correlationID[:])
+		if err != nil {
+			return err
+		}
+		if !existing.FeedbackReceivedAt.IsZero() {
+			return db.ErrFeedbackAlreadySubmitted
+		}
+		updated, err := r.Correlations.UpdateOutcome(ctx, namespace, sessionID, correlationID[:], outcome)
+		if err != nil {
+			return err
+		}
+		rec = updated
+		return nil
+	})
+	return rec, err
 }

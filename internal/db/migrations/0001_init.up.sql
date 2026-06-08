@@ -128,3 +128,19 @@ CREATE TABLE session_events (
 );
 CREATE INDEX session_events_priority_idx ON session_events(session_id, priority, created_at DESC);
 CREATE INDEX session_events_dedup_idx    ON session_events(session_id, data_hash);
+
+-- correlation_id is BYTEA (raw UUIDv7, 16 bytes) — half the storage and index
+-- size of the canonical 36-char text form, which is reconstructed at the wire
+-- boundary. The embedded ms timestamp drives the feedback acceptance window
+-- (handler-side TTL check; no expires_at column, no scanner).
+CREATE TABLE correlations (
+  correlation_id       BYTEA PRIMARY KEY,
+  session_id           BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  request_type         TEXT NOT NULL CHECK (request_type IN ('ingest','search','snapshot')),
+  request_meta         JSONB NOT NULL,
+  outcome              TEXT NOT NULL DEFAULT 'unset'
+    CHECK (outcome IN ('unset','success','retry','degraded')),
+  feedback_received_at TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX correlations_session_idx ON correlations(session_id);
