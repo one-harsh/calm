@@ -54,7 +54,8 @@ func (h *Handlers) Search(
 			case http.StatusBadRequest:
 				return genapi.Search400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse(body)}, nil
 			default:
-				h.deps.Logger.WithContext(ctx).Warn("search: mapped sentinel has no response variant — returning 500",
+				h.deps.Logger.WithContext(ctx).Warn(
+					"search: mapped sentinel has no response variant — returning 500",
 					logging.IntField("http.status", m.Status),
 					logging.StringField("error.code", m.Code),
 					logging.ErrorField(err),

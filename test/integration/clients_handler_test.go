@@ -63,7 +63,8 @@ func TestRegisterClientHandler_RegisteredClientEnablesSessionCreate(t *testing.T
 	if _, err := env.client.RegisterClientWithResponse(context.Background(), clientName); err != nil {
 		t.Fatalf("RegisterClient: %v", err)
 	}
-	sessResp, err := env.client.CreateSessionWithResponse(context.Background(),
+	sessResp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{
 			Client: &clientName,
@@ -156,7 +157,8 @@ func newCredentialedTestServer(t *testing.T) (apiClient *genapi.ClientWithRespon
 // into Authorization: Bearer on every request.
 func withClientToken(t *testing.T, serverURL, token string) *genapi.ClientWithResponses {
 	t.Helper()
-	c, err := genapi.NewClientWithResponses(serverURL,
+	c, err := genapi.NewClientWithResponses(
+		serverURL,
 		genapi.WithRequestEditorFn(apiKeyHeader(testCredentialedKey)),
 		genapi.WithRequestEditorFn(clientTokenBearer(token)),
 	)
@@ -211,7 +213,8 @@ func TestCreateSessionHandler_CredentialedWithoutClientTokenReturns401(t *testin
 	}
 
 	// CreateSession without Authorization: Bearer → 401.
-	resp, err := apiClient.CreateSessionWithResponse(context.Background(),
+	resp, err := apiClient.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -234,7 +237,8 @@ func TestCreateSessionHandler_CredentialedWithValidTokenSucceeds(t *testing.T) {
 	token := *regResp.JSON201.ClientToken
 
 	credentialed := withClientToken(t, serverURL, token)
-	resp, err := credentialed.CreateSessionWithResponse(context.Background(),
+	resp, err := credentialed.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -266,7 +270,8 @@ func TestCreateSessionHandler_CredentialedBodyClientMustMatchTokenClient(t *test
 
 	credentialed := withClientToken(t, serverURL, token)
 	wrongClient := "bob-mismatch"
-	resp, err := credentialed.CreateSessionWithResponse(context.Background(),
+	resp, err := credentialed.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{Client: &wrongClient},
 	)
@@ -299,7 +304,8 @@ func TestCreateSessionHandler_CredentialedCrossClientIsolation(t *testing.T) {
 	bobClient := withClientToken(t, serverURL, *bobReg.JSON201.ClientToken)
 
 	// Alice creates a session.
-	if _, err := aliceClient.CreateSessionWithResponse(context.Background(),
+	if _, err := aliceClient.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	); err != nil {
@@ -313,7 +319,8 @@ func TestCreateSessionHandler_CredentialedCrossClientIsolation(t *testing.T) {
 	// client). For now, we pin the create-side contract: bob cannot create
 	// a session that claims to be alice's by spoofing the client field.
 	wrongClient := "alice-iso"
-	resp, err := bobClient.CreateSessionWithResponse(context.Background(),
+	resp, err := bobClient.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{Client: &wrongClient},
 	)
@@ -351,7 +358,8 @@ func TestRotateClientTokenHandler_CredentialedHappyPath(t *testing.T) {
 
 	// Old token rejected.
 	oldCredentialed := withClientToken(t, serverURL, originalToken)
-	respOld, err := oldCredentialed.CreateSessionWithResponse(context.Background(),
+	respOld, err := oldCredentialed.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -364,7 +372,8 @@ func TestRotateClientTokenHandler_CredentialedHappyPath(t *testing.T) {
 
 	// New token works.
 	newCredentialed := withClientToken(t, serverURL, newToken)
-	respNew, err := newCredentialed.CreateSessionWithResponse(context.Background(),
+	respNew, err := newCredentialed.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -389,7 +398,8 @@ func TestRotateClientTokenHandler_CredentialedSessionsPersistAcrossRotation(t *t
 	originalToken := *regResp.JSON201.ClientToken
 
 	credentialed := withClientToken(t, serverURL, originalToken)
-	createResp, err := credentialed.CreateSessionWithResponse(context.Background(),
+	createResp, err := credentialed.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)

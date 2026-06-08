@@ -19,7 +19,8 @@ import (
 )
 
 func TestCreateSessionHandler_HappyMinimal(t *testing.T) {
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -63,7 +64,8 @@ func TestCreateSessionHandler_HappyWithAllFields(t *testing.T) {
 	seedClient(t, env.sqlDB, testNamespace, client)
 	ttl := 60
 	labels := map[string]string{"env": "prod", "tier": "1"}
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{
 			Client:     &client,
@@ -88,7 +90,8 @@ func TestCreateSessionHandler_HappyWithAllFields(t *testing.T) {
 	// labels by FK.
 	hash := auth.HashToken(testNamespace, resp.JSON201.SessionToken)
 	var sessID int64
-	if err := env.sqlDB.QueryRowContext(context.Background(),
+	if err := env.sqlDB.QueryRowContext(
+		context.Background(),
 		`SELECT id FROM sessions WHERE namespace = $1 AND session_token_hash = $2`,
 		testNamespace, hash,
 	).Scan(&sessID); err != nil {
@@ -106,7 +109,8 @@ func TestCreateSessionHandler_UnregisteredClientReturns400(t *testing.T) {
 	// for an unregistered client — the FK violation surfaces as 400
 	// client_not_found. (Previously this handler auto-registered the client.)
 	client := "freshly-introduced-client"
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{
 			Client: &client,
@@ -133,7 +137,8 @@ func TestCreateSessionHandler_UnregisteredClientReturns400(t *testing.T) {
 }
 
 func TestCreateSessionHandler_DefaultsEmptyClient(t *testing.T) {
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -149,7 +154,8 @@ func TestCreateSessionHandler_DefaultsEmptyClient(t *testing.T) {
 }
 
 func TestCreateSessionHandler_AbsentTTLUsesConfigInactivityValue(t *testing.T) {
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -183,7 +189,8 @@ func TestCreateSessionHandler_RequestedTTLAboveOperatorMaxClamped(t *testing.T) 
 	// passes the validator and gets clamped by the handler. Response echoes
 	// the committed (clamped) value.
 	requested := 5000
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{
 			TtlMinutes: &requested,
@@ -202,7 +209,8 @@ func TestCreateSessionHandler_RequestedTTLAboveOperatorMaxClamped(t *testing.T) 
 
 func TestCreateSessionHandler_OverMaxTTLRejected400(t *testing.T) {
 	overMax := 20_000 // > OpenAPI max of 10080
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{
 			TtlMinutes: &overMax,
@@ -219,7 +227,8 @@ func TestCreateSessionHandler_OverMaxTTLRejected400(t *testing.T) {
 
 func TestCreateSessionHandler_ResponseHasNoLabelsField(t *testing.T) {
 	labels := map[string]string{"x": "y"}
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{
 			Labels: &labels,
@@ -283,19 +292,22 @@ func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 		t.Errorf("204 response carried %d bytes of body; want empty", len(resp.Body))
 	}
 
-	if n := countRows(t, env.sqlDB,
+	if n := countRows(
+		t, env.sqlDB,
 		`SELECT COUNT(*) FROM sessions WHERE id = $1`, s.ID,
 	); n != 0 {
 		t.Errorf("sessions row count after delete = %d; want 0", n)
 	}
 	for _, tbl := range []string{"session_labels", "sources", "session_events"} {
-		if n := countRows(t, env.sqlDB,
+		if n := countRows(
+			t, env.sqlDB,
 			"SELECT COUNT(*) FROM "+tbl+" WHERE session_id = $1", s.ID,
 		); n != 0 {
 			t.Errorf("DB row count in %s = %d; want 0 after delete", tbl, n)
 		}
 	}
-	if n := countRows(t, env.sqlDB,
+	if n := countRows(
+		t, env.sqlDB,
 		`SELECT COUNT(*) FROM chunks WHERE source_id = $1`, src,
 	); n != 0 {
 		t.Errorf("chunks row count after delete = %d; want 0 (cascade through sources)", n)
@@ -303,7 +315,8 @@ func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 
 	// HLD explicit-close requirement: clients.last_activity_at bumped so
 	// post-teardown observability sees the client's most-recent activity.
-	if n := countRows(t, env.sqlDB,
+	if n := countRows(
+		t, env.sqlDB,
 		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2 AND last_activity_at IS NOT NULL`,
 		testNamespace, db.DefaultClient,
 	); n != 1 {
@@ -318,7 +331,8 @@ func TestDeleteSessionHandler_BumpsClientActivityToNow(t *testing.T) {
 	backdated := time.Now().UTC().Add(-2 * time.Hour)
 	s := seedSessionWithActivity(t, env.sqlDB, testNamespace, db.DefaultClient, 240, backdated)
 
-	if _, err := env.sqlDB.ExecContext(context.Background(),
+	if _, err := env.sqlDB.ExecContext(
+		context.Background(),
 		`UPDATE clients SET last_activity_at = $1 WHERE namespace = $2 AND name = $3`,
 		backdated, testNamespace, db.DefaultClient,
 	); err != nil {
@@ -332,7 +346,8 @@ func TestDeleteSessionHandler_BumpsClientActivityToNow(t *testing.T) {
 	}
 
 	var after time.Time
-	if err := env.sqlDB.QueryRowContext(context.Background(),
+	if err := env.sqlDB.QueryRowContext(
+		context.Background(),
 		`SELECT last_activity_at FROM clients WHERE namespace = $1 AND name = $2`,
 		testNamespace, db.DefaultClient,
 	).Scan(&after); err != nil {
@@ -380,7 +395,8 @@ func TestDeleteSessionHandler_CrossNamespaceReturns404(t *testing.T) {
 		t.Fatalf("ns-b delete of ns-a session: status = %d; want 404 (invisibility-not-denial)", resp.StatusCode())
 	}
 	// Original session in ns-a must still exist.
-	if n := countRows(t, env.sqlDB,
+	if n := countRows(
+		t, env.sqlDB,
 		`SELECT COUNT(*) FROM sessions WHERE id = $1`, s.ID,
 	); n != 1 {
 		t.Errorf("ns-a session row count = %d; want 1 (cross-namespace delete must not touch other ns)", n)
@@ -427,7 +443,8 @@ func TestDeleteSessionHandler_IdempotentSecondDeleteReturns404(t *testing.T) {
 func TestCreateSessionHandler_IdempotencyKeySameKeyReturnsSameToken(t *testing.T) {
 	key := "idem-" + randHex(8)
 
-	first, err := env.client.CreateSessionWithResponse(context.Background(),
+	first, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{IdempotencyKey: &key},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -439,7 +456,8 @@ func TestCreateSessionHandler_IdempotencyKeySameKeyReturnsSameToken(t *testing.T
 	}
 	original := first.JSON201.SessionToken
 
-	second, err := env.client.CreateSessionWithResponse(context.Background(),
+	second, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{IdempotencyKey: &key},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -468,14 +486,16 @@ func TestCreateSessionHandler_IdempotencyKeyDifferentKeyReturnsDifferentToken(t 
 	keyA := "idem-" + randHex(8)
 	keyB := "idem-" + randHex(8)
 
-	first, err := env.client.CreateSessionWithResponse(context.Background(),
+	first, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{IdempotencyKey: &keyA},
 		genapi.CreateSessionJSONRequestBody{},
 	)
 	if err != nil {
 		t.Fatalf("first CreateSession: %v", err)
 	}
-	second, err := env.client.CreateSessionWithResponse(context.Background(),
+	second, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{IdempotencyKey: &keyB},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -490,14 +510,16 @@ func TestCreateSessionHandler_IdempotencyKeyDifferentKeyReturnsDifferentToken(t 
 func TestCreateSessionHandler_NoIdempotencyKeyMintsDistinctTokens(t *testing.T) {
 	// Without a key, every call is fresh. Two back-to-back creates produce
 	// two distinct sessions — proves dedup is opt-in, not implicit.
-	first, err := env.client.CreateSessionWithResponse(context.Background(),
+	first, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
 	if err != nil {
 		t.Fatalf("first CreateSession: %v", err)
 	}
-	second, err := env.client.CreateSessionWithResponse(context.Background(),
+	second, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -528,7 +550,8 @@ func TestCreateSessionHandler_IdempotencyKeyConcurrentRetriesProduceOneSession(t
 	for i := 0; i < callers; i++ {
 		go func() {
 			<-start // synchronize the burst
-			resp, err := env.client.CreateSessionWithResponse(context.Background(),
+			resp, err := env.client.CreateSessionWithResponse(
+				context.Background(),
 				&genapi.CreateSessionParams{IdempotencyKey: &key},
 				genapi.CreateSessionJSONRequestBody{},
 			)
@@ -579,7 +602,8 @@ func TestCreateSessionHandler_IdempotencyKeyRetryReturnsSameCommittedFields(t *t
 	key := "shape-" + randHex(8)
 	originalTTL := 45
 
-	first, err := env.client.CreateSessionWithResponse(context.Background(),
+	first, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{IdempotencyKey: &key},
 		genapi.CreateSessionJSONRequestBody{TtlMinutes: &originalTTL},
 	)
@@ -593,7 +617,8 @@ func TestCreateSessionHandler_IdempotencyKeyRetryReturnsSameCommittedFields(t *t
 	// Retry with DIFFERENT request fields. Dedup should ignore them and
 	// return the first call's committed values.
 	differentTTL := 99
-	second, err := env.client.CreateSessionWithResponse(context.Background(),
+	second, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{IdempotencyKey: &key},
 		genapi.CreateSessionJSONRequestBody{TtlMinutes: &differentTTL},
 	)

@@ -54,7 +54,8 @@ func (h *Handlers) registerUncredentialedClient(ctx context.Context, namespace, 
 			Error: "client_exists", Detail: &detail,
 		}}, nil
 	}
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info("client registered",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info(
+		"client registered",
 		obs.AuditInitiatorAPI,
 	)
 	return genapi.RegisterClient201JSONResponse{
@@ -76,7 +77,8 @@ func (h *Handlers) registerCredentialedClient(ctx context.Context, namespace, na
 		return nil, err
 	}
 	token := result.RawToken
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info("client registered",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info(
+		"client registered",
 		obs.AuditInitiatorAPI,
 	)
 	return genapi.RegisterClient201JSONResponse{
@@ -129,7 +131,8 @@ func (h *Handlers) RotateClientToken(
 	//     already 401'd; this handler never ran. Defensive only.
 	authClient := auth.ClientFromContext(ctx)
 	if authClient == "" || authClient != name {
-		h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.AuthzDenied).Warn("client token rotate denied: caller is not the target client",
+		h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.AuthzDenied).Warn(
+			"client token rotate denied: caller is not the target client",
 			obs.AuditInitiatorAPI,
 			logging.StringField("auth.actor_client", authClient),
 		)
@@ -152,7 +155,8 @@ func (h *Handlers) RotateClientToken(
 		return nil, err
 	}
 
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceUpdate).Info("client token rotated",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceUpdate).Info(
+		"client token rotated",
 		obs.AuditInitiatorAPI,
 	)
 	return genapi.RotateClientToken200JSONResponse{

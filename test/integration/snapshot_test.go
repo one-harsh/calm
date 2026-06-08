@@ -82,7 +82,8 @@ func TestSnapshot_RowCapBoundsFetch(t *testing.T) {
 
 	// Bulk-seed past the DAL's snapshot row cap (512). With FIFO eviction
 	// deferred, the cap is the only bound on the snapshot fetch.
-	if _, err := sqlDB.ExecContext(context.Background(),
+	if _, err := sqlDB.ExecContext(
+		context.Background(),
 		`INSERT INTO session_events (session_id, type, priority, data, data_hash)
 		 SELECT $1, 'bulk', 1, '{}'::jsonb, decode(md5(g::text), 'hex')
 		 FROM generate_series(1, 600) g`,

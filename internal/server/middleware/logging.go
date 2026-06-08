@@ -19,7 +19,8 @@ func Logging(logger *logging.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			ww := wrapResponseWriter(w)
 
-			ctx := logging.BindSummary(r.Context(),
+			ctx := logging.BindSummary(
+				r.Context(),
 				logging.HTTPMethod(r.Method),
 				obs.Endpoint(r.URL.Path),
 			)

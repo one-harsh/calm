@@ -50,7 +50,8 @@ func (s *Scanner) Run(ctx context.Context) error {
 		return nil
 	}
 
-	s.logger.WithContext(ctx).Info("ttl scanner started",
+	s.logger.WithContext(ctx).Info(
+		"ttl scanner started",
 		logging.IntField("interval_ms", int(s.cfg.Interval/time.Millisecond)),
 		logging.IntField("jitter_ms", int(s.cfg.Jitter/time.Millisecond)),
 	)
@@ -80,7 +81,8 @@ func (s *Scanner) scanOnce(ctx context.Context) {
 
 	deleted := 0
 	for _, ref := range refs {
-		ctx := logging.Bind(ctx,
+		ctx := logging.Bind(
+			ctx,
 			obs.Namespace(ref.Namespace),
 			obs.SessionID(ref.ID),
 		)
@@ -96,12 +98,14 @@ func (s *Scanner) scanOnce(ctx context.Context) {
 				continue
 			}
 
-			s.logger.WithContext(ctx).Warn("ttl delete failed",
+			s.logger.WithContext(ctx).Warn(
+				"ttl delete failed",
 				logging.ErrorField(err),
 			)
 			continue
 		}
-		s.logger.WithContext(ctx).WithAuditEvent(logging.ResourceDelete).Info("session closed",
+		s.logger.WithContext(ctx).WithAuditEvent(logging.ResourceDelete).Info(
+			"session closed",
 			obs.CloseReasonTTLExpired,
 			obs.AuditInitiatorSystem,
 			obs.CascadedEvents(res.Cascaded.Events),
@@ -112,7 +116,8 @@ func (s *Scanner) scanOnce(ctx context.Context) {
 		deleted++
 	}
 
-	s.logger.WithContext(ctx).Debug("ttl scan complete",
+	s.logger.WithContext(ctx).Debug(
+		"ttl scan complete",
 		logging.IntField("sessions.scanned", len(refs)),
 		logging.IntField("sessions.deleted", deleted),
 		logging.IntField("ttl_scan.duration_ms", int(time.Since(start)/time.Millisecond)),

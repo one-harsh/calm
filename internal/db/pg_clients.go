@@ -25,7 +25,8 @@ func (r *clientRepo) Register(ctx context.Context, namespace, name string) (bool
 	if name == "" {
 		return false, ErrClientNameRequired
 	}
-	result, err := r.queryer.ExecContext(ctx,
+	result, err := r.queryer.ExecContext(
+		ctx,
 		`INSERT INTO clients (namespace, name) VALUES ($1, $2) ON CONFLICT (namespace, name) DO NOTHING`,
 		namespace, name,
 	)
@@ -49,7 +50,8 @@ func (r *clientRepo) RegisterWithCredential(ctx context.Context, namespace, name
 	if len(tokenHash) == 0 {
 		return ErrInvalidClientCredential
 	}
-	_, err := r.queryer.ExecContext(ctx,
+	_, err := r.queryer.ExecContext(
+		ctx,
 		`INSERT INTO clients (namespace, name, client_token_hash, token_issued_at)
 		 VALUES ($1, $2, $3, now())`,
 		namespace, name, tokenHash,
@@ -74,7 +76,8 @@ func (r *clientRepo) RotateCredential(ctx context.Context, namespace, name strin
 	if len(newHash) == 0 {
 		return ErrInvalidClientCredential
 	}
-	result, err := r.queryer.ExecContext(ctx,
+	result, err := r.queryer.ExecContext(
+		ctx,
 		`UPDATE clients SET client_token_hash = $3, token_rotated_at = now()
 		  WHERE namespace = $1 AND name = $2 AND client_token_hash IS NOT NULL`,
 		namespace, name, newHash,
@@ -103,7 +106,8 @@ func (r *clientRepo) LookupByToken(ctx context.Context, namespace string, tokenH
 		return "", ErrInvalidClientCredential
 	}
 	var name string
-	err := r.queryer.QueryRowContext(ctx,
+	err := r.queryer.QueryRowContext(
+		ctx,
 		`SELECT name FROM clients WHERE namespace = $1 AND client_token_hash = $2`,
 		namespace, tokenHash,
 	).Scan(&name)
@@ -120,7 +124,8 @@ func (r *clientRepo) List(ctx context.Context, namespace string) ([]ClientSummar
 	if namespace == "" {
 		return nil, ErrNamespaceRequired
 	}
-	rows, err := r.queryer.QueryContext(ctx,
+	rows, err := r.queryer.QueryContext(
+		ctx,
 		`SELECT c.name, COUNT(s.id), MAX(s.last_activity)
 		   FROM clients c
 		   LEFT JOIN sessions s
@@ -163,7 +168,8 @@ func (r *clientRepo) CountSessions(ctx context.Context, namespace, name string) 
 	}
 	var exists bool
 	var count int
-	err := r.queryer.QueryRowContext(ctx,
+	err := r.queryer.QueryRowContext(
+		ctx,
 		`SELECT EXISTS (SELECT 1 FROM clients WHERE namespace = $1 AND name = $2),
 		        (SELECT COUNT(*) FROM sessions WHERE namespace = $1 AND client = $2)`,
 		namespace, name,
@@ -192,7 +198,8 @@ func (r *clientRepo) Delete(ctx context.Context, namespace, name string) (Delete
 	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
 		// FOR UPDATE blocks concurrent child inserts so count and cascade see the same row set.
 		var one int
-		err := tx.QueryRowContext(ctx,
+		err := tx.QueryRowContext(
+			ctx,
 			`SELECT 1 FROM clients WHERE namespace = $1 AND name = $2 FOR UPDATE`,
 			namespace, name,
 		).Scan(&one)
@@ -204,7 +211,8 @@ func (r *clientRepo) Delete(ctx context.Context, namespace, name string) (Delete
 		}
 		r.logger.WithContext(ctx).Debug("delete client: lock acquired")
 
-		err = tx.QueryRowContext(ctx,
+		err = tx.QueryRowContext(
+			ctx,
 			`WITH target_sessions AS (
 			   SELECT id FROM sessions WHERE namespace = $1 AND client = $2
 			 )
@@ -230,7 +238,8 @@ func (r *clientRepo) Delete(ctx context.Context, namespace, name string) (Delete
 		if err != nil {
 			return fmt.Errorf("%w: count cascade for %q/%q: %w", ErrStorageBackend, namespace, name, err)
 		}
-		r.logger.WithContext(ctx).Debug("delete client: cascade computed",
+		r.logger.WithContext(ctx).Debug(
+			"delete client: cascade computed",
 			logging.IntField("sessions", result.DeletedSessions),
 			logging.IntField("sources", result.Cascaded.Sources),
 			logging.IntField("chunks", result.Cascaded.Chunks),
@@ -238,7 +247,8 @@ func (r *clientRepo) Delete(ctx context.Context, namespace, name string) (Delete
 			logging.IntField("labels", result.Cascaded.Labels),
 		)
 
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(
+			ctx,
 			`DELETE FROM clients WHERE namespace = $1 AND name = $2`,
 			namespace, name,
 		); err != nil {

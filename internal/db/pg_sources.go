@@ -30,7 +30,8 @@ func (r *sourcesRepo) Upsert(ctx context.Context, namespace string, sessionID in
 	}
 	var id int64
 	var created bool
-	err := r.queryer.QueryRowContext(ctx,
+	err := r.queryer.QueryRowContext(
+		ctx,
 		`INSERT INTO sources (session_id, label)
 		 SELECT $2, $3 WHERE EXISTS (SELECT 1 FROM sessions WHERE id = $2 AND namespace = $1)
 		 ON CONFLICT (session_id, label) DO UPDATE SET indexed_at = now()

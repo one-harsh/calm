@@ -62,13 +62,15 @@ func TestAdapterLabeling_DualPreservesDistinctHistory(t *testing.T) {
 
 	plan1, err := extract.DerivePlan(
 		extract.Invocation{Seq: 1, Command: "git diff HEAD", Cwd: root, WorkspaceRoot: root},
-		extract.ExecResult{Stdout: "diff one", ExitCode: 0})
+		extract.ExecResult{Stdout: "diff one", ExitCode: 0},
+	)
 	if err != nil {
 		t.Fatalf("DerivePlan v1: %v", err)
 	}
 	plan2, err := extract.DerivePlan(
 		extract.Invocation{Seq: 2, Command: "git diff HEAD", Cwd: root, WorkspaceRoot: root},
-		extract.ExecResult{Stdout: "diff two", ExitCode: 0})
+		extract.ExecResult{Stdout: "diff two", ExitCode: 0},
+	)
 	if err != nil {
 		t.Fatalf("DerivePlan v2: %v", err)
 	}
@@ -120,7 +122,8 @@ func TestAdapterLabeling_ReplaceDedupsOnReread(t *testing.T) {
 
 	plan, err := extract.DerivePlan(
 		extract.Invocation{Seq: 1, Command: "cat foo.py", Cwd: root, WorkspaceRoot: root},
-		extract.ExecResult{ExitCode: 0})
+		extract.ExecResult{ExitCode: 0},
+	)
 	if err != nil {
 		t.Fatalf("DerivePlan: %v", err)
 	}

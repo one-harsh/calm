@@ -75,7 +75,8 @@ func newMockService(t *testing.T) (*Service, ingestMocks) {
 	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, fn func(db.Repos) error) error {
 			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks})
-		}).Maybe()
+		},
+	).Maybe()
 	return New(dal), m
 }
 

@@ -74,7 +74,8 @@ func (h *Handlers) Feedback(ctx context.Context, request genapi.FeedbackRequestO
 	// Don't rebind correlation_id — the Context middleware already bound this
 	// request's own correlation_id. The body's correlation_id refers to a prior
 	// call and goes under a distinct key so the audit row carries both.
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info("feedback received",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info(
+		"feedback received",
 		obs.AuditInitiatorAPI,
 		obs.Client(md.Client),
 		obs.FeedbackOutcome(string(request.Body.Outcome)),

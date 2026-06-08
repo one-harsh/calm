@@ -23,7 +23,8 @@ func (h *Handlers) StrictErrorHandler(w http.ResponseWriter, r *http.Request, er
 			Endpoint: ptr(r.URL.Path),
 		})
 	default:
-		h.deps.Logger.WithContext(r.Context()).Error("handler returned unexpected error",
+		h.deps.Logger.WithContext(r.Context()).Error(
+			"handler returned unexpected error",
 			obs.Endpoint(r.URL.Path),
 			logging.ErrorField(err),
 		)

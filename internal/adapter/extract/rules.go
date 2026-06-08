@@ -54,7 +54,8 @@ var registry = []rule{
 }
 
 func progIn(set map[string]bool) func(cmd) bool { return func(c cmd) bool { return set[c.program] } }
-func progIs(name string) func(cmd) bool         { return func(c cmd) bool { return c.program == name } }
+
+func progIs(name string) func(cmd) bool { return func(c cmd) bool { return c.program == name } }
 
 func classify(c cmd, inv Invocation) (classification, bool) {
 	if c.pipeline || c.hasOutputFlag() {

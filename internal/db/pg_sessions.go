@@ -26,7 +26,8 @@ type sessionRepo struct {
 // to sessions); its sole remaining caller is eventsRepo.Write, pending migration.
 func verifySessionInNamespace(ctx context.Context, q queryer, namespace string, sessionID int64) error {
 	var exists bool
-	if err := q.QueryRowContext(ctx,
+	if err := q.QueryRowContext(
+		ctx,
 		`SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND namespace = $2)`,
 		sessionID, namespace,
 	).Scan(&exists); err != nil {
@@ -53,7 +54,8 @@ func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 	}
 
 	return inTx(ctx, r.queryer, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx,
+		if err := tx.QueryRowContext(
+			ctx,
 			`INSERT INTO sessions (namespace, session_token_hash, client, ttl_minutes)
 			 VALUES ($1, $2, $3, $4)
 			 RETURNING id, created_at, last_activity, expires_at`,
@@ -100,7 +102,8 @@ func (r *sessionRepo) Get(ctx context.Context, namespace string, sessionTokenHas
 
 	var sess Session
 	var labelsJSON []byte
-	err := r.queryer.QueryRowContext(ctx, `
+	err := r.queryer.QueryRowContext(
+		ctx, `
 		SELECT
 			s.id, s.namespace, s.client, s.created_at, s.last_activity, s.expires_at, s.ttl_minutes,
 			COALESCE(
@@ -143,7 +146,8 @@ func (r *sessionRepo) Touch(ctx context.Context, namespace string, sessionTokenH
 		return ErrSessionTokenHashRequired
 	}
 
-	result, err := r.queryer.ExecContext(ctx,
+	result, err := r.queryer.ExecContext(
+		ctx,
 		`UPDATE sessions SET last_activity = GREATEST(last_activity, $3)
 		   WHERE namespace = $1 AND session_token_hash = $2`,
 		namespace, sessionTokenHash, lastActivity,
@@ -242,7 +246,8 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace string, sessionToken
 	var result DeleteSessionResult
 	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
 		// FOR UPDATE blocks concurrent child inserts so count and cascade see the same row set.
-		err := tx.QueryRowContext(ctx,
+		err := tx.QueryRowContext(
+			ctx,
 			`SELECT id, client FROM sessions
 			   WHERE namespace = $1 AND session_token_hash = $2 FOR UPDATE`,
 			namespace, sessionTokenHash,
@@ -260,7 +265,8 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace string, sessionToken
 			return err
 		}
 		result.Cascaded = cascade
-		r.logger.WithContext(ctx).Debug("delete session: cascade computed",
+		r.logger.WithContext(ctx).Debug(
+			"delete session: cascade computed",
 			logging.IntField("sources", result.Cascaded.Sources),
 			logging.IntField("chunks", result.Cascaded.Chunks),
 			logging.IntField("events", result.Cascaded.Events),
@@ -271,7 +277,8 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace string, sessionToken
 		// the transaction's start timestamp, so a delete that started earlier but
 		// reaches this UPDATE later could otherwise overwrite a sibling session's
 		// more recent bump.
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(
+			ctx,
 			`UPDATE clients SET last_activity_at = GREATEST(last_activity_at, NOW())
 			 WHERE namespace = $1 AND name = $2`,
 			namespace, client,
@@ -279,7 +286,8 @@ func (r *sessionRepo) Delete(ctx context.Context, namespace string, sessionToken
 			return fmt.Errorf("%w: bump clients.last_activity_at for %q/%q: %w", ErrStorageBackend, namespace, client, err)
 		}
 
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(
+			ctx,
 			`DELETE FROM sessions WHERE id = $1`,
 			result.ID,
 		); err != nil {
@@ -303,7 +311,8 @@ func (r *sessionRepo) DeleteByID(ctx context.Context, namespace string, sessionI
 	var sessionLastActivity time.Time
 	result := DeleteSessionResult{ID: sessionID}
 	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
-		err := tx.QueryRowContext(ctx,
+		err := tx.QueryRowContext(
+			ctx,
 			`SELECT client, last_activity FROM sessions WHERE id = $1 AND namespace = $2 FOR UPDATE`,
 			sessionID, namespace,
 		).Scan(&client, &sessionLastActivity)
@@ -320,7 +329,8 @@ func (r *sessionRepo) DeleteByID(ctx context.Context, namespace string, sessionI
 			return err
 		}
 		result.Cascaded = cascade
-		r.logger.WithContext(ctx).Debug("delete session by id: cascade computed",
+		r.logger.WithContext(ctx).Debug(
+			"delete session by id: cascade computed",
 			logging.IntField("sources", result.Cascaded.Sources),
 			logging.IntField("chunks", result.Cascaded.Chunks),
 			logging.IntField("events", result.Cascaded.Events),
@@ -329,7 +339,8 @@ func (r *sessionRepo) DeleteByID(ctx context.Context, namespace string, sessionI
 
 		// Scanner is not client activity — bump to session.last_activity
 		// (the real work) rather than NOW() (the scan moment).
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(
+			ctx,
 			`UPDATE clients SET last_activity_at = GREATEST(last_activity_at, $3)
 			 WHERE namespace = $1 AND name = $2`,
 			namespace, client, sessionLastActivity,
@@ -337,7 +348,8 @@ func (r *sessionRepo) DeleteByID(ctx context.Context, namespace string, sessionI
 			return fmt.Errorf("%w: bump clients.last_activity_at for %q/%q: %w", ErrStorageBackend, namespace, client, err)
 		}
 
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(
+			ctx,
 			`DELETE FROM sessions WHERE id = $1 AND namespace = $2`,
 			sessionID, namespace,
 		); err != nil {
@@ -389,7 +401,8 @@ func (r *sessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) 
 		}
 
 		result.DeletedSessions = len(ids)
-		err = tx.QueryRowContext(ctx, `
+		err = tx.QueryRowContext(
+			ctx, `
 			SELECT
 				(SELECT COUNT(*) FROM sources        WHERE session_id = ANY($1)),
 				(SELECT COUNT(*) FROM chunks         WHERE source_id IN
@@ -406,14 +419,16 @@ func (r *sessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) 
 		if err != nil {
 			return fmt.Errorf("%w: count cascade for sessions in %q: %w", ErrStorageBackend, filter.Namespace, err)
 		}
-		r.logger.WithContext(ctx).Debug("delete sessions: cascade computed",
+		r.logger.WithContext(ctx).Debug(
+			"delete sessions: cascade computed",
 			logging.IntField("sources", result.Cascaded.Sources),
 			logging.IntField("chunks", result.Cascaded.Chunks),
 			logging.IntField("events", result.Cascaded.Events),
 			logging.IntField("labels", result.Cascaded.Labels),
 		)
 
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(
+			ctx,
 			`DELETE FROM sessions WHERE id = ANY($1)`,
 			ids,
 		); err != nil {
@@ -429,7 +444,8 @@ func (r *sessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) 
 }
 
 func (r *sessionRepo) ScanExpired(ctx context.Context, now time.Time) ([]SessionRef, error) {
-	rows, err := r.queryer.QueryContext(ctx, `
+	rows, err := r.queryer.QueryContext(
+		ctx, `
 		SELECT id, namespace
 		FROM sessions
 		WHERE expires_at < $1
@@ -457,7 +473,8 @@ func (r *sessionRepo) ScanExpired(ctx context.Context, now time.Time) ([]Session
 
 func cascadeCountsByID(ctx context.Context, tx *sql.Tx, sessionID int64) (CascadeCounts, error) {
 	var c CascadeCounts
-	err := tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(
+		ctx, `
 		SELECT
 			(SELECT COUNT(*) FROM sources        WHERE session_id = $1),
 			(SELECT COUNT(*) FROM chunks         WHERE source_id IN

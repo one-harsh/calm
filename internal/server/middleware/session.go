@@ -89,7 +89,8 @@ func SessionResolve(svc SessionResolver, routes SessionTokenRoutes, logger *logg
 					writeSessionNotFound(w)
 					return
 				}
-				logger.WithContext(ctx).Error("session resolve: lookup failed",
+				logger.WithContext(ctx).Error(
+					"session resolve: lookup failed",
 					logging.ErrorField(err),
 				)
 				w.Header().Set("Content-Type", "application/json")
@@ -112,7 +113,8 @@ func SessionResolve(svc SessionResolver, routes SessionTokenRoutes, logger *logg
 				if err := svc.Touch(ctx, namespace, token, time.Now().UTC()); err != nil {
 					// Expected after DELETE /v1/sessions.
 					if !errors.Is(err, db.ErrSessionNotFound) {
-						logger.WithContext(ctx).Warn("session resolve: touch failed after handler",
+						logger.WithContext(ctx).Warn(
+							"session resolve: touch failed after handler",
 							logging.ErrorField(err),
 						)
 					}

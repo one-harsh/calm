@@ -35,7 +35,8 @@ func Context(logger *logging.Logger) func(http.Handler) http.Handler {
 				// Never-worse: mint failure must not block the value-producing call.
 				// Skip the header; feedback for this call won't be possible (no id to
 				// echo back), but the request itself completes normally.
-				logger.WithContext(ctx).Warn("context: UUIDv7 mint failed; response carries no correlation id",
+				logger.WithContext(ctx).Warn(
+					"context: UUIDv7 mint failed; response carries no correlation id",
 					logging.ErrorField(err),
 				)
 			} else {
@@ -45,7 +46,8 @@ func Context(logger *logging.Logger) func(http.Handler) http.Handler {
 			}
 
 			if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
-				w.Header().Set(traceResponseHeader, fmt.Sprintf("00-%s-%s-%02x",
+				w.Header().Set(traceResponseHeader, fmt.Sprintf(
+					"00-%s-%s-%02x",
 					sc.TraceID().String(),
 					sc.SpanID().String(),
 					byte(sc.TraceFlags()),

@@ -15,7 +15,8 @@ import (
 )
 
 func TestBearerAuthSucceeds(t *testing.T) {
-	resp, err := env.client.CreateSessionWithResponse(context.Background(),
+	resp, err := env.client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)

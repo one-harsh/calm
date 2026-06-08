@@ -74,7 +74,8 @@ func assertClientRowCount(ctx context.Context, t *testing.T, sqlDB *sql.DB, name
 	t.Helper()
 	for _, ns := range namespaces {
 		var got int
-		if err := sqlDB.QueryRowContext(ctx,
+		if err := sqlDB.QueryRowContext(
+			ctx,
 			`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`,
 			ns, db.DefaultClient,
 		).Scan(&got); err != nil {

@@ -72,7 +72,8 @@ func Auth(registry auth.Registry, clients ClientResolver, logger *logging.Logger
 				ctx = logging.Bind(ctx, obs.Client(clientName))
 			}
 
-			logger.WithContext(ctx).WithAuditEvent(logging.AuthnSuccess).Debug("authenticated",
+			logger.WithContext(ctx).WithAuditEvent(logging.AuthnSuccess).Debug(
+				"authenticated",
 				obs.AuditInitiatorAPI,
 			)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -94,7 +95,8 @@ func isClientRegistration(method, urlPath string) bool {
 }
 
 func writeAuthFailure(ctx context.Context, w http.ResponseWriter, logger *logging.Logger, reason string) {
-	logger.WithContext(ctx).WithAuditEvent(logging.AuthnFailure).Warn("authentication failed",
+	logger.WithContext(ctx).WithAuditEvent(logging.AuthnFailure).Warn(
+		"authentication failed",
 		obs.AuditInitiatorAPI,
 		logging.StringField("auth.failure_reason", reason),
 	)

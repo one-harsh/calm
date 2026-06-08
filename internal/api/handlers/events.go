@@ -64,7 +64,8 @@ func (h *Handlers) WriteEvents(
 			case http.StatusBadRequest:
 				return genapi.WriteEvents400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse(body)}, nil
 			default:
-				h.deps.Logger.WithContext(ctx).Warn("write events: mapped sentinel has no response variant — returning 500",
+				h.deps.Logger.WithContext(ctx).Warn(
+					"write events: mapped sentinel has no response variant — returning 500",
 					logging.IntField("http.status", m.Status),
 					logging.StringField("error.code", m.Code),
 					logging.ErrorField(err),
@@ -77,7 +78,8 @@ func (h *Handlers) WriteEvents(
 		return nil, err
 	}
 
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info("events written",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info(
+		"events written",
 		obs.AuditInitiatorAPI,
 		logging.IntField("events.write.accepted", accepted),
 		logging.IntField("events.write.submitted", len(inputs)),
@@ -118,7 +120,8 @@ func (h *Handlers) ReadEvents(
 			case http.StatusNotFound:
 				return genapi.ReadEvents404JSONResponse{NotFoundJSONResponse: genapi.NotFoundJSONResponse(body)}, nil
 			default:
-				h.deps.Logger.WithContext(ctx).Warn("read events: mapped sentinel has no response variant — returning 500",
+				h.deps.Logger.WithContext(ctx).Warn(
+					"read events: mapped sentinel has no response variant — returning 500",
 					logging.IntField("http.status", m.Status),
 					logging.StringField("error.code", m.Code),
 					logging.ErrorField(err),
@@ -136,7 +139,8 @@ func (h *Handlers) ReadEvents(
 		var data map[string]any
 		if len(ev.Data) > 0 {
 			if err := json.Unmarshal(ev.Data, &data); err != nil {
-				h.deps.Logger.WithContext(ctx).Error("read events: failed to decode stored event data",
+				h.deps.Logger.WithContext(ctx).Error(
+					"read events: failed to decode stored event data",
 					obs.EventType(ev.Type),
 					logging.ErrorField(err),
 				)

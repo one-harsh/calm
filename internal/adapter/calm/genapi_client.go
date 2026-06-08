@@ -137,7 +137,8 @@ func (c *genapiClient) WriteEvents(ctx context.Context, token string, events []E
 	for _, e := range events {
 		in = append(in, genapi.EventInput{Type: e.Type, Priority: e.Priority, Data: e.Data})
 	}
-	resp, err := c.api.WriteEventsWithResponse(ctx,
+	resp, err := c.api.WriteEventsWithResponse(
+		ctx,
 		&genapi.WriteEventsParams{XCALMSessionToken: token},
 		genapi.WriteEventsJSONRequestBody{Events: in},
 	)

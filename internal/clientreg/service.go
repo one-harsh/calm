@@ -133,7 +133,8 @@ func (s *Service) SeedDefaults(ctx context.Context, namespaces []string) error {
 			return fmt.Errorf("%w: seed default client for namespace %q", err, ns)
 		}
 		if created {
-			s.logger.WithContext(nsCtx).WithAuditEvent(logging.ResourceCreate).Info("default client seeded",
+			s.logger.WithContext(nsCtx).WithAuditEvent(logging.ResourceCreate).Info(
+				"default client seeded",
 				obs.AuditInitiatorSystem,
 			)
 		}

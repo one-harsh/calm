@@ -51,7 +51,8 @@ type seededSession struct {
 
 func seedClient(t *testing.T, sqlDB *sql.DB, namespace, name string) {
 	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
+	if _, err := sqlDB.ExecContext(
+		context.Background(),
 		`INSERT INTO clients (namespace, name) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 		namespace, name,
 	); err != nil {
@@ -71,7 +72,8 @@ func seedSession(t *testing.T, sqlDB *sql.DB, namespace, client string, ttlMinut
 	}
 	hash := auth.HashToken(namespace, raw)
 	var id int64
-	if err := sqlDB.QueryRowContext(context.Background(),
+	if err := sqlDB.QueryRowContext(
+		context.Background(),
 		`INSERT INTO sessions (namespace, client, session_token_hash, ttl_minutes)
 		 VALUES ($1, $2, $3, $4) RETURNING id`,
 		namespace, client, hash, ttlMinutes,
@@ -92,7 +94,8 @@ func seedSessionWithActivity(t *testing.T, sqlDB *sql.DB, namespace, client stri
 	}
 	hash := auth.HashToken(namespace, raw)
 	var id int64
-	if err := sqlDB.QueryRowContext(context.Background(),
+	if err := sqlDB.QueryRowContext(
+		context.Background(),
 		`INSERT INTO sessions (namespace, client, session_token_hash, ttl_minutes, last_activity)
 		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
 		namespace, client, hash, ttlMinutes, lastActivity,
@@ -108,7 +111,8 @@ func seedSessionWithActivity(t *testing.T, sqlDB *sql.DB, namespace, client stri
 func createSessionForTest(t *testing.T, namespace string) seededSession {
 	t.Helper()
 	client := env.clientForNamespace(t, namespace)
-	resp, err := client.CreateSessionWithResponse(context.Background(),
+	resp, err := client.CreateSessionWithResponse(
+		context.Background(),
 		&genapi.CreateSessionParams{},
 		genapi.CreateSessionJSONRequestBody{},
 	)
@@ -120,7 +124,8 @@ func createSessionForTest(t *testing.T, namespace string) seededSession {
 	}
 	hash := auth.HashToken(namespace, resp.JSON201.SessionToken)
 	var id int64
-	if err := env.sqlDB.QueryRowContext(context.Background(),
+	if err := env.sqlDB.QueryRowContext(
+		context.Background(),
 		`SELECT id FROM sessions WHERE namespace = $1 AND session_token_hash = $2`,
 		namespace, hash,
 	).Scan(&id); err != nil {
@@ -136,7 +141,8 @@ func createSessionForTest(t *testing.T, namespace string) seededSession {
 
 func seedSessionLabel(t *testing.T, sqlDB *sql.DB, sessionID int64, key, value string) {
 	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
+	if _, err := sqlDB.ExecContext(
+		context.Background(),
 		`INSERT INTO session_labels (session_id, key, value) VALUES ($1, $2, $3)`,
 		sessionID, key, value,
 	); err != nil {
@@ -147,7 +153,8 @@ func seedSessionLabel(t *testing.T, sqlDB *sql.DB, sessionID int64, key, value s
 func seedSource(t *testing.T, sqlDB *sql.DB, sessionID int64, label string) int64 {
 	t.Helper()
 	var id int64
-	if err := sqlDB.QueryRowContext(context.Background(),
+	if err := sqlDB.QueryRowContext(
+		context.Background(),
 		`INSERT INTO sources (session_id, label) VALUES ($1, $2) RETURNING id`,
 		sessionID, label,
 	).Scan(&id); err != nil {
@@ -158,7 +165,8 @@ func seedSource(t *testing.T, sqlDB *sql.DB, sessionID int64, label string) int6
 
 func seedChunk(t *testing.T, sqlDB *sql.DB, sourceID int64, title, content, contentType string) {
 	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
+	if _, err := sqlDB.ExecContext(
+		context.Background(),
 		`INSERT INTO chunks (source_id, title, content, content_type) VALUES ($1, $2, $3, $4)`,
 		sourceID, title, content, contentType,
 	); err != nil {
@@ -168,7 +176,8 @@ func seedChunk(t *testing.T, sqlDB *sql.DB, sourceID int64, title, content, cont
 
 func seedEvent(t *testing.T, sqlDB *sql.DB, sessionID int64, eventType string, priority int, data []byte) {
 	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
+	if _, err := sqlDB.ExecContext(
+		context.Background(),
 		`INSERT INTO session_events (session_id, type, priority, data, data_hash) VALUES ($1, $2, $3, $4, $5)`,
 		sessionID, eventType, priority, data, db.HashEventPayload(eventType, data),
 	); err != nil {
@@ -180,7 +189,8 @@ func seedEvent(t *testing.T, sqlDB *sql.DB, sessionID int64, eventType string, p
 // is now(), so this is the only way to seed events with controlled ordering.
 func seedEventAt(t *testing.T, sqlDB *sql.DB, sessionID int64, eventType string, priority int, data []byte, createdAt time.Time) {
 	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
+	if _, err := sqlDB.ExecContext(
+		context.Background(),
 		`INSERT INTO session_events (session_id, type, priority, data, data_hash, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		sessionID, eventType, priority, data, db.HashEventPayload(eventType, data), createdAt,
 	); err != nil {
@@ -190,7 +200,8 @@ func seedEventAt(t *testing.T, sqlDB *sql.DB, sessionID int64, eventType string,
 
 func seedVocab(t *testing.T, sqlDB *sql.DB, sessionID int64, word string, docFreq int) {
 	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
+	if _, err := sqlDB.ExecContext(
+		context.Background(),
 		`INSERT INTO vocabulary (session_id, word, doc_freq) VALUES ($1, $2, $3)`,
 		sessionID, word, docFreq,
 	); err != nil {

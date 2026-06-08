@@ -17,7 +17,8 @@ import (
 func TestWriteEventsHandler_HappySingleEvent(t *testing.T) {
 	s := createSessionForTest(t, testNamespace)
 
-	resp, err := env.client.WriteEventsWithResponse(context.Background(),
+	resp, err := env.client.WriteEventsWithResponse(
+		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: s.SessionToken},
 		genapi.WriteEventsJSONRequestBody{
 			Events: []genapi.EventInput{
@@ -43,7 +44,8 @@ func TestWriteEventsHandler_HappySingleEvent(t *testing.T) {
 func TestWriteEventsHandler_HappyBatch(t *testing.T) {
 	s := createSessionForTest(t, testNamespace)
 
-	resp, err := env.client.WriteEventsWithResponse(context.Background(),
+	resp, err := env.client.WriteEventsWithResponse(
+		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: s.SessionToken},
 		genapi.WriteEventsJSONRequestBody{
 			Events: []genapi.EventInput{
@@ -68,7 +70,8 @@ func TestWriteEventsHandler_HappyBatch(t *testing.T) {
 }
 
 func TestWriteEventsHandler_UnknownSessionReturns404(t *testing.T) {
-	resp, err := env.client.WriteEventsWithResponse(context.Background(),
+	resp, err := env.client.WriteEventsWithResponse(
+		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: "unknown-session-token-xxx"},
 		genapi.WriteEventsJSONRequestBody{
 			Events: []genapi.EventInput{
@@ -88,7 +91,8 @@ func TestWriteEventsHandler_CrossNamespaceSessionReturns404(t *testing.T) {
 	s := createSessionForTest(t, testNamespace)
 	tenantClient := env.clientForNamespace(t, testTenantANamespace)
 
-	resp, err := tenantClient.WriteEventsWithResponse(context.Background(),
+	resp, err := tenantClient.WriteEventsWithResponse(
+		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: s.SessionToken},
 		genapi.WriteEventsJSONRequestBody{
 			Events: []genapi.EventInput{
@@ -111,7 +115,8 @@ func TestWriteEventsHandler_CrossNamespaceSessionReturns404(t *testing.T) {
 func TestWriteEventsHandler_PriorityOutOfRangeReturns400(t *testing.T) {
 	s := createSessionForTest(t, testNamespace)
 
-	resp, err := env.client.WriteEventsWithResponse(context.Background(),
+	resp, err := env.client.WriteEventsWithResponse(
+		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: s.SessionToken},
 		genapi.WriteEventsJSONRequestBody{
 			Events: []genapi.EventInput{
@@ -130,7 +135,8 @@ func TestWriteEventsHandler_PriorityOutOfRangeReturns400(t *testing.T) {
 func TestWriteEventsHandler_EmptyEventsArrayReturns400(t *testing.T) {
 	s := createSessionForTest(t, testNamespace)
 
-	resp, err := env.client.WriteEventsWithResponse(context.Background(),
+	resp, err := env.client.WriteEventsWithResponse(
+		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: s.SessionToken},
 		genapi.WriteEventsJSONRequestBody{Events: []genapi.EventInput{}},
 	)
@@ -151,7 +157,8 @@ func TestEventsHandler_MiddlewareTouchesOnWriteAndRead(t *testing.T) {
 	}
 	time.Sleep(20 * time.Millisecond)
 
-	wresp, err := env.client.WriteEventsWithResponse(context.Background(),
+	wresp, err := env.client.WriteEventsWithResponse(
+		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: s.SessionToken},
 		genapi.WriteEventsJSONRequestBody{
 			Events: []genapi.EventInput{{Type: "a", Priority: 1, Data: map[string]any{}}},
@@ -170,7 +177,8 @@ func TestEventsHandler_MiddlewareTouchesOnWriteAndRead(t *testing.T) {
 	}
 
 	time.Sleep(20 * time.Millisecond)
-	rresp, err := env.client.ReadEventsWithResponse(context.Background(),
+	rresp, err := env.client.ReadEventsWithResponse(
+		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: s.SessionToken},
 	)
 	if err != nil || rresp.StatusCode() != http.StatusOK {
@@ -191,7 +199,8 @@ func TestEventsHandler_MiddlewareTouchesOnWriteAndRead(t *testing.T) {
 func TestReadEventsHandler_EmptySession(t *testing.T) {
 	s := createSessionForTest(t, testNamespace)
 
-	resp, err := env.client.ReadEventsWithResponse(context.Background(),
+	resp, err := env.client.ReadEventsWithResponse(
+		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: s.SessionToken},
 	)
 	if err != nil {
@@ -208,7 +217,8 @@ func TestReadEventsHandler_EmptySession(t *testing.T) {
 func TestReadEventsHandler_AfterWrite(t *testing.T) {
 	s := createSessionForTest(t, testNamespace)
 
-	if _, err := env.client.WriteEventsWithResponse(context.Background(),
+	if _, err := env.client.WriteEventsWithResponse(
+		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: s.SessionToken},
 		genapi.WriteEventsJSONRequestBody{
 			Events: []genapi.EventInput{
@@ -220,7 +230,8 @@ func TestReadEventsHandler_AfterWrite(t *testing.T) {
 		t.Fatalf("WriteEvents: %v", err)
 	}
 
-	resp, err := env.client.ReadEventsWithResponse(context.Background(),
+	resp, err := env.client.ReadEventsWithResponse(
+		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: s.SessionToken},
 	)
 	if err != nil {
@@ -248,7 +259,8 @@ func TestReadEventsHandler_TypesFilter(t *testing.T) {
 	seedEvent(t, env.sqlDB, s.ID, "c", 2, []byte(`{}`))
 
 	types := []string{"a", "c"}
-	resp, err := env.client.ReadEventsWithResponse(context.Background(),
+	resp, err := env.client.ReadEventsWithResponse(
+		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: s.SessionToken, Types: &types},
 	)
 	if err != nil {
@@ -269,7 +281,8 @@ func TestReadEventsHandler_MinPriorityFilter(t *testing.T) {
 	seedEvent(t, env.sqlDB, s.ID, "p3", 3, []byte(`{}`))
 
 	mp := 2
-	resp, err := env.client.ReadEventsWithResponse(context.Background(),
+	resp, err := env.client.ReadEventsWithResponse(
+		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: s.SessionToken, MinPriority: &mp},
 	)
 	if err != nil {
@@ -295,7 +308,8 @@ func TestReadEventsHandler_LimitHonored(t *testing.T) {
 	}
 
 	limit := 2
-	resp, err := env.client.ReadEventsWithResponse(context.Background(),
+	resp, err := env.client.ReadEventsWithResponse(
+		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: s.SessionToken, Limit: &limit},
 	)
 	if err != nil {
@@ -310,7 +324,8 @@ func TestReadEventsHandler_LimitHonored(t *testing.T) {
 }
 
 func TestReadEventsHandler_UnknownSessionReturns404(t *testing.T) {
-	resp, err := env.client.ReadEventsWithResponse(context.Background(),
+	resp, err := env.client.ReadEventsWithResponse(
+		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: "unknown-session-token-xxx"},
 	)
 	if err != nil {
@@ -325,7 +340,8 @@ func TestReadEventsHandler_CrossNamespaceSessionReturns404(t *testing.T) {
 	s := createSessionForTest(t, testNamespace)
 	tenantClient := env.clientForNamespace(t, testTenantANamespace)
 
-	resp, err := tenantClient.ReadEventsWithResponse(context.Background(),
+	resp, err := tenantClient.ReadEventsWithResponse(
+		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: s.SessionToken},
 	)
 	if err != nil {

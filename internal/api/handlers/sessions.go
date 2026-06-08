@@ -45,7 +45,8 @@ func (h *Handlers) CreateSession(
 		sess.TTLMinutes = *request.Body.TtlMinutes
 	}
 	if sess.TTLMinutes > h.deps.Cfg.MaxTTLMinutes {
-		h.deps.Logger.WithContext(ctx).Warn("session.create.ttl_minutes clamped to operator ceiling",
+		h.deps.Logger.WithContext(ctx).Warn(
+			"session.create.ttl_minutes clamped to operator ceiling",
 			logging.IntField("session.create.requested_ttl_minutes", sess.TTLMinutes),
 			logging.IntField("session.create.committed_ttl_minutes", h.deps.Cfg.MaxTTLMinutes),
 		)
@@ -55,7 +56,8 @@ func (h *Handlers) CreateSession(
 	if authClient := auth.ClientFromContext(ctx); authClient != "" {
 		if request.Body.Client != nil && *request.Body.Client != authClient {
 			detail := fmt.Sprintf("body client %q does not match authenticated client %q", *request.Body.Client, authClient)
-			h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.AuthzDenied).Warn("session create denied: body client does not match authenticated client",
+			h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.AuthzDenied).Warn(
+				"session create denied: body client does not match authenticated client",
 				obs.AuditInitiatorAPI,
 				logging.StringField("auth.actor_client", authClient),
 			)
@@ -87,7 +89,8 @@ func (h *Handlers) CreateSession(
 				return genapi.CreateSession400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse(body)}, nil
 			default:
 				// Defensive: sentinel mapped without a response variant.
-				h.deps.Logger.WithContext(ctx).Warn("create session: mapped sentinel has no response variant — returning 500",
+				h.deps.Logger.WithContext(ctx).Warn(
+					"create session: mapped sentinel has no response variant — returning 500",
 					logging.IntField("http.status", m.Status),
 					logging.StringField("error.code", m.Code),
 					logging.ErrorField(err),
@@ -95,7 +98,8 @@ func (h *Handlers) CreateSession(
 			}
 		}
 		if !isContextError(err) {
-			h.deps.Logger.WithContext(ctx).Error("create session failed",
+			h.deps.Logger.WithContext(ctx).Error(
+				"create session failed",
 				logging.ErrorField(err),
 			)
 		}
@@ -103,7 +107,8 @@ func (h *Handlers) CreateSession(
 	}
 
 	ctx = logging.Bind(ctx, obs.SessionID(sess.ID))
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info("session created",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceCreate).Info(
+		"session created",
 		obs.AuditInitiatorAPI,
 		obs.Client(sess.Client),
 		logging.IntField("session.create.committed_ttl_minutes", sess.TTLMinutes),
@@ -139,14 +144,16 @@ func (h *Handlers) DeleteSession(
 				}}, nil
 			}
 			// Defensive: sentinel mapped without a response variant.
-			h.deps.Logger.WithContext(ctx).Warn("delete session: mapped sentinel has no response variant — returning 500",
+			h.deps.Logger.WithContext(ctx).Warn(
+				"delete session: mapped sentinel has no response variant — returning 500",
 				logging.IntField("http.status", m.Status),
 				logging.StringField("error.code", m.Code),
 				logging.ErrorField(err),
 			)
 		}
 		if !isContextError(err) {
-			h.deps.Logger.WithContext(ctx).Error("delete session failed",
+			h.deps.Logger.WithContext(ctx).Error(
+				"delete session failed",
 				logging.ErrorField(err),
 			)
 		}
@@ -154,7 +161,8 @@ func (h *Handlers) DeleteSession(
 	}
 
 	ctx = logging.Bind(ctx, obs.SessionID(result.ID))
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceDelete).Info("session closed",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(logging.ResourceDelete).Info(
+		"session closed",
 		obs.AuditInitiatorAPI,
 		obs.CloseReasonExplicit,
 		obs.CascadedEvents(result.Cascaded.Events),
@@ -187,7 +195,8 @@ func (h *Handlers) GetSnapshot(ctx context.Context, request genapi.GetSnapshotRe
 			case http.StatusNotFound:
 				return genapi.GetSnapshot404JSONResponse{NotFoundJSONResponse: genapi.NotFoundJSONResponse(body)}, nil
 			default:
-				h.deps.Logger.WithContext(ctx).Warn("get snapshot: mapped sentinel has no response variant — returning 500",
+				h.deps.Logger.WithContext(ctx).Warn(
+					"get snapshot: mapped sentinel has no response variant — returning 500",
 					logging.IntField("http.status", m.Status),
 					logging.StringField("error.code", m.Code),
 					logging.ErrorField(err),
@@ -205,7 +214,8 @@ func (h *Handlers) GetSnapshot(ctx context.Context, request genapi.GetSnapshotRe
 		var data map[string]any
 		if len(ev.Data) > 0 {
 			if err := json.Unmarshal(ev.Data, &data); err != nil {
-				h.deps.Logger.WithContext(ctx).Error("get snapshot: failed to decode stored event data",
+				h.deps.Logger.WithContext(ctx).Error(
+					"get snapshot: failed to decode stored event data",
 					obs.EventType(ev.Type),
 					logging.ErrorField(err),
 				)
@@ -223,7 +233,8 @@ func (h *Handlers) GetSnapshot(ctx context.Context, request genapi.GetSnapshotRe
 		})
 	}
 
-	h.deps.Logger.WithContext(ctx).Debug("snapshot built",
+	h.deps.Logger.WithContext(ctx).Debug(
+		"snapshot built",
 		logging.IntField("snapshot.byte_budget_used", result.ByteBudgetUsed),
 		logging.IntField("snapshot.events_returned", len(events)),
 	)
@@ -251,7 +262,8 @@ func (h *Handlers) ListSources(ctx context.Context, _ genapi.ListSourcesRequestO
 			case http.StatusNotFound:
 				return genapi.ListSources404JSONResponse{NotFoundJSONResponse: genapi.NotFoundJSONResponse(body)}, nil
 			default:
-				h.deps.Logger.WithContext(ctx).Warn("list sources: mapped sentinel has no response variant — returning 500",
+				h.deps.Logger.WithContext(ctx).Warn(
+					"list sources: mapped sentinel has no response variant — returning 500",
 					logging.IntField("http.status", m.Status),
 					logging.StringField("error.code", m.Code),
 					logging.ErrorField(err),

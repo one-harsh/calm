@@ -72,7 +72,8 @@ func TestCreateSession_HappyWithLabels(t *testing.T) {
 	if err := store.Sessions().Create(context.Background(), sess); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	got := countRows(t, sqlDB,
+	got := countRows(
+		t, sqlDB,
 		`SELECT COUNT(*) FROM session_labels WHERE session_id = $1`,
 		sess.ID,
 	)
@@ -96,7 +97,8 @@ func TestSessionService_Create_UnregisteredClientReturnsErrClientNotFound(t *tes
 	if !errors.Is(err, db.ErrClientNotFound) {
 		t.Fatalf("service Create with unregistered client: got %v; want ErrClientNotFound", err)
 	}
-	if n := countRows(t, sqlDB,
+	if n := countRows(
+		t, sqlDB,
 		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`,
 		"ns-a", "alice",
 	); n != 0 {
@@ -141,7 +143,8 @@ func TestCreateSession_ExistingClientIdempotent(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if n := countRows(t, sqlDB,
+	if n := countRows(
+		t, sqlDB,
 		`SELECT COUNT(*) FROM clients WHERE namespace = $1 AND name = $2`,
 		"ns-a", "alice",
 	); n != 1 {
@@ -299,7 +302,8 @@ func TestTouchSession_AdvancesTimestamp(t *testing.T) {
 	}
 
 	var got time.Time
-	if err := sqlDB.QueryRowContext(context.Background(),
+	if err := sqlDB.QueryRowContext(
+		context.Background(),
 		`SELECT last_activity FROM sessions WHERE id = $1`, seeded.ID,
 	).Scan(&got); err != nil {
 		t.Fatalf("read last_activity: %v", err)
@@ -322,7 +326,8 @@ func TestTouchSession_MonotonicIgnoresPast(t *testing.T) {
 		t.Fatalf("TouchSession (past): %v", err)
 	}
 	var got time.Time
-	if err := sqlDB.QueryRowContext(context.Background(),
+	if err := sqlDB.QueryRowContext(
+		context.Background(),
 		`SELECT last_activity FROM sessions WHERE id = $1`, seeded.ID,
 	).Scan(&got); err != nil {
 		t.Fatalf("read last_activity: %v", err)
@@ -1101,7 +1106,8 @@ func TestScanExpiredSessions_CrossNamespace(t *testing.T) {
 
 func deleteSessionRowByID(t *testing.T, sqlDB *sql.DB, id int64) {
 	t.Helper()
-	if _, err := sqlDB.ExecContext(context.Background(),
+	if _, err := sqlDB.ExecContext(
+		context.Background(),
 		`DELETE FROM sessions WHERE id = $1`, id,
 	); err != nil {
 		t.Fatalf("raw delete id=%d: %v", id, err)
@@ -1398,7 +1404,8 @@ func TestTTLScanner_ReapsExpiredSessionWithinOneTick(t *testing.T) {
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		if countRows(t, sqlDB,
+		if countRows(
+			t, sqlDB,
 			`SELECT COUNT(*) FROM sessions WHERE id = $1`, expired.ID,
 		) == 0 {
 			return
@@ -1437,7 +1444,8 @@ func TestTTLScanner_CrossNamespaceExpiry(t *testing.T) {
 	}()
 
 	expiredGone := func() bool {
-		return countRows(t, sqlDB,
+		return countRows(
+			t, sqlDB,
 			`SELECT COUNT(*) FROM sessions WHERE id IN ($1, $2)`, expA.ID, expB.ID,
 		) == 0
 	}
@@ -1451,7 +1459,8 @@ func TestTTLScanner_CrossNamespaceExpiry(t *testing.T) {
 	if !expiredGone() {
 		t.Fatal("expired sessions not reaped from both namespaces within 500ms")
 	}
-	if n := countRows(t, sqlDB,
+	if n := countRows(
+		t, sqlDB,
 		`SELECT COUNT(*) FROM sessions WHERE id IN ($1, $2)`, freshA.ID, freshB.ID,
 	); n != 2 {
 		t.Errorf("fresh sessions count = %d; want 2 (scanner must not touch unexpired rows)", n)

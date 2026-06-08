@@ -48,7 +48,8 @@ func (h *Handlers) Ingest(
 	// document order and `matches` stays absent. WARN so the dropped signal is
 	// observable rather than silent.
 	if request.Body.Intents != nil && len(*request.Body.Intents) > 0 {
-		h.deps.Logger.WithContext(ctx).Warn("ingest: intents provided but RRF ordering not implemented; returning document-order summary",
+		h.deps.Logger.WithContext(ctx).Warn(
+			"ingest: intents provided but RRF ordering not implemented; returning document-order summary",
 			logging.IntField("ingest.intents_provided", len(*request.Body.Intents)),
 		)
 	}
@@ -63,7 +64,8 @@ func (h *Handlers) Ingest(
 			case http.StatusBadRequest:
 				return genapi.Ingest400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse(body)}, nil
 			default:
-				h.deps.Logger.WithContext(ctx).Warn("ingest: mapped sentinel has no response variant — returning 500",
+				h.deps.Logger.WithContext(ctx).Warn(
+					"ingest: mapped sentinel has no response variant — returning 500",
 					logging.IntField("http.status", m.Status),
 					logging.StringField("error.code", m.Code),
 					logging.ErrorField(err),
@@ -86,7 +88,8 @@ func (h *Handlers) Ingest(
 	if !result.Created {
 		auditEvent = logging.ResourceUpdate
 	}
-	h.deps.Logger.WithContext(ctx).WithAuditEvent(auditEvent).Info("content ingested",
+	h.deps.Logger.WithContext(ctx).WithAuditEvent(auditEvent).Info(
+		"content ingested",
 		obs.AuditInitiatorAPI,
 		obs.Source(in.Source),
 		logging.IntField("ingest.sections_indexed", result.SectionsIndexed),
