@@ -109,7 +109,10 @@ normalization happens *before* the grammar is built:
   never emitted as a stable label — it would leak host paths and collide across
   workspaces — so it falls back to `coexist`. `Cwd` alone is insufficient (it
   cannot tell a subdir path from another repo or an escape), which is why
-  `WorkspaceRoot` is an explicit input.
+  `WorkspaceRoot` is an explicit input. This boundary is for **labeling only,
+  not access control**: an escaping command still runs and its output is still
+  captured (under `coexist`). The adapter does not sandbox execution or confine
+  commands to `WorkspaceRoot` — local shell access is full, by design (DL02).
 - **Cosmetic flags** (`--color`, `--no-pager`) — which don't change output — are stripped so cosmetic variants share one label. **Output-affecting flags** (`-q`, `--stat`, `-l`, …) are *not* stripped: a recognized command carrying one has an ambiguous output identity (e.g. `grep -q` emits nothing), so it falls back to `coexist` rather than risk overwriting the flag-free label.
 - **Whitespace** is collapsed by tokenization.
 - **All operands** form the identity — `cat a b` → `calm:v1:file:read:a:b`, never just
@@ -154,7 +157,9 @@ Per the `never-worse` invariant, no translation fault may break the agent's comm
 - **Dual write ordering is preservation-first:** (1) history ingest, (2) latest
   ingest, (3) events. History-ok/latest-fails still leaves the output recoverable;
   history-fails/latest-ok leaves current state available; both-fail still returns
-  raw output. Events cross-link only the sources that persisted.
+  raw output. Events are **best-effort and off the critical path** — emitted after the
+  response is determined, so a slow or failed `/v1/events` never delays or breaks the
+  command; cross-links point only at sources that persisted.
 
 ## 7. Persistence-safety, retention, and search tradeoffs
 

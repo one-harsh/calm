@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	logging "github.com/one-harsh/context-logging"
@@ -30,6 +31,7 @@ type Config struct {
 	ServerVersion     string
 	DefaultClient     string
 	SessionTTLMinutes int
+	WorkspaceRoot     string
 }
 
 type Server struct {
@@ -41,6 +43,8 @@ type Server struct {
 	version       string
 	defaultClient string
 	ttlMinutes    int
+	workspaceRoot string
+	seq           atomic.Int64
 
 	wmu sync.Mutex // serializes writes to the protocol channel
 	out io.Writer
@@ -58,12 +62,35 @@ func NewServer(cfg Config) *Server {
 		version:       cfg.ServerVersion,
 		defaultClient: cfg.DefaultClient,
 		ttlMinutes:    cfg.SessionTTLMinutes,
+		workspaceRoot: cfg.WorkspaceRoot,
 	}
 	for _, t := range cfg.Tools {
-		s.tools[t.Name] = t
-		s.order = append(s.order, t.Name)
+		s.addTool(t)
 	}
+	s.registerBuiltins()
 	return s
+}
+
+func (s *Server) addTool(t Tool) {
+	s.tools[t.Name] = t
+	s.order = append(s.order, t.Name)
+}
+
+func (s *Server) registerBuiltins() {
+	s.addToolIfAbsent(s.newRunCommandTool())
+}
+
+func (s *Server) addToolIfAbsent(t Tool) {
+	if _, ok := s.tools[t.Name]; ok {
+		return
+	}
+	s.addTool(t)
+}
+
+func (s *Server) sessionToken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.session
 }
 
 // stdin reads block and can't be interrupted by ctx, so reading runs in a

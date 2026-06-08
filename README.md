@@ -1,20 +1,25 @@
 # CALM — Context Abstraction Layer for Models
 
-An HTTP service that reduces LLM token waste by filtering and compressing
-tool output before it enters the context window. CALM sits *beside* the
-workload and the LLM (a sidecar, not a proxy) — workloads call CALM
-explicitly to ingest tool output, search the indexed content on later
-turns, and capture session events that outlive the conversation's text
-window.
+An HTTP service for team-deployed LLM workloads. CALM filters and
+compresses tool output before it enters the context window, indexes
+the raw content for later search, captures session events that outlive
+the conversation, and closes the loop by attributing workload-reported
+outcomes back to the specific calls that produced them. Token spend
+*and* retrieval quality are CALM's twin observable concerns — both
+load-bearing, both instrumented. CALM sits *beside* the workload and
+the LLM (a sidecar, not a proxy).
 
 The canonical design lives in [`docs/HLD.md`](docs/HLD.md). This README
 is the operator-facing landing page.
 
 ## Status
 
-Foundation, auth model, and session lifecycle are wired end-to-end; the
-content-handling layer (ingest / search / events / snapshot) is the
-remaining surface.
+Foundation, auth model, session lifecycle, observability surface, the
+content-handling layer (ingest / search / events / snapshot), and the
+outcome-feedback wire contract are end-to-end. The correlations DAL that
+backs full outcome attribution and the `/v1/manage/*` administrative API
+are the remaining server surfaces; ingest/search ranking and compression
+quality (BM25/RRF, context budgeting) is the active refinement area.
 
 Working today:
 
@@ -26,13 +31,13 @@ Working today:
 - Postgres storage open + embedded migrations
 - **Clients** — first-class registered entities: `POST /v1/clients/{name}`
   with optional one-time bearer token in credentialed namespaces;
-  `POST /v1/clients/{name}/rotate-token`; cascade-counted delete via the
-  management API
+  `POST /v1/clients/{name}/rotate-token`; delete via the management API
 - **Sessions** — server-minted credential, hashed at rest
   (`sha256(namespace || 0x00 || token)`), surrogate `BIGSERIAL` primary
-  key; child tables FK on the surrogate. Create / Delete handlers live;
-  monotonic touch, cascade-counted delete, bulk delete, TTL scan all
-  through the service layer
+  key; child tables FK on the surrogate. Create returns the raw token
+  once; Delete returns `204 No Content` and emits cascade row counts as
+  INFO log fields. Monotonic touch, cascaded teardown, bulk delete, and
+  TTL scan all share one path through the service layer
 - **Idempotency-Key** on `POST /v1/sessions` — bounded LRU dedup
   (default 1h, 10K entries), singleflight serialization so a retry storm
   with the same key collapses to one INSERT
@@ -40,17 +45,43 @@ Working today:
   invalidated on Delete and namespace-purged on bulk paths
 - **TTL scanner** — periodic background reaper, scanner-triggered deletes
   go through the same DAL cascade as explicit close
+- **Observability headers** — every response carries `X-CALM-Correlation-Id`
+  (server-minted UUIDv7), echoes `X-Workload-Request-Id` when supplied
+  (≤256 chars, validated by dedicated middleware), and emits W3C
+  `traceresponse` when the request carried a valid inbound `traceparent`.
+  The OTel propagator install is config-gated
+  (`observability.otel.enabled`) and happens at bootup, not at the
+  middleware
+- **`POST /v1/feedback`** endpoint wired end-to-end: outcome enum
+  (`success | retry | degraded`), per-namespace `feedback_ttl_minutes`
+  window (handler-side check via the embedded UUIDv7 timestamp — no DB
+  read on the 410 path), session-id cross-check at the DAL boundary as
+  the within-namespace forgery defense. Until the correlations DAL
+  lands, the in-window path returns `503 feedback_dal_unavailable` so
+  workloads see a clean "feature not yet available" status rather than
+  an opaque 500
+- **Content layer** — `POST /v1/ingest` (chunking, format detection,
+  intent filtering), `POST /v1/search` (porter → trigram fallback),
+  `POST/GET /v1/events`, `GET /v1/snapshot`, and `GET /v1/sources` are
+  routed and return real data; ranking/compression quality is the next
+  layer of work
 - Server lifecycle (graceful shutdown, OpenAPI request validation,
   core-dump disabled at startup to keep credentials out of process memory
   dumps)
-- MCP adapter binary skeleton (`cmd/calm-adapter`) that creates a session
-  on startup, captures the server-minted token, and falls through to raw
-  output on any CALM failure (the `never-worse` invariant)
+- **MCP adapter** (`cmd/calm-adapter`) — a stdio MCP server a coding agent
+  points at. It creates a session on startup (token held in process memory
+  only) and exposes `calm_run_command`: run a shell command locally, ingest
+  its output into CALM, and return a compact summary plus a source label the
+  agent can search — falling through to the command's raw output on any CALM
+  failure (the `never-worse` invariant). Derived events (`tool_invocation`,
+  `error_observed`, `git_operation`) are emitted best-effort alongside each run
 
-Still stubbed: `POST /v1/ingest`, `POST /v1/search`, `POST/GET /v1/events`,
-`GET /v1/snapshot`, `GET /v1/sources`, and the `/v1/manage/*` handlers.
-The binary boots, authenticates, mints + deletes sessions, and migrates
-the schema; content ingest/search/event flows aren't routed yet.
+Still stubbed: the `/v1/manage/*` administrative handlers and the
+correlations DAL that backs full outcome attribution (its stub returns
+`ErrCorrelationsNotImplemented`, which is why the in-window `/v1/feedback`
+path responds `503 feedback_dal_unavailable`). Ingest and search run a
+baseline implementation today; the ranking and compression quality work
+improves those surfaces in place without changing the wire contract.
 
 ## What problem this addresses
 
@@ -59,14 +90,22 @@ on every turn. Tool outputs (logs, API responses, file dumps) enter
 context verbatim, sit there until compaction, and get re-billed each
 turn. Long contexts also degrade answer quality independently of cost —
 the *Lost in the Middle* effect (Liu et al., 2023) is structural to how
-transformers attend.
+transformers attend. Today, teams can't separate "the LLM struggled
+because the model is wrong for this task" from "the LLM struggled
+because the context was polluted with stale tool output" — there's no
+attribution layer.
 
 CALM's bet is that for a shared team deployment serving multiple LLM
 workloads, the right place to solve this is a single piece of
 infrastructure that ingests tool output, returns a compact representation
-to the model, and exposes the raw content via search when the model asks
-for it. See the HLD's *Motivation*, *Goals & Non-Goals*, and *A note on
-RAG* sections for the full argument; CALM is explicitly not a RAG system,
+to the model, exposes the raw content via search when the model asks
+for it, *and* attributes workload-reported outcomes back to the specific
+retrieval calls that produced them. That second leg — outcome
+attribution via `/v1/feedback` and the resulting outcome-labeled
+metrics — is what turns context management from a black-box optimization
+into a measurable quality signal teams can track across deployments. See
+the HLD's *Motivation*, *Goals & Non-Goals*, and *A note on RAG*
+sections for the full argument; CALM is explicitly not a RAG system,
 not an orchestrator, and not for solo install.
 
 ## Architecture at a glance
@@ -109,8 +148,9 @@ task run:local                     # builds and runs against cmd/calm/config/dev
 `[env:CALM_DEFAULT_KEY]` for the default namespace's bearer credential —
 the service refuses to start if you haven't exported it.
 
-Once running, the only handler that returns real data today is
-`/v1/health`:
+Once running, `/v1/health` is the simplest unauthenticated smoke check
+(the content endpoints return real data too, but need auth plus a session
+— see below):
 
 ```bash
 curl -i http://localhost:8080/v1/health
@@ -148,18 +188,24 @@ file; operators provision secrets via their platform's existing tooling.
 Any scalar field can also be overridden by an environment variable:
 `CALM_<PATH_IN_UPPERCASE>` with `.` and `-` replaced by `_`. Examples:
 `CALM_SERVER_ADDRESS=":9090"`, `CALM_STORAGE_DSN="postgres://..."`,
+`CALM_OBSERVABILITY_LOGGING_LEVEL=debug`,
+`CALM_OBSERVABILITY_OTEL_ENABLED=true` (installs the W3C
+TraceContext propagator at bootup so the Context middleware extracts
+inbound `traceparent` and emits `traceresponse`),
 `CALM_SESSIONS_CACHE_SIZE=20000` (per-pod LRU cap for the session-metadata
 cache; default 10,000; `0` disables),
 `CALM_SESSIONS_IDEMPOTENCY_KEY_TTL=1h` and
 `CALM_SESSIONS_IDEMPOTENCY_KEY_SIZE=10000` (per-pod dedup window + cap
 for `Idempotency-Key` on `POST /v1/sessions`; `0` size disables dedup).
+Per-namespace `feedback_ttl_minutes` (default 60, bounded `[1, 1440]`)
+sets the per-namespace feedback acceptance window for `/v1/feedback`.
 Slice fields under `namespaces` are not env-overridable.
 
 ## API
 
 The HTTP contract is generated from
 [`docs/api/openapi.yaml`](docs/api/openapi.yaml). The full surface
-(content endpoints currently stubbed):
+(`/v1/manage/*` currently stubbed):
 
 ```
 GET    /v1/health
@@ -174,6 +220,7 @@ POST   /v1/ingest
 POST   /v1/search
 POST   /v1/events
 GET    /v1/events
+POST   /v1/feedback
 GET    /v1/manage/sessions
 DELETE /v1/manage/sessions
 GET    /v1/manage/clients
@@ -188,6 +235,13 @@ request body. Cross-namespace mismatches return **404, not 403**
 Session-touching endpoints carry `X-CALM-Session-Token` (the credential
 returned by `POST /v1/sessions`). In credentialed namespaces, they also
 carry `Authorization: Bearer <client-token>`.
+
+Every response carries `X-CALM-Correlation-Id` (server-minted UUIDv7,
+unique per request). Workloads supply `X-Workload-Request-Id` to have
+it echoed back for their own log correlation. Requests with a valid
+inbound `traceparent` get a `traceresponse` on the way out. The
+correlation ID is the value workloads echo back to `/v1/feedback` when
+reporting outcomes for a prior call.
 
 ## Building and testing
 
@@ -223,10 +277,14 @@ internal/
   db/               Postgres DAL — per-entity files (pg_clients.go,
                     pg_sessions.go, ...), errors, models, tx primitive,
                     embedded migrations
-  obs/              context-bound logging + field helpers
+  feedback/         outcome-feedback service: UUIDv7-timestamp TTL check,
+                    delegates to CorrelationsRepo.UpdateOutcome
+  obs/              context-bound logging + field helpers; OTel
+                    propagator install (config-gated at bootup)
   secrets/          [scheme:payload] secret-reference resolver
   server/           HTTP lifecycle + middleware chain (recovery, context,
-                    logging, rate-limit, auth, body-size, timeout, OpenAPI)
+                    logging, workload-request-id, rate-limit, auth,
+                    body-size, timeout, OpenAPI, session-resolve)
   session/          session-lifecycle orchestration service + LRU metadata
                     cache + Idempotency-Key dedup + TTL scanner
 adapter/            MCP-only packages (consumed by cmd/calm-adapter)

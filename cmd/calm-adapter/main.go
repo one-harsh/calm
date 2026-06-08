@@ -69,12 +69,23 @@ func run() error {
 		return fmt.Errorf("generate idempotency key: %w", err)
 	}
 
+	workspaceRoot := cfg.Calm.WorkspaceRoot
+	if workspaceRoot == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("determine workspace root: %w", err)
+		}
+		workspaceRoot = wd
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	ctx = logging.Bind(ctx,
+	ctx = logging.Bind(
+		ctx,
 		logging.StringField("calm_url", cfg.Calm.URL),
 		logging.StringField("client", cfg.Calm.Client),
 		logging.StringField("idempotency_key", idempotencyKey),
+		logging.StringField("workspace_root", workspaceRoot),
 	)
 
 	var apiKey string
@@ -94,6 +105,7 @@ func run() error {
 		ServerVersion:     serverVersion,
 		DefaultClient:     cfg.Calm.Client,
 		SessionTTLMinutes: cfg.Calm.SessionTTLMinutes,
+		WorkspaceRoot:     workspaceRoot,
 	})
 
 	logger.WithContext(ctx).Info("adapter starting")

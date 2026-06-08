@@ -1,9 +1,6 @@
 // Copyright 2026 The CALM Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package config loads the calm-adapter's YAML config plus CALM_ADAPTER_-prefixed
-// env overrides. It mirrors the service's config approach but stays adapter-owned —
-// it must not import the server's internal packages (decoupling seam).
 package config
 
 import (
@@ -27,6 +24,9 @@ type CalmConfig struct {
 	APIKey            secrets.Secret `mapstructure:"api_key"`
 	Client            string         `mapstructure:"client"`
 	SessionTTLMinutes int            `mapstructure:"session_ttl_minutes"`
+	// Anchors source-label path normalization, not a sandbox: commands keep full
+	// local shell access. Empty → main falls back to os.Getwd() at startup.
+	WorkspaceRoot string `mapstructure:"workspace_root"`
 }
 
 type LogConfig struct {
@@ -35,10 +35,6 @@ type LogConfig struct {
 	File   string `mapstructure:"file"` // empty = stderr
 }
 
-// Load reads the YAML at path (when non-empty) plus CALM_ADAPTER_-prefixed env
-// overrides and validates. The api_key is left as a raw secret reference for main
-// to resolve. An empty path uses defaults + env only — the adapter is host-spawned,
-// so a config file is optional (unlike the service, which requires one).
 func Load(path string) (Config, error) {
 	v := viper.New()
 	v.SetEnvPrefix("CALM_ADAPTER")
@@ -69,6 +65,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("calm.api_key", "")
 	v.SetDefault("calm.client", "calm-adapter")
 	v.SetDefault("calm.session_ttl_minutes", 120)
+	v.SetDefault("calm.workspace_root", "")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.file", "")
