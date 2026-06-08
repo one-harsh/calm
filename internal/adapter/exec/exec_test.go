@@ -52,13 +52,16 @@ func TestRun_TimeoutDoesNotHang(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
+	// The subshell forces sh to fork a child that inherits the output pipe. Killing
+	// only the sh leader would leave that child holding the pipe and block Wait for the
+	// full sleep; the process-group kill must take down the whole tree promptly.
 	start := time.Now()
-	res, err := exec.Run(ctx, "sleep 5", "")
+	res, err := exec.Run(ctx, "(sleep 5)", "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 4*time.Second {
-		t.Fatalf("Run took %v; deadline should have killed sleep promptly", elapsed)
+		t.Fatalf("Run took %v; deadline should have killed the process group promptly", elapsed)
 	}
 	if !res.TimedOut {
 		t.Errorf("TimedOut = false; want true")

@@ -8,9 +8,13 @@ import (
 	"context"
 	"errors"
 	osexec "os/exec"
+	"syscall"
+	"time"
 )
 
 const maxOutputBytes = 512 * 1024
+
+const killGraceDelay = 2 * time.Second
 
 type Result struct {
 	Stdout    string
@@ -24,6 +28,16 @@ func Run(ctx context.Context, command, dir string) (Result, error) {
 	//nolint:gosec // DL02: local exec is an adapter capability; CALM the service never runs code
 	cmd := osexec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = dir
+
+	// Own process group + kill the whole group on timeout. Killing only the sh leader
+	// leaves a forked child (e.g. `sleep`) holding the inherited output pipe, which keeps
+	// Wait blocked until that child exits — long past the deadline.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		return nil
+	}
+	cmd.WaitDelay = killGraceDelay
 
 	stdout := &cappedBuffer{limit: maxOutputBytes}
 	stderr := &cappedBuffer{limit: maxOutputBytes}
