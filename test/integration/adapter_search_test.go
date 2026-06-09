@@ -81,7 +81,7 @@ func TestAdapterSearch_SessionWideFindsCapturedOutput(t *testing.T) {
 // TestAdapterSearch_CalmDownIsError proves search reports unavailability (not empty results)
 // when CALM is unreachable — search is the operation, so there is no raw fallback.
 func TestAdapterSearch_CalmDownIsError(t *testing.T) {
-	inner, err := calm.NewGenapiClient("http://127.0.0.1:1", "", "wi39-down")
+	inner, err := calm.NewGenapiClient("http://127.0.0.1:1", "", "wi39-down", nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}

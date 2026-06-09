@@ -16,7 +16,7 @@ func fakeCALM(t *testing.T, h http.HandlerFunc) calm.Client {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	c, err := calm.NewGenapiClient(srv.URL, "test-key", "idem-key")
+	c, err := calm.NewGenapiClient(srv.URL, "test-key", "idem-key", nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}

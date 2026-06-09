@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"net/http"
 
+	logging "github.com/one-harsh/context-logging"
+
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
-
-// Inlined (not imported from internal/auth) to keep this the adapter's only
-// server-internal dependency — see boundary_test.go.
-const headerAPIKey = "X-CALM-API-Key" //nolint:gosec // header name, not a credential
 
 type genapiClient struct {
 	api *genapi.ClientWithResponses
@@ -22,15 +20,21 @@ type genapiClient struct {
 	idempotencyKey string
 }
 
-func NewGenapiClient(baseURL, apiKey, idempotencyKey string) (Client, error) {
-	api, err := genapi.NewClientWithResponses(baseURL, genapi.WithRequestEditorFn(
-		func(_ context.Context, req *http.Request) error {
-			if apiKey != "" {
-				req.Header.Set(headerAPIKey, apiKey)
-			}
-			return nil
-		},
-	))
+func NewGenapiClient(baseURL, apiKey, idempotencyKey string, log *logging.Logger) (Client, error) {
+	if log == nil {
+		log = logging.Nop()
+	}
+	transport := chain(
+		http.DefaultTransport,
+		withWorkloadRequestID(),
+		withTracePropagation(),
+		withAuth(apiKey),
+		withLogging(log),
+	)
+	api, err := genapi.NewClientWithResponses(
+		baseURL,
+		genapi.WithHTTPClient(&http.Client{Transport: transport}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("init calm client: %w", err)
 	}

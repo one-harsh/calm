@@ -167,6 +167,46 @@ session-touching endpoints additionally require
 and `X-CALM-Session-Token: <session-token>` (issued at
 `POST /v1/sessions`).
 
+## Wiring into a coding agent (MCP host)
+
+The adapter is a standard MCP stdio server, so any MCP host — Claude Code, Codex, Cursor,
+Claude Desktop, … — can use it. Build it (`task build:adapter`) and register it. Hosts that
+use the `mcpServers` convention (Claude Code/Desktop, Cursor) take a block like:
+
+```json
+{
+  "mcpServers": {
+    "calm": {
+      "command": "/absolute/path/to/bin/calm-adapter",
+      "env": {
+        "CALM_ADAPTER_CALM_URL": "http://localhost:8080",
+        "CALM_ADAPTER_CALM_API_KEY": "[env:CALM_DEFAULT_KEY]",
+        "CALM_ADAPTER_LOG_FILE": "/tmp/calm-adapter.log",
+        "CALM_ADAPTER_LOG_LEVEL": "debug"
+      }
+    }
+  }
+}
+```
+
+The exact config file and location vary by host (`.mcp.json` for Claude Code,
+`~/.cursor/mcp.json` for Cursor, Codex's own config format, …) — but the `command` + `env`
+are the same. The host's `clientInfo.name` (e.g. `claude-code`, `codex`) becomes the CALM
+`client` for the session.
+
+The agent then has `calm_run_command` (run a shell command locally; its output is captured
+into CALM and returned compact) and `calm_search` (retrieve captured output on demand).
+`stdout` is the JSON-RPC channel, so adapter logs go to `CALM_ADAPTER_LOG_FILE` (or stderr)
+— never stdout. `CALM_ADAPTER_CALM_API_KEY` uses the secret-reference dialect, so
+`CALM_DEFAULT_KEY` must be in the adapter's environment (inherited from your shell or added
+to the `env` block).
+
+**Debugging the integration.** Each tool call stamps a `workload_request_id` and a
+`trace_id`, and every CALM request the adapter makes is logged with its latency, status,
+and the server-minted `correlation_id` — all of which also appear in CALM's own logs, so
+you can join a single tool call across adapter ↔ CALM. For an offline check that the
+binary speaks MCP correctly, run `task smoke:adapter`.
+
 ## Configuration
 
 CALM reads its config from the YAML file pointed at by

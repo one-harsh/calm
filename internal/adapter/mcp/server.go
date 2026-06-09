@@ -16,6 +16,7 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
 const (
@@ -272,6 +273,8 @@ func (s *Server) handleToolCall(ctx context.Context, params json.RawMessage) (an
 // invokeTool runs a tool handler with panic isolation (R7 / never-worse): a
 // translation-layer fault is downgraded to an isError result, never a crash.
 func (s *Server) invokeTool(ctx context.Context, tool Tool, args json.RawMessage) (res ToolResult) {
+	ctx, reqID := obs.WithCallContext(ctx)
+	ctx = logging.Bind(ctx, logging.StringField("workload_request_id", reqID), logging.StringField("tool", tool.Name))
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.WithContext(ctx).Warn("tool handler panicked",

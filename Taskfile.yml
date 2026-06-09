@@ -151,6 +151,21 @@ tasks:
     generates:
       - "{{.ADAPTER_BIN}}"
 
+  smoke:adapter:
+    desc: CLI smoke of the MCP adapter over stdio (no CALM needed — exercises never-worse).
+    deps: [build:adapter]
+    cmds:
+      - |
+        out=$(printf '%s\n' \
+          '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+          '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+          '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"calm_run_command","arguments":{"command":"echo smoke-ok"}}}' \
+          | CALM_ADAPTER_CALM_URL=http://127.0.0.1:1 {{.ADAPTER_BIN}} 2>/dev/null)
+        echo "$out" | grep -q '"calm_run_command"' || { echo "FAIL: calm_run_command not listed"; exit 1; }
+        echo "$out" | grep -q '"calm_search"'      || { echo "FAIL: calm_search not listed"; exit 1; }
+        echo "$out" | grep -q 'smoke-ok'           || { echo "FAIL: run_command did not return raw output"; exit 1; }
+        echo "adapter smoke OK — both tools listed; never-worse raw fallback works"
+
   test:
     desc: Run unit tests then integration tests
     cmds:

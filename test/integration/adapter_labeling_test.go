@@ -16,7 +16,7 @@ import (
 func adapterSession(t *testing.T) (calm.Client, string) {
 	t.Helper()
 	idem := fmt.Sprintf("wi37b-%s-%d", t.Name(), time.Now().UnixNano())
-	c, err := calm.NewGenapiClient(env.serverURL, testMasterKey, idem)
+	c, err := calm.NewGenapiClient(env.serverURL, testMasterKey, idem, nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}

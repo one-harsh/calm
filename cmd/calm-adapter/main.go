@@ -84,7 +84,6 @@ func run() error {
 		ctx,
 		logging.StringField("calm_url", cfg.Calm.URL),
 		logging.StringField("client", cfg.Calm.Client),
-		logging.StringField("idempotency_key", idempotencyKey),
 		logging.StringField("workspace_root", workspaceRoot),
 	)
 
@@ -93,7 +92,7 @@ func run() error {
 		apiKey = secrets.New(logger).ReadSecret(ctx, cfg.Calm.APIKey)
 	}
 
-	client, err := calm.NewGenapiClient(cfg.Calm.URL, apiKey, idempotencyKey)
+	client, err := calm.NewGenapiClient(cfg.Calm.URL, apiKey, idempotencyKey, logger)
 	if err != nil {
 		return err
 	}

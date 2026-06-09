@@ -143,7 +143,7 @@ func (d *mcpDriver) runCommand(command string) mcp.ToolResult {
 func newAdapterLoop(t *testing.T, workspace string) (calm.Client, string, *mcpDriver) {
 	t.Helper()
 	idem := fmt.Sprintf("wi38-%s-%d", t.Name(), time.Now().UnixNano())
-	inner, err := calm.NewGenapiClient(env.serverURL, testMasterKey, idem)
+	inner, err := calm.NewGenapiClient(env.serverURL, testMasterKey, idem, nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestAdapterRunCommand_CaptureIngestSearchLoop(t *testing.T) {
 // never-worse: with CALM unreachable the adapter still returns raw output, not an error.
 func TestAdapterRunCommand_CalmDownReturnsRawOutput(t *testing.T) {
 	// Port 1 refuses connections, so session-create fails and the adapter degrades.
-	inner, err := calm.NewGenapiClient("http://127.0.0.1:1", "", "wi38-down")
+	inner, err := calm.NewGenapiClient("http://127.0.0.1:1", "", "wi38-down", nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}
