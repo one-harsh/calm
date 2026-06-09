@@ -70,11 +70,14 @@ Working today:
   dumps)
 - **MCP adapter** (`cmd/calm-adapter`) — a stdio MCP server a coding agent
   points at. It creates a session on startup (token held in process memory
-  only) and exposes `calm_run_command`: run a shell command locally, ingest
-  its output into CALM, and return a compact summary plus a source label the
-  agent can search — falling through to the command's raw output on any CALM
-  failure (the `never-worse` invariant). Derived events (`tool_invocation`,
-  `error_observed`, `git_operation`) are emitted best-effort alongside each run
+  only) and exposes two tools that close the capture→retrieve loop:
+  `calm_run_command` runs a shell command locally, ingests its output into CALM,
+  and returns a compact summary plus a source label — falling through to the
+  command's raw output on any CALM failure (the `never-worse` invariant), with
+  derived events (`tool_invocation`, `error_observed`, `git_operation`) emitted
+  best-effort alongside each run; `calm_search` queries the session and returns
+  ranked, verbatim snippets (optionally scoped to a source label), reporting
+  "search unavailable" rather than empty results when CALM is unreachable
 
 Still stubbed: the `/v1/manage/*` administrative handlers and the
 correlations DAL that backs full outcome attribution (its stub returns

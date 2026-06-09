@@ -78,6 +78,7 @@ func (s *Server) addTool(t Tool) {
 
 func (s *Server) registerBuiltins() {
 	s.addToolIfAbsent(s.newRunCommandTool())
+	s.addToolIfAbsent(s.newSearchTool())
 }
 
 func (s *Server) addToolIfAbsent(t Tool) {
