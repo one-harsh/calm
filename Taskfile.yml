@@ -293,7 +293,7 @@ tasks:
       - task: test:cover
       - task: build
 
-  run:local:
+  run:calm:
     desc: Run the CALM service locally against the dev Postgres
     summary: |
       Builds and runs the CALM binary against the local dev Postgres started
@@ -322,7 +322,7 @@ tasks:
       against postgres:17) and runs Postgres with `-c shared_preload_libraries=pg_textsearch`
       so the BM25 access method is available without further config.
 
-      Connection string for `task run:local CALM_STORAGE=postgres`:
+      Connection string for `task run:calm`:
         postgres://postgres:postgres@localhost:5432/calm?sslmode=disable
 
       Data persists across runs in the named docker volume `calm-pg-data`.

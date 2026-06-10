@@ -5,6 +5,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	logging "github.com/one-harsh/context-logging"
@@ -12,7 +13,11 @@ import (
 	"github.com/one-harsh/calm/internal/obs"
 )
 
-// Logging emits a DEBUG line on request start and an INFO summary on completion.
+// errBodyCap bounds how much of a failed response body the completion line
+// echoes — error payloads are small; the cap guards against an unexpectedly
+// large one.
+const errBodyCap = 1024
+
 func Logging(logger *logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,12 +39,19 @@ func Logging(logger *logging.Logger) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(ww, r)
 
-			logger.SummaryWithContext(r.Context()).Info(
-				"request completed",
+			fields := []logging.LoggingField{
 				logging.HTTPStatus(ww.status),
 				logging.Duration(time.Since(start)),
 				logging.Bytes(ww.bytesWritten),
-			)
+			}
+			level := logging.InfoLevel
+			if ww.status >= 500 {
+				level = logging.WarnLevel
+			}
+			if ww.status >= 400 && len(ww.errBody) > 0 {
+				fields = append(fields, obs.ErrorBody(strings.TrimSpace(string(ww.errBody))))
+			}
+			logger.SummaryWithContext(r.Context()).Log(level, "request completed", fields...)
 		})
 	}
 }
@@ -48,6 +60,7 @@ type responseWriter struct {
 	http.ResponseWriter
 	status       int
 	bytesWritten int
+	errBody      []byte
 }
 
 func wrapResponseWriter(w http.ResponseWriter) *responseWriter {
@@ -62,5 +75,8 @@ func (w *responseWriter) WriteHeader(status int) {
 func (w *responseWriter) Write(b []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(b)
 	w.bytesWritten += n
+	if w.status >= 400 && len(w.errBody) < errBodyCap {
+		w.errBody = append(w.errBody, b[:min(len(b), errBodyCap-len(w.errBody))]...)
+	}
 	return n, err
 }

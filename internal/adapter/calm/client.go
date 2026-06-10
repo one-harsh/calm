@@ -13,6 +13,7 @@ import "context"
 // Client is the adapter's port onto CALM. Methods are stateless — the session
 // token is supplied per call by the caller (the MCP server owns session state).
 type Client interface {
+	RegisterClient(ctx context.Context, name string) (created bool, err error)
 	CreateSession(ctx context.Context, client string, ttlMinutes int) (sessionToken string, err error)
 	DeleteSession(ctx context.Context, sessionToken string) error
 	Ingest(ctx context.Context, sessionToken string, in IngestInput) (IngestSummary, error)

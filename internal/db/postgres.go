@@ -74,6 +74,14 @@ func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *loggin
 
 func (s *Store) Close() error { return s.db.Close() }
 
+type HealthChecker interface {
+	Health(ctx context.Context) error
+}
+
+var _ HealthChecker = (*Store)(nil)
+
+func (s *Store) Health(ctx context.Context) error { return s.db.PingContext(ctx) }
+
 func migrateUp(ctx context.Context, conn *sql.DB, logger *logging.Logger) error {
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {

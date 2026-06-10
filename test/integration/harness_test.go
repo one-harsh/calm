@@ -49,6 +49,8 @@ const (
 
 	testDefaultTTLMinutes = 120
 	testMaxTTLMinutes     = 240
+
+	testVersion = "test"
 )
 
 type harness struct {
@@ -128,10 +130,12 @@ func bootstrap() (*harness, error) {
 			Clients:  clientSvc,
 			Sessions: sessionSvc,
 			Events:   store.Events(),
+			Health:   store,
 			Snapshot: snapshotSvc,
 			Ingest:   ingestSvc,
 			Search:   searchSvc,
 			Feedback: feedbackSvc,
+			Version:  testVersion,
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: testDefaultTTLMinutes,
 				MaxTTLMinutes:     testMaxTTLMinutes,

@@ -108,10 +108,12 @@ func run() error {
 			Clients:  clientSvc,
 			Sessions: sessionSvc,
 			Events:   store.Events(),
+			Health:   store,
 			Snapshot: snapshotSvc,
 			Ingest:   ingestSvc,
 			Search:   searchSvc,
 			Feedback: feedbackSvc,
+			Version:  cfg.Service.Version,
 			Cfg: handlers.HandlersConfig{
 				DefaultTTLMinutes: cfg.Sessions.DefaultTTLMinutes,
 				MaxTTLMinutes:     cfg.Sessions.MaxTTLMinutes,

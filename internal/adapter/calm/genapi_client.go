@@ -41,6 +41,22 @@ func NewGenapiClient(baseURL, apiKey, idempotencyKey string, log *logging.Logger
 	return &genapiClient{api: api, idempotencyKey: idempotencyKey}, nil
 }
 
+func (c *genapiClient) RegisterClient(ctx context.Context, name string) (bool, error) {
+	resp, err := c.api.RegisterClientWithResponse(ctx, genapi.ClientName(name))
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case resp.JSON201 != nil:
+		return true, nil
+	case resp.JSON409 != nil:
+		// Already registered — success.
+		return false, nil
+	default:
+		return false, fmt.Errorf("register client: %s", resp.Status())
+	}
+}
+
 func (c *genapiClient) CreateSession(ctx context.Context, client string, ttlMinutes int) (string, error) {
 	params := &genapi.CreateSessionParams{}
 	if c.idempotencyKey != "" {

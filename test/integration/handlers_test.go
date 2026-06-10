@@ -251,8 +251,8 @@ func TestCreateSessionHandler_ResponseHasNoLabelsField(t *testing.T) {
 
 func TestNotImplementedHandlersStillReturn501(t *testing.T) {
 	httpReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
-		env.serverURL+"/v1/version", http.NoBody)
-	httpReq.Header.Set(auth.HeaderAuthorization, auth.BearerPrefix+testMasterKey)
+		env.serverURL+"/v1/manage/sessions", http.NoBody)
+	httpReq.Header.Set(auth.HeaderAPIKey, testMasterKey)
 	httpResp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		t.Fatalf("http: %v", err)

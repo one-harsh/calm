@@ -807,7 +807,7 @@ Everything is scoped to a session. There are no cross-session relationships — 
 
 ### Clients
 
-The container for workloads within a namespace. Created lazily: when a session arrives with a `client` field CALM hasn't seen before, the client row auto-registers (see Decision Log [DL01](#dl01)). The `default` client is pre-created at bootstrap so workloads can omit the field.
+The container for workloads within a namespace. A client is registered explicitly via `POST /v1/clients/{name}` before a session can reference it; a session naming an unregistered client is rejected. The `default` client is pre-created at bootstrap so workloads can omit the `client` field and attribute to it.
 
 ```
 clients

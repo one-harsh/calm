@@ -187,6 +187,63 @@ func (_c *MockClient_Ingest_Call) RunAndReturn(run func(context.Context, string,
 	return _c
 }
 
+// RegisterClient provides a mock function with given fields: ctx, name
+func (_m *MockClient) RegisterClient(ctx context.Context, name string) (bool, error) {
+	ret := _m.Called(ctx, name)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RegisterClient")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (bool, error)); ok {
+		return rf(ctx, name)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) bool); ok {
+		r0 = rf(ctx, name)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, name)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockClient_RegisterClient_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterClient'
+type MockClient_RegisterClient_Call struct {
+	*mock.Call
+}
+
+// RegisterClient is a helper method to define mock.On call
+//   - ctx context.Context
+//   - name string
+func (_e *MockClient_Expecter) RegisterClient(ctx interface{}, name interface{}) *MockClient_RegisterClient_Call {
+	return &MockClient_RegisterClient_Call{Call: _e.mock.On("RegisterClient", ctx, name)}
+}
+
+func (_c *MockClient_RegisterClient_Call) Run(run func(ctx context.Context, name string)) *MockClient_RegisterClient_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_RegisterClient_Call) Return(created bool, err error) *MockClient_RegisterClient_Call {
+	_c.Call.Return(created, err)
+	return _c
+}
+
+func (_c *MockClient_RegisterClient_Call) RunAndReturn(run func(context.Context, string) (bool, error)) *MockClient_RegisterClient_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Search provides a mock function with given fields: ctx, sessionToken, in
 func (_m *MockClient) Search(ctx context.Context, sessionToken string, in SearchInput) (SearchResults, error) {
 	ret := _m.Called(ctx, sessionToken, in)

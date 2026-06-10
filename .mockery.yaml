@@ -25,6 +25,7 @@ packages:
       ChunksRepo:
       CorrelationsRepo:
       DAL:
+      HealthChecker:
   github.com/one-harsh/calm/internal/secrets:
     interfaces:
       SecretReader:

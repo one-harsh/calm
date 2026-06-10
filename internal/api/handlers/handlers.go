@@ -33,10 +33,12 @@ type Deps struct {
 	Clients  *clientreg.Service
 	Sessions *session.Service
 	Events   db.EventsRepo
+	Health   db.HealthChecker
 	Snapshot *snapshot.Service
 	Ingest   *ingest.Service
 	Search   *search.Service
 	Feedback *feedback.Service
+	Version  string
 	Cfg      HandlersConfig
 }
 

@@ -462,8 +462,7 @@ func TestAuth_HealthAndVersionBypassAuth(t *testing.T) {
 			t.Fatalf("%s: %v", path, err)
 		}
 		_ = resp.Body.Close()
-		// Endpoints are stubs (ErrNotImplemented → 501). The proof is that
-		// auth doesn't intercept with 401.
+		// Proof of bypass: a credential-less request isn't intercepted with 401.
 		if resp.StatusCode == http.StatusUnauthorized {
 			t.Errorf("%s: got 401; operational endpoints must bypass auth", path)
 		}

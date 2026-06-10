@@ -71,6 +71,7 @@ func resultText(t *testing.T, res mcp.ToolResult) string {
 
 func TestRunCommand_IngestsAndReturnsCompactRep(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
@@ -102,6 +103,7 @@ func TestRunCommand_IngestsAndReturnsCompactRep(t *testing.T) {
 
 func TestRunCommand_DualWritesHistoryThenLatest(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	eventsDone := writeEventsSignal(m, nil)
@@ -136,6 +138,7 @@ func TestRunCommand_DualWritesHistoryThenLatest(t *testing.T) {
 
 func TestRunCommand_IngestFailureFallsBackToRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
@@ -186,6 +189,7 @@ func TestRunCommand_BlankCommandIsError(t *testing.T) {
 
 func TestRunCommand_EventFailureStillReturnsCompactRep(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).Return(calm.IngestSummary{
@@ -231,6 +235,7 @@ func TestRunCommand_InvalidArgumentsIsError(t *testing.T) {
 // emission the compact rep returns even while WriteEvents is blocked.
 func TestRunCommand_BlockedEventWriteDoesNotHoldResponse(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).Return(calm.IngestSummary{
@@ -295,6 +300,7 @@ func TestRunCommand_BlockedEventWriteDoesNotHoldResponse(t *testing.T) {
 // never-worse: a mid-ingest panic still returns the raw output via the handler recover.
 func TestRunCommand_IngestPanicFallsBackToRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
@@ -319,6 +325,7 @@ func TestRunCommand_IngestPanicFallsBackToRaw(t *testing.T) {
 // empty/error result. Drop the `res = TextResult(raw, false)` default and this fails.
 func TestRunCommand_PanicBeforeSummaryBuiltReturnsRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	// Dual mode: history ingest succeeds (sets rep), then latest ingest panics —

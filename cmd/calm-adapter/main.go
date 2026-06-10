@@ -62,6 +62,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
+	logger = logger.WithCallerSkip(1)
 	defer func() { _ = logger.Sync() }()
 
 	idempotencyKey, err := newIdempotencyKey()

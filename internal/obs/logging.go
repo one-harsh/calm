@@ -36,7 +36,7 @@ func NewLogger(serviceName, version, environment, region, level, format string) 
 	if err != nil {
 		return nil, fmt.Errorf("init logger: %w", err)
 	}
-	return logger, nil
+	return logger.WithCallerSkip(1), nil
 }
 
 const (
@@ -59,6 +59,7 @@ const (
 	KeyFeedbackOutcome         = "feedback_outcome"
 	KeyReferencedCorrelationID = "feedback.referenced_correlation_id"
 	KeyRequestType             = "request_type"
+	KeyErrorBody               = "error_body"
 )
 
 var (
@@ -135,4 +136,8 @@ func ReferencedCorrelationID(value string) logging.LoggingField {
 
 func RequestType(value string) logging.LoggingField {
 	return logging.StringField(KeyRequestType, value)
+}
+
+func ErrorBody(value string) logging.LoggingField {
+	return logging.StringField(KeyErrorBody, value)
 }

@@ -137,6 +137,7 @@ func stubTool(name string) mcp.Tool {
 
 func TestInitialize_CreatesSessionAndReturnsServerInfo(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	h := newHarness(t, m)
@@ -271,6 +272,7 @@ func TestNotificationProducesNoResponse(t *testing.T) {
 
 func TestDuplicateInitializeReusesSession(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok1").Return(nil).Once()
 	h := newHarness(t, m)

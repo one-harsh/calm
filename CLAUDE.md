@@ -171,7 +171,7 @@ from the spec, copy `secrets`, keep the adapter `internal/` in the new module.
 
 ## Build / test / run discipline
 
-- All reproducible operations go through `task`: `task build`, `task test`, `task test:unit`, `task test:integration`, `task lint`, `task fmt`, `task tidy`, `task ci`, `task run:local`, `task docker:build`, `task gen:api`, `task gen:mocks`, `task gen:check`.
+- All reproducible operations go through `task`: `task build`, `task test`, `task test:unit`, `task test:integration`, `task lint`, `task fmt`, `task tidy`, `task ci`, `task run:calm`, `task docker:build`, `task gen:api`, `task gen:mocks`, `task gen:check`.
 - `task test` runs unit then integration. Inner-loop dev: `task test:unit` for fast feedback. CI runs the umbrella via `task ci`.
 - Inner-loop dev: `go test ./<pkg>` and `go vet ./...` are fine. Anything whose result must match across machines (CI, full builds, deploys, lint, format) goes through `task`.
 - Never edit `go.mod` by hand for routine adds — `task tidy` is the entry.

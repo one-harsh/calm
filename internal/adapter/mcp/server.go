@@ -206,11 +206,20 @@ func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (
 	haveSession := s.session != ""
 	s.mu.Unlock()
 
-	// One session per process: a duplicate initialize (spec violation) reuses the
-	// existing session rather than creating a second one.
 	if haveSession {
 		s.log.WithContext(ctx).Warn("duplicate initialize; reusing existing session")
 	} else {
+		rctx, rcancel := context.WithTimeout(ctx, sessionOpTimeout)
+		created, rerr := s.calm.RegisterClient(rctx, client)
+		rcancel()
+		if rerr != nil {
+			s.log.WithContext(ctx).Warn("client registration failed; continuing",
+				logging.StringField("client", client), logging.ErrorField(rerr))
+		} else {
+			s.log.WithContext(ctx).Debug("client registered",
+				logging.StringField("client", client), logging.BoolField("created", created))
+		}
+
 		// never-worse: session-create failure must not break the handshake (degraded → raw fallback).
 		sctx, cancel := context.WithTimeout(ctx, sessionOpTimeout)
 		token, err := s.calm.CreateSession(sctx, client, s.ttlMinutes)

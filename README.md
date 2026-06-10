@@ -15,76 +15,15 @@ is the operator-facing landing page.
 ## Status
 
 Foundation, auth model, session lifecycle, observability surface, the
-content-handling layer (ingest / search / events / snapshot), and the
-outcome-feedback wire contract are end-to-end. The correlations DAL that
-backs full outcome attribution and the `/v1/manage/*` administrative API
-are the remaining server surfaces; ingest/search ranking and compression
-quality (BM25/RRF, context budgeting) is the active refinement area.
+content-handling layer (ingest / search / events / snapshot), outcome
+attribution (a correlation row per value-producing call, updated via
+`/v1/feedback`), and the MCP adapter (capture→retrieve through a coding
+agent) are end-to-end.
 
-Working today:
-
-- YAML-config loader with env-var override and bracketed secret references
-- Three credential layers: namespace API key (`X-CALM-API-Key`), optional
-  per-client bearer token (`Authorization: Bearer`) in credentialed
-  namespaces, and server-minted session token (`X-CALM-Session-Token`)
-- Three-tier rate limiting: per-IP (pre-auth), per-namespace, and global
-- Postgres storage open + embedded migrations
-- **Clients** — first-class registered entities: `POST /v1/clients/{name}`
-  with optional one-time bearer token in credentialed namespaces;
-  `POST /v1/clients/{name}/rotate-token`; delete via the management API
-- **Sessions** — server-minted credential, hashed at rest
-  (`sha256(namespace || 0x00 || token)`), surrogate `BIGSERIAL` primary
-  key; child tables FK on the surrogate. Create returns the raw token
-  once; Delete returns `204 No Content` and emits cascade row counts as
-  INFO log fields. Monotonic touch, cascaded teardown, bulk delete, and
-  TTL scan all share one path through the service layer
-- **Idempotency-Key** on `POST /v1/sessions` — bounded LRU dedup
-  (default 1h, 10K entries), singleflight serialization so a retry storm
-  with the same key collapses to one INSERT
-- **Session-metadata LRU cache** keyed on `(namespace, session_token)`,
-  invalidated on Delete and namespace-purged on bulk paths
-- **TTL scanner** — periodic background reaper, scanner-triggered deletes
-  go through the same DAL cascade as explicit close
-- **Observability headers** — every response carries `X-CALM-Correlation-Id`
-  (server-minted UUIDv7), echoes `X-Workload-Request-Id` when supplied
-  (≤256 chars, validated by dedicated middleware), and emits W3C
-  `traceresponse` when the request carried a valid inbound `traceparent`.
-  The OTel propagator install is config-gated
-  (`observability.otel.enabled`) and happens at bootup, not at the
-  middleware
-- **`POST /v1/feedback`** endpoint wired end-to-end: outcome enum
-  (`success | retry | degraded`), per-namespace `feedback_ttl_minutes`
-  window (handler-side check via the embedded UUIDv7 timestamp — no DB
-  read on the 410 path), session-id cross-check at the DAL boundary as
-  the within-namespace forgery defense. Until the correlations DAL
-  lands, the in-window path returns `503 feedback_dal_unavailable` so
-  workloads see a clean "feature not yet available" status rather than
-  an opaque 500
-- **Content layer** — `POST /v1/ingest` (chunking, format detection,
-  intent filtering), `POST /v1/search` (porter → trigram fallback),
-  `POST/GET /v1/events`, `GET /v1/snapshot`, and `GET /v1/sources` are
-  routed and return real data; ranking/compression quality is the next
-  layer of work
-- Server lifecycle (graceful shutdown, OpenAPI request validation,
-  core-dump disabled at startup to keep credentials out of process memory
-  dumps)
-- **MCP adapter** (`cmd/calm-adapter`) — a stdio MCP server a coding agent
-  points at. It creates a session on startup (token held in process memory
-  only) and exposes two tools that close the capture→retrieve loop:
-  `calm_run_command` runs a shell command locally, ingests its output into CALM,
-  and returns a compact summary plus a source label — falling through to the
-  command's raw output on any CALM failure (the `never-worse` invariant), with
-  derived events (`tool_invocation`, `error_observed`, `git_operation`) emitted
-  best-effort alongside each run; `calm_search` queries the session and returns
-  ranked, verbatim snippets (optionally scoped to a source label), reporting
-  "search unavailable" rather than empty results when CALM is unreachable
-
-Still stubbed: the `/v1/manage/*` administrative handlers and the
-correlations DAL that backs full outcome attribution (its stub returns
-`ErrCorrelationsNotImplemented`, which is why the in-window `/v1/feedback`
-path responds `503 feedback_dal_unavailable`). Ingest and search run a
-baseline implementation today; the ranking and compression quality work
-improves those surfaces in place without changing the wire contract.
+Still stubbed (`501`): the `/v1/manage/*` administrative API. Ingest and
+search run a baseline implementation; ranking and compression quality
+(BM25/RRF, context budgeting) is the active refinement area, improved in place
+without changing the wire contract.
 
 ## What problem this addresses
 
@@ -142,14 +81,18 @@ git clone https://github.com/one-harsh/calm.git && cd calm
 task tools:install                 # one-time: install dev tools
 task dev:up                        # start dev Postgres in docker-compose
 
-export CALM_DEFAULT_KEY=$(openssl rand -hex 32)
-task run:local                     # builds and runs against cmd/calm/config/dev.yaml
+mkdir -p .calm                              # .calm/ is gitignored — keys never get committed
+openssl rand -hex 32 > .calm/calm_api.key   # the namespace key, a bare value (no `export`, no var name)
+export CALM_DEFAULT_KEY=$(cat .calm/calm_api.key)
+task run:calm                      # builds and runs against cmd/calm/config/dev.yaml
 ```
 
-`task run:local` reads
+`task run:calm` reads
 [`cmd/calm/config/dev.yaml`](cmd/calm/config/dev.yaml), which references
 `[env:CALM_DEFAULT_KEY]` for the default namespace's bearer credential —
-the service refuses to start if you haven't exported it.
+the service refuses to start if you haven't exported it. Keeping the key in
+`.calm/calm_api.key` (gitignored) lets the MCP adapter below read the *same*
+key from that file, so the server and adapter always agree.
 
 Once running, `/v1/health` is the simplest unauthenticated smoke check
 (the content endpoints return real data too, but need auth plus a session
@@ -170,13 +113,54 @@ and `X-CALM-Session-Token: <session-token>` (issued at
 ## Wiring into a coding agent (MCP host)
 
 The adapter is a standard MCP stdio server, so any MCP host — Claude Code, Codex, Cursor,
-Claude Desktop, … — can use it. Build it (`task build:adapter`) and register it. Hosts that
-use the `mcpServers` convention (Claude Code/Desktop, Cursor) take a block like:
+Claude Desktop, … — can use it. Build it first:
+
+```bash
+task build:adapter        # produces bin/calm-adapter
+```
+
+The commands below wire against the **local dev** CALM from the Quickstart
+(`http://localhost:8080`, the `.calm/calm_api.key` file). For a **deployed CALM**, point
+`CALM_ADAPTER_CALM_URL` at it and supply your team's namespace key the way your secret tooling
+delivers it (`[env:…]` / `[file:…]`) instead of the local `openssl`-generated file.
+
+**Claude Code** registers it from the CLI. Run this **from the repo root** (so `$(pwd)`
+expands to absolute paths):
+
+```bash
+claude mcp add calm \
+  --env CALM_ADAPTER_CALM_URL=http://localhost:8080 \
+  --env CALM_ADAPTER_CALM_API_KEY="[file:$(pwd)/.calm/calm_api.key]" \
+  --env CALM_ADAPTER_LOG_FILE=/tmp/calm-adapter.log \
+  --env CALM_ADAPTER_LOG_LEVEL=debug \
+  -- "$(pwd)/bin/calm-adapter"
+```
+
+Two rules this encodes — both learned the hard way:
+
+- **Absolute paths only.** Both the `command` and the `[file:…]` path must be absolute.
+  Claude Code execs the binary directly (no shell, so `~` is *not* expanded), and the secret
+  resolver rejects `~`/relative paths — either one silently becomes "failed to connect."
+  Running from the repo root makes `$(pwd)` resolve both.
+- **The key file holds only the bare key.** `[file:…]` uses the file's whole trimmed
+  contents as the API key, so `.calm/calm_api.key` must contain *just* the hex — no
+  `export`, no `VAR=`, no quotes. It's the same file the Quickstart created and that CALM is
+  running with, so server and adapter agree by construction; `.calm/` is gitignored, so the
+  key is never committed.
+
+`claude mcp list` then shows `calm: ✓ Connected`. On connect the adapter registers its
+client (idempotent — `409 already-registered` is treated as success) and creates a session;
+both are torn down on disconnect.
+
+**Other hosts** (Cursor, Claude Desktop, Codex) use the `mcpServers` convention — same
+`command` + `env`; only the file location differs (`~/.cursor/mcp.json` for Cursor, Codex's
+own config format, …):
 
 ```json
 {
   "mcpServers": {
     "calm": {
+      "type": "stdio",
       "command": "/absolute/path/to/bin/calm-adapter",
       "env": {
         "CALM_ADAPTER_CALM_URL": "http://localhost:8080",
@@ -189,23 +173,54 @@ use the `mcpServers` convention (Claude Code/Desktop, Cursor) take a block like:
 }
 ```
 
-The exact config file and location vary by host (`.mcp.json` for Claude Code,
-`~/.cursor/mcp.json` for Cursor, Codex's own config format, …) — but the `command` + `env`
-are the same. The host's `clientInfo.name` (e.g. `claude-code`, `codex`) becomes the CALM
-`client` for the session.
+These config files are usually committed, so they reference `[env:CALM_DEFAULT_KEY]` rather
+than inlining the key or a machine-specific path — export it where the host launches
+(`export CALM_DEFAULT_KEY=$(cat .calm/calm_api.key)`). The host's `clientInfo.name`
+(e.g. `claude-code`, `codex`) becomes the CALM `client` for the session.
+
+**One key, many agents.** What authenticates you to CALM is the *namespace* credential — the
+trust boundary between your deployment and CALM, not a per-agent key. (`CALM_DEFAULT_KEY` and
+`.calm/calm_api.key` are just how *local dev* holds that key for this walkthrough; in
+production the namespace key comes from operator config and platform-provisioned secrets —
+see [Configuration](#configuration).) Run Claude Code and Codex against the same CALM and they
+**share** the namespace key; the `client` identifier is what distinguishes them. In an
+*uncredentialed* namespace `client` is metadata only — any holder of the namespace key can
+claim any client name. Per-agent *secrets* (a server-minted bearer token per client, for real
+within-namespace isolation) are the *credentialed* namespace mode
+(`require_client_credentials: true`).
 
 The agent then has `calm_run_command` (run a shell command locally; its output is captured
 into CALM and returned compact) and `calm_search` (retrieve captured output on demand).
 `stdout` is the JSON-RPC channel, so adapter logs go to `CALM_ADAPTER_LOG_FILE` (or stderr)
-— never stdout. `CALM_ADAPTER_CALM_API_KEY` uses the secret-reference dialect, so
-`CALM_DEFAULT_KEY` must be in the adapter's environment (inherited from your shell or added
-to the `env` block).
+— never stdout. `CALM_ADAPTER_CALM_API_KEY` uses the secret-reference dialect
+(`[text:..]` / `[env:..]` / `[file:..]`; raw values are rejected).
 
 **Debugging the integration.** Each tool call stamps a `workload_request_id` and a
 `trace_id`, and every CALM request the adapter makes is logged with its latency, status,
 and the server-minted `correlation_id` — all of which also appear in CALM's own logs, so
 you can join a single tool call across adapter ↔ CALM. For an offline check that the
 binary speaks MCP correctly, run `task smoke:adapter`.
+
+### Verifying it works
+
+With CALM running (`task dev:up` + `task run:calm`, `CALM_DEFAULT_KEY` exported) and the
+adapter registered as above:
+
+1. **Connect** — start the host and confirm the `calm` server lists `calm_run_command` and
+   `calm_search` (`claude mcp list` shows `✓ Connected`; `/mcp` inside a session lists the
+   tools). On connect the adapter registers its client and creates a session — both visible
+   in `/tmp/calm-adapter.log`.
+2. **Capture** — have the agent run a command through `calm_run_command` (e.g. *"run `ls -la`
+   with calm_run_command"*); it returns a compact summary plus a `source=` label.
+3. **Retrieve** — have the agent `calm_search` a term from that output (e.g. a filename); it
+   returns the matching snippet.
+4. **Confirm the join** — `tail /tmp/calm-adapter.log` shows `calm call` lines carrying
+   `correlation_id`, `workload_request_id`, and `http.duration_ms`; the same `correlation_id`
+   appears in CALM's server log. The client is registered and a session created when the host
+   connects; the session is deleted on disconnect (all logged).
+
+If all four hold, the capture→retrieve loop is working end-to-end and is debuggable across the
+adapter ↔ CALM boundary.
 
 ## Configuration
 
@@ -294,7 +309,7 @@ Everything reproducible goes through `task`:
 task build              # build both binaries (calm + calm-adapter)
 task test               # unit + integration (needs `task dev:up`)
 task test:unit          # fast inner-loop tests, no Postgres needed
-task ci                 # full pre-merge gate: gen:check + lint + test + build
+task ci                 # full pre-merge gate: dco:check + gen:check + lint + test + test:cover + build
 task gen:api            # regenerate handlers/client from openapi.yaml
 task gen:mocks          # regenerate mockery mocks
 task fmt                # gofumpt + goimports
@@ -312,6 +327,9 @@ cmd/
     config/         operator config templates (example.yaml, dev.yaml)
   calm-adapter/     MCP adapter binary
 internal/
+  adapter/          MCP adapter packages — CALM client port, MCP stdio
+                    protocol, local exec, extraction (consumed only by
+                    cmd/calm-adapter)
   api/              generated handler interface + thin handlers + DTOs
   auth/             API-key registry, namespace resolver, shared
                     token mint/hash helpers, wire-header constants
@@ -320,17 +338,21 @@ internal/
   db/               Postgres DAL — per-entity files (pg_clients.go,
                     pg_sessions.go, ...), errors, models, tx primitive,
                     embedded migrations
+  events/           session-event capture + priority-range validation
   feedback/         outcome-feedback service: UUIDv7-timestamp TTL check,
                     delegates to CorrelationsRepo.UpdateOutcome
+  ingest/           chunking, format detection, intent filtering
   obs/              context-bound logging + field helpers; OTel
                     propagator install (config-gated at bootup)
+  search/           two-layer search (porter → trigram fallback),
+                    pluggable allocator
   secrets/          [scheme:payload] secret-reference resolver
   server/           HTTP lifecycle + middleware chain (recovery, context,
                     logging, workload-request-id, rate-limit, auth,
                     body-size, timeout, OpenAPI, session-resolve)
   session/          session-lifecycle orchestration service + LRU metadata
                     cache + Idempotency-Key dedup + TTL scanner
-adapter/            MCP-only packages (consumed by cmd/calm-adapter)
+  snapshot/         generic event-store snapshot builder
 docs/
   HLD.md            canonical design document
   api/openapi.yaml  formal API contract

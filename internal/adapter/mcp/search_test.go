@@ -41,6 +41,7 @@ func oneHit(query string) calm.SearchResults {
 
 func TestSearch_ReturnsRankedSnippets(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
@@ -65,6 +66,7 @@ func TestSearch_ReturnsRankedSnippets(t *testing.T) {
 func TestSearch_ScopesToSource(t *testing.T) {
 	const src = "calm:v1:file:read:note.txt"
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
@@ -81,6 +83,7 @@ func TestSearch_ScopesToSource(t *testing.T) {
 
 func TestSearch_PassesLimit(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
@@ -97,6 +100,7 @@ func TestSearch_PassesLimit(t *testing.T) {
 
 func TestSearch_GroupsMultipleQueries(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).Return(calm.SearchResults{Queries: []calm.QueryResult{
@@ -115,6 +119,7 @@ func TestSearch_GroupsMultipleQueries(t *testing.T) {
 
 func TestSearch_EmptyResultsIsNotError(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).Return(calm.SearchResults{}, nil).Once()
@@ -147,6 +152,7 @@ func TestSearch_CalmDownIsError(t *testing.T) {
 
 func TestSearch_SearchErrorIsError(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).
@@ -199,6 +205,7 @@ func TestSearch_InvalidArgumentsIsError(t *testing.T) {
 func TestSearch_NoMatchesNotesSourceScope(t *testing.T) {
 	const src = "calm:v1:file:read:note.txt"
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).Return(calm.SearchResults{}, nil).Once()

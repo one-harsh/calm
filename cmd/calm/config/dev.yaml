@@ -1,4 +1,4 @@
-# Dev config for `task run:local`.
+# Dev config for `task run:calm`.
 # Operator must export CALM_DEFAULT_KEY before starting the service:
 #   export CALM_DEFAULT_KEY=$(openssl rand -hex 32)
 # The bracketed reference below resolves that env var at startup. No secrets
