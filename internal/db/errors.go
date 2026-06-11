@@ -25,7 +25,6 @@ var (
 	ErrClientNameRequired       = errors.New("db: client name is required")
 	ErrSessionTokenHashRequired = errors.New("db: session token hash is required")
 	ErrSourceRequired           = errors.New("db: source label is required")
-	ErrChunksRequired           = errors.New("db: index input has no chunks")
 	ErrQueryRequired            = errors.New("db: search query is empty")
 	ErrInvalidLimit             = errors.New("db: search limit must be positive")
 	ErrInvalidPriority          = errors.New("db: event priority must be 1..4")

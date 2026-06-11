@@ -113,6 +113,60 @@ func TestChunks_InsertAndDeleteForSource(t *testing.T) {
 	}
 }
 
+// A mid-insert failure during re-index rolls back the whole upsert→delete→insert composition:
+// the prior chunks and the source's indexed_at survive untouched, and the error wraps
+// ErrStorageBackend (idempotent-indexing: replace is all-or-nothing).
+func TestIndexComposition_MidInsertFailureRollsBackAtomically(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	ctx := context.Background()
+
+	seedIndexedSource(t, store, "ns-a", sess.ID, "s", []db.Chunk{
+		{Title: "a", Content: "alpha", ContentType: "prose"},
+		{Title: "b", Content: "beta", ContentType: "prose"},
+	})
+	t0 := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	if _, err := sqlDB.ExecContext(ctx, `UPDATE sources SET indexed_at = $2 WHERE session_id = $1 AND label = 's'`, sess.ID, t0); err != nil {
+		t.Fatalf("pin indexed_at: %v", err)
+	}
+
+	// Postgres TEXT rejects NUL — a deterministic in-statement failure for the multi-row INSERT.
+	err := store.WithTx(ctx, func(r db.Repos) error {
+		srcID, _, err := r.Sources.Upsert(ctx, "ns-a", sess.ID, "s")
+		if err != nil {
+			return err
+		}
+		if err := r.Chunks.DeleteForSource(ctx, srcID); err != nil {
+			return err
+		}
+		return r.Chunks.Insert(ctx, srcID, []db.Chunk{
+			{Title: "g", Content: "gamma", ContentType: "prose"},
+			{Title: "bad", Content: "bad\x00chunk", ContentType: "prose"},
+		})
+	})
+	if !errors.Is(err, db.ErrStorageBackend) {
+		t.Fatalf("err = %v; want ErrStorageBackend", err)
+	}
+
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM chunks c JOIN sources s ON c.source_id = s.id WHERE s.session_id = $1 AND s.label = 's' AND c.content IN ('alpha', 'beta')`, sess.ID); n != 2 {
+		t.Errorf("original chunks = %d; want 2 (delete rolled back)", n)
+	}
+	if n := countRows(t, sqlDB, `SELECT COUNT(*) FROM chunks c JOIN sources s ON c.source_id = s.id WHERE s.session_id = $1 AND s.label = 's'`, sess.ID); n != 2 {
+		t.Errorf("total chunks = %d; want 2 (no partial insert survived)", n)
+	}
+	var indexedAt time.Time
+	if err := sqlDB.QueryRowContext(ctx, `SELECT indexed_at FROM sources WHERE session_id = $1 AND label = 's'`, sess.ID).Scan(&indexedAt); err != nil {
+		t.Fatalf("read indexed_at: %v", err)
+	}
+	if !indexedAt.Equal(t0) {
+		t.Errorf("indexed_at = %v; want pinned %v (upsert's touch rolled back)", indexedAt, t0)
+	}
+}
+
 // List returns sources ordered by indexed_at descending and includes the correct chunk count
 // per source; an empty session returns a non-nil empty slice.
 func TestSourcesList_OrdersByIndexedAtDescWithChunkCounts(t *testing.T) {

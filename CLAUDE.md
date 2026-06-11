@@ -6,77 +6,63 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CALM (Context Abstraction Layer for Models) is an HTTP service that reduces LLM token waste by filtering and compressing tool output before it enters the context window. It sits beside (never between) the workload and the LLM — a sidecar, not a proxy.
 
-The full design is in `docs/HLD.md`. **The HLD is canonical.** Code follows the HLD; this file (CLAUDE.md) is the development directive that translates the HLD's intent into day-to-day rules.
+The full design is in `docs/HLD.md`. **The HLD is canonical.** Code follows the HLD; this file is the development directive that translates the HLD's intent into day-to-day rules.
 
 ## HLD is the design directive
 
-- The HLD in `docs/HLD.md` drives the design. Code follows the HLD.
-- Deviations in code are **temporary**, not canonical. Mark them with `// HLD-DEVIATION:` and a one-line reason; expect them to be reconciled.
-- If the HLD is **silent or ambiguous** on something the code needs, **do NOT improvise**. Stop, surface the gap, propose a resolution, evolve the HLD, then implement. Order: design agreement → HLD → code.
-- The HLD is a long-lived spec, not a historical artifact. Edits to it are normal and expected.
-- The HLD stays language-agnostic. Implementation choices (Go, drivers, libraries, Postgres extension wiring) live here in `CLAUDE.md` and in the code, not in the HLD.
+- Code follows the HLD. Deviations in code are **temporary**, not canonical — mark with `// HLD-DEVIATION:` and a one-line reason; expect reconciliation.
+- If the HLD is **silent or ambiguous** on something the code needs, **do NOT improvise**. Surface the gap, propose a resolution, evolve the HLD, then implement. Order: design agreement → HLD → code.
+- The HLD is a long-lived spec, not a historical artifact — edits are normal. It stays language-agnostic; implementation choices (Go, drivers, libraries, Postgres wiring) live in CLAUDE.md and code.
 
 ### Don't duplicate HLD content in this file
 
-CLAUDE.md is the **development directive** — what disciplines apply when writing code, where things live, what patterns to follow. The HLD is the **spec** — what the system is. When CLAUDE.md restates HLD content as its own bullets (enumerating primitives, listing invariants, copying tables), that content goes stale the moment the HLD evolves and there's no automated check to catch the drift.
-
-Rule: when you'd otherwise paraphrase or enumerate something from the HLD, write a one-line pointer instead. "See HLD's design-invariants section" beats a six-bullet recap that has to be hand-synced. Reserve CLAUDE.md bullets for code-level guidance the HLD doesn't carry: file layout, mockery rules, comment policy, middleware-chain order, log levels, etc.
+CLAUDE.md is the development directive (disciplines, layout, patterns); the HLD is the spec (what the system is). Restated HLD content goes stale silently when the HLD evolves. When you'd paraphrase or enumerate the HLD, write a one-line pointer instead ("see HLD's design-invariants section"). Reserve CLAUDE.md bullets for code-level guidance the HLD doesn't carry: file layout, mockery rules, comment policy, middleware order, log levels.
 
 ### Cite by stable name, not section number
 
-HLD section numbers (`§3`, `§6`, `§11`) are positional — the moment the HLD is reorganized, every `HLD §11` reference in code or docs rots silently and nothing catches the drift. The fix is to cite by stable name:
+HLD section numbers (`§3`, `§11`) rot silently when the HLD is reorganized. Cite by stable name instead:
 
-- **Invariants** — use the name (`never-worse`, `workload-agnostic`, `namespace-isolation`, `session-isolation`, `sidecar-not-proxy`, `content-fidelity`, `idempotent-indexing`), not "HLD §4 invariant N". `namespace-isolation` and `session-isolation` are the two halves of the one isolation invariant; cite whichever half applies to the discussion.
-- **Topical sections** — name the topic ("HLD's storage section", "HLD's API contract section"), not "HLD §7".
-- **Decision Log entries** (`DL01`, `DL08`, …) — cite directly. DL IDs are append-only and stable.
+- **Invariants** by name — `never-worse`, `workload-agnostic`, `namespace-isolation`, `session-isolation` (the two halves of the one isolation invariant — cite whichever applies), `sidecar-not-proxy`, `content-fidelity`, `idempotent-indexing`.
+- **Topical sections** by topic — "HLD's storage section", not "HLD §7".
+- **Decision Log entries** (`DL01`, `DL08`, …) directly — DL IDs are append-only and stable.
 
-Applies to CLAUDE.md, AGENTS.md, code comments, doc comments, Taskfile descs, anywhere. The OpenAPI spec is exempt — its descriptions ship as the public API contract and follow their own rev policy.
+Applies everywhere (CLAUDE.md, AGENTS.md, comments, Taskfile descs). The OpenAPI spec is exempt — its descriptions ship as the public contract under their own rev policy.
 
 ### Canonical surfaces describe the design, not the history
 
-The HLD, OpenAPI spec, code, and CLAUDE.md discipline bullets describe **what CALM is** — in present tense, self-contained, reimplementable from scratch by a reader who knows none of the project history. They do not describe the sequence of changes that produced the current shape.
+The HLD, OpenAPI spec, code, and CLAUDE.md discipline bullets describe **what CALM is** — present tense, self-contained, reimplementable by a reader with no project history. Never write into them:
 
-Concretely, never write into these surfaces:
+- **Project-internal planning labels** — phase numbers, work-item IDs, milestone/sprint names.
+- **Transition narratives** — "previously X, now Y", "since the auth rewrite".
+- **Cause-and-effect tied to historical events** — "because the audit found…", "changed after incident-X".
 
-- **Project-internal planning labels** — phase numbers, work-item IDs, milestone names, sprint labels. These are scaffolding for the work in flight; a reader picking up the HLD a year later has no map for them.
-- **Transition narratives** — "previously X, now Y", "since the auth rewrite", "after the schema flattening". The contract that survives is "Y"; the "previously X" rots into nostalgia.
-- **Cause-and-effect framings tied to historical events** — "because the WI-09 audit found...", "this was changed because of incident-2026-04". The discipline survives, the framing doesn't.
-
-Equivalent reasoning belongs in: commit messages (history of the diff), planning bookkeeping docs, PR descriptions (review context), plan files (in-flight design work). Those surfaces are explicitly historical — they're allowed to age out.
-
-When you'd otherwise write "Phase 2 reshaped X to Y", write "X is Y" (present-tense, no transition). If the *reason* X-is-Y matters to a reimplementer, write the reason ("X is Y because Z"). If the reason is just "we used to do it differently and changed our minds," it doesn't belong in canonical surfaces at all.
+That reasoning belongs in commits, PR descriptions, plan files, and planning docs — surfaces that are allowed to age out. Write "X is Y" (present tense); if the *reason* matters to a reimplementer, write the reason; if the reason is "we changed our minds," it doesn't belong at all.
 
 ### HLD describes the design, not the implementation
 
-The HLD is the **driver**; the code is the **passenger**. The HLD specifies what CALM is — its entities, contracts, primitives, invariants, storage shape — in language that a reimplementer in any stack could read and rebuild from. The code is one implementation that follows the HLD. The HLD doesn't know or care that the implementation happens to be Go.
+The HLD is the **driver**; the code is the **passenger** — one implementation, which happens to be Go. The HLD must not reference:
 
-This means the HLD must not reference implementation artifacts:
-
-- **Code symbols** — package names (`internal/secrets`, `internal/db`), file paths, type names, method names (`Service.Create`, `Search()`), struct field identifiers as code.
-- **Language/stack-specific concepts** — Go interfaces, struct tags, build tags, generics, the word "interface" when meaning a Go interface rather than the design-level extensibility concept.
-- **Tooling and libraries** — `mockery`, `oapi-codegen`, `pgx`, `viper`, `chi`, `singleflight`, lint/format tool names.
-- **Implementation patterns named in code** — middleware function names, error sentinel names, mock generator outputs.
+- **Code symbols** — package names, file paths, type/method names, struct field identifiers as code.
+- **Language/stack-specific concepts** — Go interfaces, struct tags, build tags, generics.
+- **Tooling and libraries** — `mockery`, `oapi-codegen`, `pgx`, `viper`, `chi`, lint/format tools.
+- **Implementation patterns named in code** — middleware function names, error sentinels, mock outputs.
 
 The HLD **may** reference:
 
-- **External wire contract** — HTTP paths, headers, JSON field names, status codes. This is the customer contract; both HLD and code follow it by definition.
-- **Storage schema** — table/column names, SQL types, indexes, constraints. The data model is part of the design; the SQL is one precise notation for it (an ERD would do equally well).
-- **External standards and dependencies** — Postgres, BM25, RRF, sha256, TLS, OpenTelemetry, Kubernetes, MCP, JSON. These exist independently of CALM's implementation.
-- **External-extension surface** — `pg_search`, `pg_textsearch`, `pg_trgm`. These are operator-visible deployment dependencies, not internal code.
+- **External wire contract** — HTTP paths, headers, JSON fields, status codes (the customer contract).
+- **Storage schema** — tables, columns, SQL types, indexes (the data model is part of the design).
+- **External standards** — Postgres, BM25, RRF, sha256, TLS, OpenTelemetry, Kubernetes, MCP, JSON.
+- **External-extension surface** — `pg_search`, `pg_textsearch`, `pg_trgm` (operator-visible deployment dependencies).
 
-The rule of thumb: if a fact about CALM survives a rewrite in a different language by a different team, it belongs in the HLD. If it depends on this codebase's specific shape — package layout, type names, library choices, lint rules — it belongs in CLAUDE.md or in the code itself, not in the HLD.
-
-When in doubt, re-read the HLD passage and ask: "Could a team writing CALM in Rust / Python / TypeScript from scratch read this and produce a system compatible with this one's wire contract and data model?" If yes, the passage is at the right level. If a Rust team would have to reverse-engineer your Go-specific reference, the passage is leaking implementation into the spec.
+Test: if a fact survives a rewrite in another language by another team, it belongs in the HLD; if it depends on this codebase's shape, it belongs in CLAUDE.md or the code. ("Could a Rust/Python team rebuild a wire- and schema-compatible CALM from this passage?")
 
 ## API contract: OpenAPI is the formal source
 
-- `docs/api/openapi.yaml` is the **canonical formal contract** for the HTTP API. The HLD's API contract section describes intent in prose; this YAML pins the precise wire shape that code is generated from.
-- Workflow: **design agreement → HLD prose → openapi.yaml → codegen → handlers**. Don't hand-write request/response types or routes — they come from the spec.
-- Never edit files matching `*.gen.go` (currently `internal/api/genapi/genapi.gen.go`). Edit the YAML and run `task gen:api`.
-- `task gen:check` (in `task ci`) re-runs codegen and fails if generated files drift from the committed tree. This catches "I changed the spec but forgot to commit the regenerated code."
-- A naming convention exists to avoid colliding with oapi-codegen's client wrapper types (named `<OperationID>Response`): response-body schemas use the `Result` suffix (e.g., `IngestResult`, `SearchResult`). Don't name a schema `<X>Response` if there's an operation with `operationId: x`.
-- Request validation is enforced by `internal/server/middleware/validation.go` against the embedded spec — required fields, enum values, formats, path/query types. It's the innermost middleware before handlers, so handlers can trust the parsed types.
-- The OpenAPI spec also drives the `calm-adapter`'s HTTP client (generated `ClientWithResponses` in `internal/api/genapi`). Don't write hand-rolled HTTP requests against CALM from the adapter.
+- `docs/api/openapi.yaml` is the **canonical formal contract**; the HLD's API contract section is intent in prose. Workflow: **design agreement → HLD prose → openapi.yaml → codegen → handlers**. Don't hand-write request/response types or routes.
+- Never edit `*.gen.go` (currently `internal/api/genapi/genapi.gen.go`) — edit the YAML and run `task gen:api`. `task gen:check` (in `task ci`) fails if generated files drift from the committed tree.
+- Response-body schemas use the `Result` suffix (`IngestResult`, `SearchResult`) to avoid colliding with oapi-codegen's `<OperationID>Response` client wrappers.
+- Request validation is enforced by `internal/server/middleware/validation.go` against the embedded spec — required fields, enums, formats, path/query types — so handlers can trust the parsed types.
+- The spec also drives the `calm-adapter`'s HTTP client (generated `ClientWithResponses`). No hand-rolled HTTP requests against CALM from the adapter.
 
 ## Architecture (orientation only; HLD is authoritative)
 
@@ -84,41 +70,41 @@ Single statically-linked binary, REST API with JSON payloads, all state behind a
 
 - **Three core primitives** (ingest, search, session state) — see HLD's primitives section.
 - **Workload patterns** identified by namespace + optional client — see DL01.
-- **Six design invariants** — `never-worse`, `workload-agnostic`, the two-layer isolation invariant (`namespace-isolation` for the security/trust boundary + `session-isolation` for the content/scope boundary), `sidecar-not-proxy`, `content-fidelity`, `idempotent-indexing`. See HLD's design-invariants section.
+- **Six design invariants** — named above; see HLD's design-invariants section.
 - **Storage**: Postgres in production, BM25 via `pg_search` or `pg_textsearch`, trigram via `pg_trgm` — see DL11. The DAL (`internal/db`) is a mockery port for testability, **not** a portability layer; there is only one backend.
 
 ## Isolation is two boundaries, not one — namespace is security, session is content
 
-CALM has two distinct isolation primitives, both load-bearing, that enforce different boundaries at different layers. Code reviews and PR design should treat them as two separate disciplines that fail in different ways.
+Two distinct isolation primitives, both load-bearing, enforcing different boundaries; review them as separate disciplines that fail differently.
 
-**Namespace-isolation enforces the security/trust boundary.** Cross-namespace queries are forbidden; mismatch returns 404 (invisibility-not-denial); every per-request log line carries `namespace`. The wall between cooperating-but-distinct workload patterns (the eval harness, the slackbot, the coding agents). **Bugs here are confidentiality breaches** — data crosses trust units.
+**Namespace-isolation is the security/trust boundary.** Cross-namespace queries are forbidden; mismatch returns 404 (invisibility-not-denial); every per-request log line carries `namespace`. **Bugs here are confidentiality breaches** — data crosses trust units.
 
-**Session-isolation enforces the content/scope boundary.** Per-session data (chunks, sources, events, labels, vocabulary) is bound to a session and invisible to other sessions in the same namespace; caches are session-keyed; search returns only this session's content; snapshots return only this session's events. The wall between workload-units inside a namespace. **Bugs here are workload-contract violations** — the LLM context window gets contaminated; CALM's value proposition fails. Session is *not* a cleanup primitive or observability artifact; it's the content boundary that defines what each workload-unit sees of its own data.
+**Session-isolation is the content/scope boundary.** Per-session data (chunks, sources, events, labels, vocabulary) is bound to a session and invisible to other sessions in the same namespace; caches are session-keyed; search and snapshots return only this session's content. **Bugs here are workload-contract violations** — the LLM context window gets contaminated. Session is *not* a cleanup primitive or observability artifact; it's the content boundary defining what each workload-unit sees.
 
-**Client-isolation is the optional third layer.** When `require_client_credentials: false` (the default), `client` is workload-supplied metadata — any holder of the namespace API key can claim any client. When `require_client_credentials: true`, each client is registered with a server-minted bearer token and the auth middleware verifies it; within-namespace workload isolation becomes a real boundary. This is the layer that lets shared-namespace tenants (e.g., `eval-shared` for a dev team) actually isolate from each other without requiring an operator to mint a new namespace per workload. The discipline applies only when the namespace opts in; the default code path treats `client` as a tag.
+**Client-isolation is the optional third layer.** With `require_client_credentials: false` (the default), `client` is workload-supplied metadata — any holder of the namespace API key can claim any client. With `true`, each client is registered with a server-minted bearer token verified by auth middleware, making within-namespace workload isolation a real boundary (shared-namespace tenants isolate without an operator minting a namespace per workload). The default code path treats `client` as a tag.
 
-Most bugs that quietly degrade CALM start as a missed `namespace` or session-lookup-key filter, a cache that wasn't session-keyed, or a "convenience" cross-{namespace,session} query.
+Most bugs that quietly degrade CALM start as a missed `namespace`/session filter, a cache that wasn't session-keyed, or a "convenience" cross-{namespace,session} query.
 
-**Three-term terminology** (introduced when the session credential moved server-side). Never blur these — names map to types, and the type system catches confusion:
+**Three-term terminology** — never blur these; names map to types so the type system catches confusion:
 
-- `session_token` (`string`, ~43 chars base64url) — raw secret. Server mints; workload presents on every call via `X-CALM-Session-Token`. Never in logs, URLs, mgmt responses, or DB columns.
-- `session_id` / `Session.ID` (`int64`) — surrogate BIGSERIAL PK. The only "id" of a session. Non-secret. Safe to log.
+- `session_token` (`string`, ~43 chars base64url) — raw secret. Server mints; workload presents via `X-CALM-Session-Token`. Never in logs, URLs, mgmt responses, or DB columns.
+- `session_id` / `Session.ID` (`int64`) — surrogate BIGSERIAL PK; the only "id" of a session. Non-secret, safe to log.
 - `session_token_hash` (`[]byte`, 32) — `sha256(namespace || 0x00 || session_token)`. Storage form and auth-side lookup key. Never logged.
 
-Concrete disciplines that fall out:
+Concrete disciplines:
 
-- **Every DAL method that touches per-session data takes `namespace` + the session lookup key explicitly** (or an input struct that carries them). The lookup key is `sessionTokenHash []byte` on the handler path; `sessionID int64` on the TTL scanner path. See `internal/db/dal.go` — no exceptions. Even the management API (`/v1/manage/*`) is namespace-scoped, never returning another namespace's sessions. The TTL scanner returns `(id, namespace)` pairs and feeds them back into the namespace-scoped delete path — one cascade semantics, two entry points distinguished only by lookup-key type.
-- **Every domain function that touches per-session data takes `namespace` and the session credential explicitly** — never pulled from ambient context. Service layer takes `sessionToken string` (raw); it hashes at its boundary so the DAL only ever sees the hash. Makes both dependencies visible at the call site.
-- **Caches are keyed by `(namespace, session_token)` jointly.** The search-result cache keys by `namespace + session_token + query + source` and is invalidated on ingest into that session. Adding a cache without joint scoping is a bug, not a feature.
-- **Tables that hold per-session data FK on `sessions(id) ON DELETE CASCADE`** — the BIGSERIAL surrogate, namespace-stamped at session creation. Children don't carry their own namespace column; the FK chain preserves namespace scope because each surrogate id refers to exactly one session in exactly one namespace. Cleanup-by-session is the only cleanup path; orphans are forbidden. The DAL surface still enforces namespace at the API boundary (Get/Touch/Delete take `(namespace, lookup-key)` explicitly) — child tables don't need a redundant column to repeat that guard.
-- **`sessions`-table composite indexes lead with `namespace`** for cache locality. Filter-by-label queries on child tables join through `sessions` for namespace scope rather than carrying a redundant predicate.
-- **Cross-namespace mismatch returns 404.** Invisibility, not "you don't have access." The OpenAPI spec encodes this.
-- **Integration tests assert both isolations explicitly.** Standard patterns: write to namespace A, read from namespace B → 404 (security); write to session-A in namespace X, read from session-B in namespace X → empty (content). Both are durable proofs in CI.
-- **Logging carries `namespace` and `session_id` (the int64 surrogate)** in every per-request log line. Use `obs.Namespace(...)` and `obs.SessionID(...)` (the latter takes `int64`). The raw `session_token` has no logging helper by design — it's a credential. Cross-session log entries (e.g., the TTL scanner before it has a specific ref in hand) are explicitly logged without `session_id` so the absence is intentional, not a leak.
+- **Every DAL method touching per-session data takes `namespace` + the session lookup key explicitly** (or an input struct carrying them): `sessionTokenHash []byte` on the handler path, `sessionID int64` on the TTL-scanner path. See `internal/db/dal.go` — no exceptions. The management API (`/v1/manage/*`) is namespace-scoped too. The TTL scanner returns `(id, namespace)` pairs and feeds them back into the namespace-scoped delete path — one cascade semantics, two entry points distinguished only by lookup-key type.
+- **Every domain function touching per-session data takes `namespace` and the session credential explicitly** — never from ambient context. The service layer takes raw `sessionToken` and hashes at its boundary; the DAL only ever sees the hash.
+- **Caches are keyed by `(namespace, session_token)` jointly.** The search-result cache keys by `namespace + session_token + query + source` and is invalidated on ingest into that session. A cache without joint scoping is a bug.
+- **Per-session tables FK on `sessions(id) ON DELETE CASCADE`** — the surrogate, namespace-stamped at session creation. Children carry no namespace column; the FK chain preserves scope (each surrogate id belongs to exactly one session in one namespace). Cleanup-by-session is the only cleanup path; orphans are forbidden. The DAL surface still enforces namespace at the API boundary (Get/Touch/Delete take `(namespace, lookup-key)`).
+- **`sessions` composite indexes lead with `namespace`**; filter-by-label queries on child tables join through `sessions` for namespace scope rather than carrying a redundant predicate.
+- **Cross-namespace mismatch returns 404** — invisibility, not "you don't have access". The OpenAPI spec encodes this.
+- **Integration tests assert both isolations explicitly**: write ns-A / read ns-B → 404 (security); write session-A / read session-B in the same ns → empty (content).
+- **Logging carries `namespace` and `session_id` (int64)** on every per-request line via `obs.Namespace(...)` / `obs.SessionID(...)`. The raw `session_token` has no logging helper by design. Cross-session log entries (e.g., the TTL scanner before it holds a specific ref) intentionally omit `session_id` — absence is deliberate, not a leak.
 
-If you find yourself wanting a query that intentionally crosses session boundaries within a namespace, stop. Either it belongs in `/v1/manage/*` (the only legitimate cross-session surface, still namespace-scoped), or it's a design gap that requires HLD discussion before code lands. Cross-namespace queries should never appear in code at all outside the TTL scanner.
+Wanting a query that crosses session boundaries within a namespace means: it belongs in `/v1/manage/*` (the only legitimate cross-session surface, still namespace-scoped), or it's a design gap needing HLD discussion first. Cross-namespace queries never appear in code outside the TTL scanner.
 
-The other two invariants that generate code-level discipline (worth knowing, less code-pervasive than isolation): **never makes things worse** (#1 — adapter and workload middleware must catch CALM failures and fall through to raw content; the LLM call always works) and **content fidelity** (#5 — search snippets and ingest chunks return *exact* indexed text, never paraphrased or truncated). The remaining invariants are architectural and rarely surface as PR-review questions.
+The other two invariants that generate code-level discipline: **`never-worse`** (adapter and workload middleware must catch CALM failures and fall through to raw content — the LLM call always works) and **`content-fidelity`** (search snippets and ingest chunks return *exact* indexed text, never paraphrased or truncated). The rest are architectural and rarely surface in PR review.
 
 ## Repo layout (where things live)
 
@@ -151,37 +137,28 @@ internal/
 test/integration/        user-facing scenarios — see HLD's workload-scenarios section
 ```
 
-The adapter lives under `internal/` for the plain reason that only `cmd/calm-adapter`
-consumes it — it is never exported as a Go package (it's a binary you run, and CALM's
-public surface is the OpenAPI spec, not a client SDK; DL09). A boundary test keeps the
-adapter independent of the server's *non-portable* internals: it may import only
-**extraction-portable** server packages — `internal/api/genapi` (codegen from the spec;
-confined to `genapi_client.go` so the codegen swap is one file) and `internal/secrets`
-(slim, dependency-free, copied alongside at extraction) — and nothing else. That makes
-an optional future carve-out into its own distribution repo a lift: codegen the client
-from the spec, copy `secrets`, keep the adapter `internal/` in the new module.
+The adapter lives under `internal/` because only `cmd/calm-adapter` consumes it — CALM's public surface is the OpenAPI spec, not a client SDK (DL09). A boundary test keeps the adapter importing only **extraction-portable** server packages — `internal/api/genapi` (codegen from the spec, confined to `genapi_client.go`) and `internal/secrets` (slim, dependency-free) — and nothing else, so a future carve-out into its own repo is a lift: codegen the client, copy `secrets`, move the tree.
 
 **Layered responsibility:**
 
 - `cmd/<bin>/main.go`: thin (~30–60 lines). Config load, logger init, dependency wiring, hand off to `server.Run(ctx)`.
 - `internal/server`: HTTP lifecycle. Knows nothing about specific routes or domain logic.
-- `internal/api/handlers`: handlers stay **thin** — parse request → call into domain package → marshal response. **Never put business logic in handlers** — it goes in the domain packages.
+- `internal/api/handlers`: thin — parse request → call domain package → marshal response. **Never put business logic in handlers.**
 - `internal/{ingest,search,events,snapshot,session}`: domain logic. Most integration tests target these.
 - `internal/db`: DAL is a port. Mockery generates against it.
 
 ## Build / test / run discipline
 
 - All reproducible operations go through `task`: `task build`, `task test`, `task test:unit`, `task test:integration`, `task lint`, `task fmt`, `task tidy`, `task ci`, `task run:calm`, `task docker:build`, `task gen:api`, `task gen:mocks`, `task gen:check`.
-- `task test` runs unit then integration. Inner-loop dev: `task test:unit` for fast feedback. CI runs the umbrella via `task ci`.
-- Inner-loop dev: `go test ./<pkg>` and `go vet ./...` are fine. Anything whose result must match across machines (CI, full builds, deploys, lint, format) goes through `task`.
+- `task test` runs unit then integration. Inner-loop dev: `task test:unit` for fast feedback; `go test ./<pkg>` and `go vet ./...` are fine. Anything whose result must match across machines (CI, builds, lint, format) goes through `task`.
 - Never edit `go.mod` by hand for routine adds — `task tidy` is the entry.
 - `task ci` is the gate: lint + test + build, all green.
-- **Dogfood the adapter when it's registered.** If the `calm` MCP server is connected in your session, route shell commands through `calm_run_command` (not the native shell) and retrieve prior output via `calm_search` instead of re-running. You still run the same `task …`/shell commands — they're just captured into CALM; pull full output with `calm_search source=<label>` when the compact summary isn't enough. Native shell is the fallback when CALM is unreachable (`never-worse`).
+- **Dogfood the adapter when it's registered.** If the `calm` MCP server is connected, route shell commands through `calm_run_command` (not the native shell) and retrieve prior output via `calm_search source=<label>` instead of re-running. Native shell is the fallback when CALM is unreachable (`never-worse`).
 
 ## HTTP server boundaries (canonical — do not drift)
 
 - `internal/server` owns the HTTP server lifecycle (listener, middleware chain, graceful shutdown). No route or domain code here.
-- **TLS is opt-in, edge-terminated by default.** Plain HTTP unless `server.tls.enabled` with `cert_file`/`key_file` (`secrets.Secret` → PEM, resolved in `cmd/calm/main.go` and passed as a loaded keypair into `server.Config`); then `ListenAndServeTLS` (server-auth only, TLS 1.2 floor). Not mTLS — client/org-membership gating stays an edge concern.
+- **TLS is opt-in, edge-terminated by default.** Plain HTTP unless `server.tls.enabled` with `cert_file`/`key_file` (`secrets.Secret` → PEM, resolved in `cmd/calm/main.go`, passed as a loaded keypair into `server.Config`); then `ListenAndServeTLS` (server-auth only, TLS 1.2 floor). Not mTLS — client/org-membership gating stays an edge concern.
 - `internal/api` owns handlers and DTOs. Handlers parse → domain call → marshal. No business logic.
 - **Middleware chain order is canonical**: do not reorder without an HLD discussion.
 
@@ -200,114 +177,106 @@ from the spec, copy `secrets`, keep the adapter `internal/` in the new module.
                         → Handler
   ```
 
-- **Recovery** is outermost and holds a reference to the base logger so it can record panics even if `ctx` was never hydrated by Context middleware.
-- **Context** must run before Logging so every log line carries `correlation_id` and trace IDs.
-- **Logging** runs before Auth so failed-auth attempts are still recorded with full context.
-- **WorkloadRequestID** runs *after* Logging — that way the 400 path on oversized `X-Workload-Request-Id` still emits a normal completion log line. It runs before RateLimit:IP so a malformed workload-id is rejected without burning rate-limit tokens.
-- **RateLimit:IP** sits before Auth so unauthenticated DDoS can't burn registry-lookup CPU on every bad-key attempt.
-- **Auth** must run before RateLimit:NS+Global (the namespace tier reads the auth-stamped namespace from context).
-- **RateLimit:NS+Global** checks namespace tier first, then global aggregate. Namespace-first is load-bearing for namespace-isolation: with global-first, a misbehaving namespace would burn shared global tokens on requests it was always going to 429 at its own tier, leaking overload pressure across the isolation boundary.
+- **Recovery** is outermost and holds the base logger so it can record panics even if `ctx` was never hydrated.
+- **Context** before Logging so every log line carries `correlation_id` and trace IDs.
+- **Logging** before Auth so failed-auth attempts are still recorded with full context.
+- **WorkloadRequestID** after Logging (the 400 path still emits a completion log line), before RateLimit:IP (a malformed workload-id is rejected without burning rate-limit tokens).
+- **RateLimit:IP** before Auth so unauthenticated DDoS can't burn registry-lookup CPU.
+- **Auth** before RateLimit:NS+Global (the namespace tier reads the auth-stamped namespace from context).
+- **RateLimit:NS+Global** checks namespace tier first, then global. Namespace-first is load-bearing for namespace-isolation: global-first would let a misbehaving namespace burn shared global tokens on requests it would 429 anyway, leaking overload pressure across the boundary.
 - **BodySizeLimit** before Timeout — rejecting an oversized body shouldn't consume the timeout budget.
-- **SessionResolve** is presence-based on `X-CALM-Session-Token`: when set, it calls `session.Service.Lookup` (404 on miss or cross-namespace), stuffs `SessionMetadata` into context via `session.WithMetadata`, and best-effort `Touch`es after 2xx. Sits after OpenAPIValidator so the validator catches missing-required-header before a DB lookup. Handlers read via `session.MetadataFromContext(ctx)` — they never touch the raw token.
+- **SessionResolve** is presence-based on `X-CALM-Session-Token`: when set, calls `session.Service.Lookup` (404 on miss or cross-namespace), stuffs `SessionMetadata` into context via `session.WithMetadata`, best-effort `Touch`es after 2xx. Sits after OpenAPIValidator so missing-required-header is caught before a DB lookup. Handlers read via `session.MetadataFromContext(ctx)` — they never touch the raw token.
 
 ## Correlation IDs and the response-header surface
 
-Three IDs live on the request/response path; they answer different questions and must not be conflated.
+Three IDs live on the request/response path; they answer different questions and must not be conflated. Adding a fourth without HLD discussion is a fork. See HLD's response-headers section.
 
-- **`X-CALM-Correlation-Id`** is server-minted UUIDv7 in `internal/server/middleware/context.go`. Handlers read it via the context-bound value (`logging.Bind` already exposes it as `correlation_id` on every log line and audit event) and never mint their own. The middleware sets it on every response — including 4xx/5xx error paths — and emits it whether or not the workload sent an inbound correlation header. UUIDv7 (not v4) is load-bearing: the embedded ms timestamp drives the feedback-TTL window check without a stored `expires_at` or background scanner.
-- **`X-Workload-Request-Id`** is workload-supplied, optional, echoed on the response when present. Length cap (≤256 chars) is enforced by the dedicated `WorkloadRequestID` middleware (which sits after Logging so the 400 path still emits a completion log line); the OpenAPI spec parameter declaration on `/v1/feedback` is documentation, not the enforcement mechanism. Workload uses this header to join CALM-side records to its own request log; CALM treats it as opaque.
-- **`traceparent` / `traceresponse`** — inbound `traceparent` is extracted by the OTel propagator (already wired). Outbound `traceresponse` is **not** emitted by Go OTel HTTP middleware by default — `context.go` sets it explicitly. Don't remove that line during refactors thinking the OTel SDK handles it.
-- Logging-context bind happens once at middleware time (`logging.Bind(ctx, ...)`); downstream code inherits `correlation_id` / `trace_id` / `span_id` automatically. No per-call-site re-binding.
-- Audit events inherit the three fields via the logging-context chain — don't manually add them to audit payloads.
-- See HLD's response-headers section for the design intent; the three IDs are not interchangeable and adding a fourth without HLD discussion is a fork.
+- **`X-CALM-Correlation-Id`** — server-minted UUIDv7 in `internal/server/middleware/context.go`; set on every response including 4xx/5xx, regardless of inbound headers. Handlers read the context-bound value (`logging.Bind` exposes it as `correlation_id` on every log line and audit event) and never mint their own. UUIDv7 (not v4) is load-bearing: the embedded ms timestamp drives the feedback-TTL window check without a stored `expires_at` or scanner.
+- **`X-Workload-Request-Id`** — workload-supplied, optional, echoed when present; opaque to CALM (the workload's join key to its own request log). The ≤256-char cap is enforced by the `WorkloadRequestID` middleware; the OpenAPI parameter declaration is documentation, not enforcement.
+- **`traceparent` / `traceresponse`** — inbound `traceparent` is extracted by the OTel propagator. Outbound `traceresponse` is **not** emitted by Go OTel HTTP middleware — `context.go` sets it explicitly; don't remove that line assuming the SDK handles it.
+- Logging-context bind happens once at middleware time (`logging.Bind(ctx, ...)`); downstream inherits `correlation_id` / `trace_id` / `span_id` — no per-call-site re-binding. Audit events inherit the three fields via the chain — don't add them manually.
 
 ## Transactions live in services, not the DAL
 
-- DAL repo methods are **transaction-agnostic** and never open their own transaction (no `BeginTx`/`inTx`); they run on the injected `queryer` (`*sql.DB` or `*sql.Tx`). **Write** methods are single SQL statements (INSERT / UPDATE / DELETE / UPSERT — a bulk multi-row INSERT or an UPSERT-RETURNING is still one statement); a multi-step write — even a same-aggregate "replace" (delete-then-insert) or a lock → count → delete cascade — is NOT a DAL method, it's composed in the service's `WithTx`. **Read/query** methods return data (a SELECT, or the same SELECT fanned over inputs as in multi-query search) and likewise open no transaction.
-- **Services own transaction boundaries and the orchestration.** To make multiple primitives atomic, a service wraps them in `store.WithTx(ctx, func(db.Repos) error { … })`, so the choreography and rollback surface are legible at the service layer — you don't read SQL to learn what's atomic, or that a re-ingest clears prior chunks. This is also the seam where distributed coordination (outbox/saga) will land. `db.Repos` is a struct: access fields directly inside the closure (`r.Sources.Upsert`, not `r.Sources()`).
-- `WithTx` is the only sanctioned transaction entry point; `inTx` is its private engine. Error handling stays clean: `WithTx`/`inTx` return the closure's error verbatim, so sentinels propagate to the handler's `mapXError` unchanged; error-wrapping stays in the granular repo methods.
+- DAL repo methods are **transaction-agnostic** — no `BeginTx`/`inTx`; they run on the injected `queryer` (`*sql.DB` or `*sql.Tx`). **Write** methods are single SQL statements (a bulk multi-row INSERT or UPSERT-RETURNING is still one statement); any multi-step write — even a same-aggregate delete-then-insert "replace" or a lock → count → delete cascade — is composed in the service's `WithTx`, never a DAL method. **Read** methods return data (a SELECT, possibly fanned over inputs) and open no transaction.
+- **Services own transaction boundaries and orchestration** via `store.WithTx(ctx, func(db.Repos) error { … })` — the choreography and rollback surface are legible at the service layer, and this is the seam where distributed coordination (outbox/saga) will land. `db.Repos` is a struct: access fields directly (`r.Sources.Upsert`).
+- `WithTx` is the only sanctioned transaction entry point; `inTx` is its private engine. Both return the closure's error verbatim so sentinels propagate to the handler's `mapXError` unchanged; error-wrapping stays in the granular repo methods.
 - Reads and single-statement writes need no transaction — handlers call the DAL directly; don't add a forward-only service.
-- Repos are aggregate-scoped, not strictly table-scoped: `SourcesRepo` owns the source/content surface (Upsert, List, and `Search` — the workload's content query, which reads chunks because chunks belong to the source aggregate), while `ChunksRepo` holds the chunk-row write primitives (`DeleteForSource`, `Insert`) that ingest composes. Atomicity comes from `WithTx`, not from co-locating ops on one repo.
-- **Validation locus:** business-rule validation (ranges, required fields, non-empty) lives in the service; the DAL keeps structural/domain sentinels (FK/PK/constraint → sentinel) and the namespace-isolation guard.
-- **Namespace-isolation folds into the statement that touches the data — one canonical guard, no separate verify step.** The `sessions`/`clients` surface predicates on namespace directly; child tables (sources/events) reach it with an inline `EXISTS (SELECT 1 FROM sessions WHERE id = <session_id> AND namespace = …)` — a `WHERE` predicate on reads, inside the `INSERT … SELECT … WHERE EXISTS` on writes. EXISTS, not a JOIN: it's the one form that fits reads and writes alike (you can't `JOIN` an `INSERT`) and avoids column-name collisions with `session_events`. Cross-namespace collapses to the table's natural no-match: empty for list/search reads (consistent with `sessionRepo.List`), `ErrSessionNotFound` for point lookups/writes via no-rows-returned (consistent with `Get`/`Create`). Defense-in-depth only — `SessionResolve` 404s cross-namespace before the handler. The chunk leaf-write primitives (`DeleteForSource`, `Insert`) are the deliberate exception: they key off a `source_id` minted only by the namespace-verified `Upsert` in the same transaction — a capability, like the FK-cascade children on session delete — so re-guarding would diverge from the cascade pattern and burden the thinnest primitive. (`verifySessionInNamespace` is a transitional shim for `eventsRepo.Write` only.)
-- **Rollout is incremental** (DL: services-own-tx). `sourcesRepo.Index` migrated (→ `ingest.Service`); `eventsRepo.Write`, `sessionRepo.{Create,Delete,DeleteByID,DeleteAll}`, `clientRepo.Delete` still open their own `inTx` until migrated. Until then `inTx` has those callers in addition to `WithTx`.
+- Repos are aggregate-scoped, not table-scoped: `SourcesRepo` owns the source/content surface (Upsert, List, `Search` — which reads chunks because chunks belong to the source aggregate); `ChunksRepo` holds the chunk-row write primitives (`DeleteForSource`, `Insert`) that ingest composes. Atomicity comes from `WithTx`, not from co-locating ops on one repo.
+- **Validation locus:** business-rule validation (ranges, required fields) lives in the service; the DAL keeps structural sentinels (FK/PK/constraint → sentinel) and the namespace-isolation guard.
+- **The namespace guard folds into the statement that touches the data — one canonical guard, no separate verify step.** `sessions`/`clients` predicate on namespace directly; child tables (sources/events) use an inline `EXISTS (SELECT 1 FROM sessions WHERE id = <session_id> AND namespace = …)` — a `WHERE` predicate on reads, inside the `INSERT … SELECT … WHERE EXISTS` on writes. EXISTS, not JOIN: one form fits reads and writes alike (you can't `JOIN` an `INSERT`) and avoids column collisions. Cross-namespace collapses to the table's natural no-match: empty for list/search reads, `ErrSessionNotFound` for point lookups/writes via no-rows-returned. Defense-in-depth only — `SessionResolve` 404s cross-namespace before the handler. The chunk leaf-writes (`DeleteForSource`, `Insert`) are the deliberate exception: they key off a `source_id` minted only by the namespace-verified `Upsert` in the same transaction — a capability, like FK-cascade children on session delete. (`verifySessionInNamespace` is a transitional shim for `eventsRepo.Write` only.)
 
 ## Outcome attribution: correlations + feedback
 
-CALM captures a `correlations` row per value-producing call and updates it when the workload reports back via `/v1/feedback`. Disciplines:
+CALM captures a `correlations` row per value-producing call and updates it on `/v1/feedback`. See HLD's outcome-attribution section and DL14.
 
-- **Every 2xx response from a value-producing handler (ingest / search / snapshot) INSERTs a correlation row before returning.** The service layer owns the INSERT (per the services-own-tx discipline); the DAL is the leaf primitive. The correlation_id comes from the context-bound value set by the Context middleware — not minted at the handler.
-- **The INSERT is best-effort.** A failed INSERT logs WARN and does **not** fail the request — the value-producing operation already succeeded; missing observability never blocks the workload (`never-worse` invariant). If you find yourself wrapping a value-producing operation and a correlation INSERT in one transaction, you've inverted the discipline.
-- **`request_meta` JSONB carries CALM-derived signal dimensions only** — `match_layer` distribution, `allocator` variant, `intent_zero_match` flag, `omitted_by_priority`, `budget_omitted_total`, etc. Workload-supplied fields (e.g., the workload's `source` label) stay in JSONB and **must not** become metric labels at feedback-receipt emission time. This is the cardinality discipline; any new field added to `request_meta` is a candidate for label-set inflation if you're not careful.
-- **Outcome enum is `success | retry | degraded`, period.** `unset` is the DB default for never-received feedback — it is not a value the workload submits and not a metric series CALM emits. Operators compute the coverage gap via PromQL. Adding a fourth outcome value is HLD-touching.
-- **Feedback handler is single-shot via PK.** A second submission for the same `correlation_id` returns 409. The PK enforces it; don't add application-level "already-submitted" checks ahead of the UPDATE — race-free is the DB's job.
-- **410 path is computable without a DB lookup.** Parse the inbound `correlation_id` as UUIDv7, extract the embedded ms timestamp, compare against the namespace's `feedback_ttl_minutes`. No `expires_at` column, no scanner, no row read.
-- See HLD's outcome-attribution section, DL14 (active-only session), and the response-headers contract for the design intent.
+- **Every 2xx from a value-producing handler (ingest / search / snapshot) INSERTs a correlation row before returning.** The service layer owns the INSERT; the DAL is the leaf primitive. The correlation_id comes from the context-bound value — never minted at the handler.
+- **The INSERT is best-effort.** A failed INSERT logs WARN and does **not** fail the request — missing observability never blocks the workload (`never-worse`). Wrapping the value-producing operation and the correlation INSERT in one transaction inverts the discipline.
+- **`request_meta` JSONB carries CALM-derived signal dimensions only** (`match_layer` distribution, `allocator` variant, `intent_zero_match`, `omitted_by_priority`, …). Workload-supplied fields stay in JSONB and **must not** become metric labels — the cardinality discipline.
+- **Outcome enum is `success | retry | degraded`, period.** `unset` is the DB default for never-received feedback — not a workload-submittable value, not a metric series; operators compute the coverage gap via PromQL. A fourth value is HLD-touching.
+- **Feedback is single-shot via PK** — a second submission for the same `correlation_id` returns 409. The PK enforces it; no application-level "already-submitted" pre-check.
+- **The 410 path is computable without a DB lookup**: parse the inbound `correlation_id` as UUIDv7, compare its embedded ms timestamp against the namespace's `feedback_ttl_minutes`. No `expires_at` column, no scanner, no row read.
 
 ## Session lifecycle: active-only, teardown mechanism agnostic
 
-- **A session has exactly one durable service state: active.** No `completed / failed / abandoned / expired` lifecycle states. Workload outcomes live on `correlations.outcome`, **not** on `sessions`. Don't add columns to `sessions` reflecting workload outcome; don't add management endpoints querying terminal sessions. Both are HLD-touching (DL14).
-- **Teardown mechanism is implementer's choice.** HLD's API contract, data model, and session lifecycle sections are mechanism-agnostic on whether session removal is sync FK cascade, chunked sync cascade, async background reclaim, or sessions-only soft-mark with async reclaim. Today's implementation is sync FK cascade; alternatives are LLD-level work items, not HLD changes. If transitional code temporarily diverges from the canonical mechanism during a change, mark it `// HLD-DEVIATION:` with the reason.
-- **Wire contract is fixed and independent of mechanism.** `DELETE /v1/sessions` returns 204 No Content. Management DELETE endpoints return `{deleted_sessions: N}` (scope confirmation) only — no nested `cascaded` block. Cascade row counts emit as INFO log fields (`session.delete.cascaded_*`); the DAL computes them internally for the log even though they no longer appear on the wire.
-- **Long-tail row-level retention is delegated to operator-resident exporter sinks** (HLD-named seam in DL14). Not a v1 code-level concern; reserved for the WI-54 Phase F path.
+- **A session has exactly one durable service state: active.** No `completed/failed/abandoned/expired` states. Workload outcomes live on `correlations.outcome`, **not** on `sessions`. Adding outcome columns to `sessions` or mgmt endpoints for terminal sessions is HLD-touching (DL14).
+- **Teardown mechanism is implementer's choice** — the HLD is mechanism-agnostic (sync FK cascade, chunked cascade, async reclaim, soft-mark + reclaim). Today's implementation is sync FK cascade; alternatives are LLD-level work, not HLD changes. Transitional divergence gets `// HLD-DEVIATION:`.
+- **Wire contract is fixed and mechanism-independent.** `DELETE /v1/sessions` → 204. Management DELETEs return `{deleted_sessions: N}` only — no nested `cascaded` block. Cascade row counts emit as INFO log fields (`session.delete.cascaded_*`).
+- **Long-tail row-level retention is delegated to operator-resident exporter sinks** (HLD-named seam in DL14); not a v1 code-level concern.
 
 ## Search allocator is pluggable behind one interface
 
-- **Five variants** (`rank-round` default; `score-proportional`, `knapsack-greedy`, `equal-budget`, `mmr`) live behind a single allocator interface in `internal/search`. A new variant goes behind the same interface; never branch on variant identity in handler or service code.
-- **Per-namespace YAML config (`search.default_allocator`) selects the default**; per-request `X-CALM-Allocator-Variant` overrides when `search.allow_allocator_override: true`. When override is not allowed, the header is silently ignored — **never 400**; the header is a hint, not a contract, same shape as the `client` field on session-create in uncredentialed namespaces.
-- **`allocator=<variant>` is a bounded metric label** (cardinality = 5). Never accept caller-supplied variant strings as labels — the discipline is identical to `match_layer` and the outcome enum. New variant = code change, not a config string.
-- See DL15 (whole-response byte budget + allocator pluggability) for the design intent.
+- **Five variants** (`rank-round` default; `score-proportional`, `knapsack-greedy`, `equal-budget`, `mmr`) behind a single allocator interface in `internal/search`. New variants go behind the same interface; never branch on variant identity in handler or service code.
+- **Per-namespace `search.default_allocator` selects the default**; per-request `X-CALM-Allocator-Variant` overrides when `search.allow_allocator_override: true`. When override is off, the header is silently ignored — **never 400**; it's a hint, same shape as the `client` field in uncredentialed namespaces.
+- **`allocator=<variant>` is a bounded metric label** (cardinality = 5). Never accept caller-supplied strings as labels — same discipline as `match_layer` and the outcome enum. New variant = code change, not a config string.
+- See DL15 (whole-response byte budget + allocator pluggability).
 
 ## Logging > comments
 
 Logs are not optional decoration; they're the runtime record.
 
-- Use `github.com/one-harsh/context-logging` everywhere. **Pass `ctx context.Context` as the first parameter** of every non-trivial function. Hydrate the context with request-scoped fields as early as possible (HTTP middleware, MCP adapter entry).
-- Pattern: `logger.WithContext(ctx).Info("event_name", fields...)`. Per-request summary via `logger.SummaryWithContext(ctx).Info(...)` at the end of a handler — drives end-of-request observability.
-- Domain-specific field helpers live in `internal/obs`. Two shapes, picked by what the value is:
-  - **Per-call helpers** (`obs.SessionID(id)`, `obs.Namespace(ns)`, `obs.Client(c)`, `obs.Source(s)`, `obs.Endpoint(p)`, `obs.EventType(t)`, `obs.FormatHint(h)`) — for caller-supplied values obs can't know in advance (workload-chosen session IDs, request paths, etc.).
-  - **Pre-constructed `LoggingField` vars** (`obs.MatchLayerPrimary`, `obs.CloseReasonTTLExpired`, ...) — for code-determined closed-enum values. Call sites pass the named constant directly; the type system enforces the documented value set. Add a new value as another `var` in the same group; add a new closed-enum *field* by adding a `Key…` constant and a new var group.
-- **Field naming convention**: identifier/categorical fields are flat snake_case (`session_id`, `namespace`, `close_reason`); measurement fields use hierarchical dotted namespacing scoped to the entity + action that produced them (`session.delete.cascaded_events`, `sessions.scanned`, `ttl_scan.duration_ms`). The hierarchy lets downstream tools group on the path — "everything under `session.delete.*`" or "all `sessions.*` counters." Counts of how many entities were touched use the plural form (`sessions.scanned`); per-action measurements scoped to a single entity use the singular (`session.delete.cascaded_events`). Generic timings still get the namespace — `ttl_scan.duration_ms`, not bare `duration_ms`.
-- **Metric names follow the same dotted schema** as log fields (`session.create.ttl_clamped`, `sessions.active`, `ttl_scanner.last_run`). The OTel-Prometheus exporter converts `.` → `_` at emission per the OTel-Prometheus mapping spec, so PromQL queries see the underscored form. No `calm_` prefix in canonical names; the OTel `service.name` resource attribute (`calm`) carries that scoping.
-- **DEBUG**: log liberally. If you're tempted to write a comment describing state or flow, write a DEBUG log instead. Log characters are free; in-prod cost is near-zero with the level disabled.
-- **INFO**: follow HLD's INFO-event taxonomy. Adding a new INFO-level event is an HLD-touching change.
-- **WARN**: degraded behavior the operator should know about (CALM-down fallback in adapter, intent fallback to full summary, etc.).
-- **ERROR / FATAL**: actual failures.
+- Use `github.com/one-harsh/context-logging` everywhere. **Pass `ctx context.Context` as the first parameter** of every non-trivial function; hydrate request-scoped fields as early as possible (HTTP middleware, MCP adapter entry).
+- Pattern: `logger.WithContext(ctx).Info("event_name", fields...)`; per-request summary via `logger.SummaryWithContext(ctx).Info(...)` at the end of a handler.
+- Field helpers live in `internal/obs`, two shapes:
+  - **Per-call helpers** (`obs.SessionID(id)`, `obs.Namespace(ns)`, `obs.Client(c)`, `obs.Source(s)`, `obs.Endpoint(p)`, `obs.EventType(t)`, `obs.FormatHint(h)`) — for caller-supplied values.
+  - **Pre-constructed `LoggingField` vars** (`obs.MatchLayerPrimary`, `obs.CloseReasonTTLExpired`, …) — for code-determined closed enums; the type system enforces the value set. New value = new `var` in the group; new closed-enum field = new `Key…` constant + var group.
+- **Field naming**: identifier/categorical fields are flat snake_case (`session_id`, `close_reason`); measurement fields use hierarchical dotted namespacing scoped to entity + action (`session.delete.cascaded_events`, `ttl_scan.duration_ms`) so tools can group on the path. Plural for entity counts (`sessions.scanned`), singular for per-entity measurements (`session.delete.cascaded_events`). Generic timings still get the namespace — never bare `duration_ms`.
+- **Metric names follow the same dotted schema**; the OTel-Prometheus exporter converts `.` → `_` at emission, so PromQL sees the underscored form. No `calm_` prefix — the OTel `service.name` resource attribute carries that scoping.
+- **DEBUG**: log liberally — if tempted to write a comment describing state or flow, write a DEBUG log instead. **INFO**: follow HLD's INFO-event taxonomy; a new INFO event is HLD-touching. **WARN**: degraded behavior the operator should know about (CALM-down fallback, intent fallback). **ERROR/FATAL**: actual failures.
 
 ## Comments — when they're allowed
 
-A comment is allowed only when it documents a **non-obvious business or design constraint** that forces the shape of the code: an HLD invariant being enforced at a specific line, a workaround for a known incident, a subtle ordering requirement.
+A comment is allowed only for a **non-obvious business or design constraint** that forces the code's shape: an HLD invariant enforced at a specific line, a workaround for a known incident, a subtle ordering requirement.
 
-- Format: keep short, cite the source by stable name — `// never-worse invariant: never block on CALM failure`.
-- Don't restate what the code obviously does. Don't reference the current task or the PR.
+- Keep short; cite the source by stable name — `// never-worse invariant: never block on CALM failure`.
+- Don't restate what the code obviously does. Don't reference the current task or PR.
 - Heuristic: if the comment would still be true after a refactor that changed *what* the code does, it's the wrong comment — delete it or convert to a DEBUG log.
 
 ## Testing
 
 - Test as much as possible. Coverage isn't a target, but every non-trivial path should have a test.
-- **Integration tests are full-loop scenarios** named after what CALM promises — `IngestAndSearch`, `SessionBreachNotAllowed`, `IdempotentReingest`, `CrossNamespaceInvisible404`. Frame each test as "workload X does Y, expects Z" — not "function F returns G." A reader scanning test names should see the project's promises enumerated. Scenarios live in `test/integration/` and run via the harness against the real generated client. 
-- **Each integration test opens with a 2-3 line scenario header** — prose stating the promise/invariant under test ("workload X does Y, expects Z"), not a step-by-step narration of the code (that just duplicates the body and rots). This is the **one sanctioned relaxation** of the default-no-comments rule, and it applies to `test/integration/` only — unit tests and production code keep the strict "comment only a non-obvious why" policy.
-- **Integration tests run in parallel by default** (`t.Parallel()` first line, sub-tests included). The suite shares one per-run database, so a test may opt in only if it is scoped to its own session/namespace; tests asserting global or namespace-wide counts, rate-limit counters, or sharing fixed-name fixtures stay serial. When in doubt, leave it serial.
-- **Run integration tests against real Postgres** (with `pg_search`). The developer brings Postgres up explicitly via `docker compose up` before running the suite — no programmatic container management inside tests. Tests connect to a known location (env var or default), fail clearly if Postgres isn't reachable. Mocking the DB hides bugs that bite in prod migrations. Unit tests that don't need the DB use the mockery-generated DAL mock instead.
-- **No hand-rolled mocks.** Use `mockery` for all mocks. Mockery generates only against **port interfaces** (DAL, MCP transport, clock, FTS extension capability — narrow set, expanded only at real boundaries). Internal helpers stay concrete and are tested via integration.
-- **Mocks are in-package**: the generated `mock_<name>.go` lives in the same Go package as the interface. Build-tagged `//go:build mocks` so prod binaries exclude it. Tests and CI run with `-tags=mocks` (already wired in `Taskfile.yml`).
-- Hand-rolled mocks are allowed only when mockery genuinely cannot express the scenario. State the reason in a `// MOCKERY-ESCAPE:` comment.
-- Don't introduce interfaces just to enable mocking. If a struct doesn't sit at a port boundary, it doesn't need an interface — test it through integration.
+- **Integration tests are full-loop scenarios** named after what CALM promises — `IngestAndSearch`, `SessionBreachNotAllowed`, `IdempotentReingest`, `CrossNamespaceInvisible404`. Frame each as "workload X does Y, expects Z", not "function F returns G" — scanning test names should enumerate the project's promises. They live in `test/integration/` and run via the harness against the real generated client.
+- **Each integration test opens with a 2-3 line scenario header** — prose stating the promise/invariant under test, not step-by-step narration (that duplicates the body and rots). This is the **one sanctioned relaxation** of the no-comments default, and applies to `test/integration/` only — unit tests and production code keep the strict policy.
+- **Integration tests run in parallel by default** (`t.Parallel()` first line, sub-tests included). The suite shares one per-run database, so a test opts in only if scoped to its own session/namespace; tests asserting global/namespace-wide counts, rate-limit counters, or fixed-name fixtures stay serial. When in doubt, leave it serial.
+- **Run integration tests against real Postgres** (with `pg_search`). The developer brings Postgres up via `docker compose up` — no programmatic container management in tests; tests connect to a known location and fail clearly if unreachable. Mocking the DB hides bugs that bite in prod migrations. Unit tests that don't need the DB use the mockery-generated DAL mock.
+- **No hand-rolled mocks.** `mockery` generates only against **port interfaces** (DAL, MCP transport, clock, FTS capability — narrow set, expanded only at real boundaries). Internal helpers stay concrete, tested via integration. Mockery escape requires a `// MOCKERY-ESCAPE:` comment with the reason.
+- **Mocks are in-package** (`mock_<name>.go` beside the interface), build-tagged `//go:build mocks`; tests and CI run with `-tags=mocks` (wired in `Taskfile.yml`).
+- Don't introduce interfaces just to enable mocking — if a struct isn't at a port boundary, test it through integration.
 
 ## Tooling
 
 - **Go**: pinned via `.go-version` (goenv). Currently 1.25.5.
 - **Build/run**: `go-task` via `Taskfile.yml`.
-- **Lint**: `golangci-lint v2` via `.golangci.yaml`. Revive's "must have comment on exported X" and "unused-parameter" rules are intentionally disabled — they collide with the comment policy and with stub method signatures matching interfaces. Generated files (`*.gen.go`, `internal/api/genapi/*`) are excluded from lint.
-- **Format**: `gofumpt` + `goimports` (run via `task fmt`).
-- **Mocks**: `mockery v2` via `.mockery.yaml`. In-package, build-tagged `mocks`.
-- **API codegen**: `oapi-codegen v2` via `oapi-codegen.yaml`. Drives types, chi server interface, HTTP client, and embedded spec from `docs/api/openapi.yaml`. Run with `task gen:api`.
-- **Validation**: `github.com/getkin/kin-openapi` + `github.com/oapi-codegen/nethttp-middleware` for request validation against the embedded spec.
+- **Lint**: `golangci-lint v2` via `.golangci.yaml`. Revive's "must have comment on exported X" and "unused-parameter" are intentionally disabled (they collide with the comment policy and interface-matching stubs). Generated files are excluded from lint.
+- **Format**: `gofumpt` + `goimports` (via `task fmt`).
+- **Mocks**: `mockery v2` via `.mockery.yaml` — in-package, build-tagged `mocks`.
+- **API codegen**: `oapi-codegen v2` via `oapi-codegen.yaml` — types, chi server interface, HTTP client, embedded spec from `docs/api/openapi.yaml`. Run with `task gen:api`.
+- **Validation**: `github.com/getkin/kin-openapi` + `github.com/oapi-codegen/nethttp-middleware`.
 - **Logging**: `github.com/one-harsh/context-logging` (zap-wrapped, context-bound).
 - **HTTP routing**: `github.com/go-chi/chi/v5`.
-- **Storage**: `pgx/v5` for Postgres. **No CGO** — preserves the static-binary invariant.
+- **Storage**: `pgx/v5`. **No CGO** — preserves the static-binary invariant.
 - **OTel**: `go.opentelemetry.io/otel` for trace propagation; OTLP exporter when wired.
-- **License**: Apache 2.0. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contributor contract — DCO sign-off, SPDX headers on new Go files, AGPL-free dependency policy.
+- **License**: Apache 2.0. See [`CONTRIBUTING.md`](CONTRIBUTING.md) — DCO sign-off, SPDX headers on new Go files, AGPL-free dependency policy.
 
 Install local dev tools with `task tools:install`.
 

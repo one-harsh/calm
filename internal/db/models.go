@@ -54,12 +54,6 @@ type Chunk struct {
 	ContentType string
 }
 
-type IndexInput struct {
-	SessionID int64
-	Source    string
-	Chunks    []Chunk
-}
-
 type SearchInput struct {
 	SessionID int64
 	Queries   []string

@@ -77,6 +77,59 @@ func TestIngestHandler_IdempotentReingest(t *testing.T) {
 	}
 }
 
+// Re-indexing one source replaces only that source's chunks; sibling sources in the same
+// session keep their chunks intact and searchable (idempotent-indexing is scoped to the
+// source, not the session).
+func TestIngestHandler_ReingestPreservesSiblingSources(t *testing.T) {
+	t.Parallel()
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+	ctx := context.Background()
+
+	ingestForSearch(t, client, sess.SessionToken, "a.log", "alphamarker one\n\nalphamarker two")
+	ingestForSearch(t, client, sess.SessionToken, "b.log", "betamarker content")
+	ingestForSearch(t, client, sess.SessionToken, "a.log", "gammamarker only")
+
+	search := func(q string) []genapi.SearchHit {
+		r, err := client.SearchWithResponse(ctx,
+			&genapi.SearchParams{XCALMSessionToken: sess.SessionToken},
+			genapi.SearchJSONRequestBody{Queries: []string{q}})
+		if err != nil {
+			t.Fatalf("Search %q: %v", q, err)
+		}
+		if r.StatusCode() != http.StatusOK {
+			t.Fatalf("Search %q: status %d body=%s", q, r.StatusCode(), string(r.Body))
+		}
+		return r.JSON200.Results[0].Hits
+	}
+
+	if hits := search("betamarker"); len(hits) != 1 || hits[0].Source != "b.log" {
+		t.Errorf("betamarker hits = %+v; want one hit from b.log (sibling preserved)", hits)
+	}
+	if hits := search("alphamarker"); len(hits) != 0 {
+		t.Errorf("alphamarker hits = %+v; want none (old a.log content replaced)", hits)
+	}
+	if hits := search("gammamarker"); len(hits) != 1 || hits[0].Source != "a.log" {
+		t.Errorf("gammamarker hits = %+v; want one hit from a.log (new content live)", hits)
+	}
+
+	sr, err := client.ListSourcesWithResponse(ctx, &genapi.ListSourcesParams{XCALMSessionToken: sess.SessionToken})
+	if err != nil {
+		t.Fatalf("ListSources: %v", err)
+	}
+	if sr.StatusCode() != http.StatusOK {
+		t.Fatalf("ListSources: status %d body=%s", sr.StatusCode(), string(sr.Body))
+	}
+	if len(sr.JSON200.Sources) != 2 {
+		t.Fatalf("sources = %+v; want 2 (a.log and b.log)", sr.JSON200.Sources)
+	}
+	for _, s := range sr.JSON200.Sources {
+		if s.Chunks != 1 {
+			t.Errorf("source %q chunks = %d; want 1 (a.log replaced to one section, b.log untouched)", s.Label, s.Chunks)
+		}
+	}
+}
+
 // Ingesting more than 50 sections returns sections_total equal to the full count, summary
 // capped at 50 entries, and summary_truncated true.
 func TestIngestHandler_SummaryTruncatedAt50(t *testing.T) {
