@@ -23,6 +23,7 @@ import (
 
 // ----- Uncredentialed namespaces (default harness; require_client_credentials=false) -----
 
+// Registering a new client in an uncredentialed namespace returns 201 with the client name and no client_token.
 func TestRegisterClientHandler_NewClientReturns201(t *testing.T) {
 	resp, err := env.client.RegisterClientWithResponse(context.Background(), "new-client-mode-a")
 	if err != nil {
@@ -40,6 +41,7 @@ func TestRegisterClientHandler_NewClientReturns201(t *testing.T) {
 	}
 }
 
+// Re-registering the same client name in an uncredentialed namespace returns 409 with error=client_exists.
 func TestRegisterClientHandler_DuplicateReturns409(t *testing.T) {
 	// First registration succeeds.
 	if _, err := env.client.RegisterClientWithResponse(context.Background(), "dup-mode-a"); err != nil {
@@ -58,6 +60,7 @@ func TestRegisterClientHandler_DuplicateReturns409(t *testing.T) {
 	}
 }
 
+// A workload registers a client then immediately creates a session under it; end-to-end registration unlocks the session lifecycle.
 func TestRegisterClientHandler_RegisteredClientEnablesSessionCreate(t *testing.T) {
 	clientName := "session-flow-mode-a"
 	if _, err := env.client.RegisterClientWithResponse(context.Background(), clientName); err != nil {
@@ -78,6 +81,7 @@ func TestRegisterClientHandler_RegisteredClientEnablesSessionCreate(t *testing.T
 	}
 }
 
+// Token rotation in an uncredentialed namespace returns 401 because no client credential was presented; the endpoint requires the caller to authenticate as the client being rotated.
 func TestRotateClientTokenHandler_UncredentialedNamespaceReturns401(t *testing.T) {
 	// Rotation requires the caller to have authenticated AS the client being
 	// rotated. In an uncredentialed namespace no client token was presented,
@@ -168,7 +172,9 @@ func withClientToken(t *testing.T, serverURL, token string) *genapi.ClientWithRe
 	return c
 }
 
+// Registering a client in a credentialed namespace returns 201 with a non-empty client_token; the workload can use the token to authenticate subsequent requests.
 func TestRegisterClientHandler_CredentialedMintsToken(t *testing.T) {
+	t.Parallel()
 	apiClient, _, teardown := newCredentialedTestServer(t)
 	defer teardown()
 
@@ -187,7 +193,9 @@ func TestRegisterClientHandler_CredentialedMintsToken(t *testing.T) {
 	}
 }
 
+// Re-registering the same client name in a credentialed namespace returns 409.
 func TestRegisterClientHandler_CredentialedDuplicateReturns409(t *testing.T) {
+	t.Parallel()
 	apiClient, _, teardown := newCredentialedTestServer(t)
 	defer teardown()
 
@@ -203,7 +211,9 @@ func TestRegisterClientHandler_CredentialedDuplicateReturns409(t *testing.T) {
 	}
 }
 
+// A session-create request in a credentialed namespace without Authorization: Bearer returns 401; client-token authentication is required.
 func TestCreateSessionHandler_CredentialedWithoutClientTokenReturns401(t *testing.T) {
+	t.Parallel()
 	apiClient, _, teardown := newCredentialedTestServer(t)
 	defer teardown()
 
@@ -226,7 +236,9 @@ func TestCreateSessionHandler_CredentialedWithoutClientTokenReturns401(t *testin
 	}
 }
 
+// A workload in a credentialed namespace registers, then creates a session using the minted token; the session response echoes the client derived from the token.
 func TestCreateSessionHandler_CredentialedWithValidTokenSucceeds(t *testing.T) {
+	t.Parallel()
 	apiClient, serverURL, teardown := newCredentialedTestServer(t)
 	defer teardown()
 
@@ -253,7 +265,9 @@ func TestCreateSessionHandler_CredentialedWithValidTokenSucceeds(t *testing.T) {
 	}
 }
 
+// Supplying a body client that differs from the token's identity returns 400 with error=client_mismatch; a token holder cannot claim sessions for another client.
 func TestCreateSessionHandler_CredentialedBodyClientMustMatchTokenClient(t *testing.T) {
+	t.Parallel()
 	apiClient, serverURL, teardown := newCredentialedTestServer(t)
 	defer teardown()
 
@@ -286,7 +300,9 @@ func TestCreateSessionHandler_CredentialedBodyClientMustMatchTokenClient(t *test
 	}
 }
 
+// Two clients in the same credentialed namespace cannot impersonate each other; a token holder's session-create request with a spoofed client field is rejected with 400.
 func TestCreateSessionHandler_CredentialedCrossClientIsolation(t *testing.T) {
+	t.Parallel()
 	// Two clients in the same credentialed namespace each hold their own token.
 	// Neither can read or delete the other's sessions.
 	apiClient, serverURL, teardown := newCredentialedTestServer(t)
@@ -332,7 +348,9 @@ func TestCreateSessionHandler_CredentialedCrossClientIsolation(t *testing.T) {
 	}
 }
 
+// A client rotates its token; the old token is immediately invalidated and the new token grants access.
 func TestRotateClientTokenHandler_CredentialedHappyPath(t *testing.T) {
+	t.Parallel()
 	apiClient, serverURL, teardown := newCredentialedTestServer(t)
 	defer teardown()
 
@@ -385,7 +403,9 @@ func TestRotateClientTokenHandler_CredentialedHappyPath(t *testing.T) {
 	}
 }
 
+// Rotating a client token invalidates the credential but not the data; sessions created before rotation remain accessible with the new token.
 func TestRotateClientTokenHandler_CredentialedSessionsPersistAcrossRotation(t *testing.T) {
+	t.Parallel()
 	// HLD-pinned contract: rotation invalidates the credential, not the data.
 	// Sessions created before rotation remain accessible with the new token.
 	apiClient, serverURL, teardown := newCredentialedTestServer(t)
@@ -430,7 +450,9 @@ func TestRotateClientTokenHandler_CredentialedSessionsPersistAcrossRotation(t *t
 	}
 }
 
+// Registration in a credentialed namespace succeeds without a client token; the endpoint must be reachable before any token exists.
 func TestRegisterClientHandler_CredentialedExemptFromClientTokenRequirement(t *testing.T) {
+	t.Parallel()
 	// The chicken-and-egg: registration itself can't require a token (the
 	// client doesn't have one yet). Pin that the registration path is
 	// reachable in a credentialed namespace without Authorization: Bearer.
@@ -448,6 +470,7 @@ func TestRegisterClientHandler_CredentialedExemptFromClientTokenRequirement(t *t
 	}
 }
 
+// Health and version endpoints are reachable without any authentication header; they must not be intercepted by the auth middleware.
 func TestAuth_HealthAndVersionBypassAuth(t *testing.T) {
 	// Operational endpoints (health, version) are reachable without any
 	// authentication header. Pin that contract.
@@ -469,6 +492,7 @@ func TestAuth_HealthAndVersionBypassAuth(t *testing.T) {
 	}
 }
 
+// A request carrying Authorization: Bearer instead of X-CALM-API-Key returns 401; the namespace API key must use X-CALM-API-Key, not the Authorization header.
 func TestAuth_StaleBearerHeader_Ignored(t *testing.T) {
 	// Workloads upgrading from the previous bearer-in-Authorization shape
 	// might leave the old header in place. Uncredentialed namespace should ignore it

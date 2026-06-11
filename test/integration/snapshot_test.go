@@ -11,7 +11,9 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 )
 
+// A session with no events returns an empty snapshot without error.
 func TestSnapshot_EmptySessionReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -27,7 +29,10 @@ func TestSnapshot_EmptySessionReturnsEmpty(t *testing.T) {
 	}
 }
 
+// Snapshot returns events ordered by ascending priority then descending recency, so lower
+// priority numbers and more-recent timestamps appear first.
 func TestSnapshot_OrdersByPriorityThenRecency(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -56,7 +61,10 @@ func TestSnapshot_OrdersByPriorityThenRecency(t *testing.T) {
 	}
 }
 
+// Fetching a snapshot with a session id that belongs to a different namespace returns empty;
+// no error is raised (namespace-isolation: cross-namespace data is invisible).
 func TestSnapshot_CrossNamespaceIsInvisible(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -73,7 +81,10 @@ func TestSnapshot_CrossNamespaceIsInvisible(t *testing.T) {
 	}
 }
 
+// When a session has more events than the DAL snapshot row cap (512), the fetch returns
+// exactly the cap count rather than all rows.
 func TestSnapshot_RowCapBoundsFetch(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -101,7 +112,10 @@ func TestSnapshot_RowCapBoundsFetch(t *testing.T) {
 	}
 }
 
+// Events written to session A are invisible when fetching a snapshot for session B in the
+// same namespace (session-isolation: each session sees only its own events).
 func TestSnapshot_SessionIsolationWithinNamespace(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 

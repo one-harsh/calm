@@ -18,7 +18,10 @@ import (
 // success. These tests pin the contract by reading the row back via direct SQL
 // against the response header's correlation_id.
 
+// A successful ingest produces a correlation row with request_type=ingest,
+// outcome=unset, and request_meta containing sections_indexed + sections_total.
 func TestIngest_PersistsCorrelationOnSuccess(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -49,7 +52,10 @@ func TestIngest_PersistsCorrelationOnSuccess(t *testing.T) {
 	}
 }
 
+// A successful search produces a correlation row with request_type=search and
+// request_meta containing hit_count.
 func TestSearch_PersistsCorrelationOnSuccess(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -83,7 +89,10 @@ func TestSearch_PersistsCorrelationOnSuccess(t *testing.T) {
 	}
 }
 
+// A successful snapshot produces a correlation row with request_type=snapshot
+// and request_meta containing byte_budget_used.
 func TestSnapshot_PersistsCorrelationOnSuccess(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	seedEvent(t, env.sqlDB, sess.ID, "tool_invocation", 2, []byte(`{"command":"ls"}`))

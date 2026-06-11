@@ -23,7 +23,11 @@ func seedSearchCorpus(t *testing.T, store *db.Store, namespace string, sessionID
 	})
 }
 
+// Workload searches a session with indexed content; expects a hit whose snippet contains
+// the query term verbatim and whose match_layer is primary (content-fidelity: snippets are
+// exact indexed text, not paraphrased).
 func TestSearch_MatchInContentReturnsHitWithSnippet(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -53,7 +57,9 @@ func TestSearch_MatchInContentReturnsHitWithSnippet(t *testing.T) {
 	}
 }
 
+// A query that matches only a chunk title returns a hit whose snippet is a content window, not the title text.
 func TestSearch_MatchInTitleOnly(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -76,7 +82,9 @@ func TestSearch_MatchInTitleOnly(t *testing.T) {
 	}
 }
 
+// Supplying a source filter limits hits to chunks belonging to that source, ignoring matches in other sources.
 func TestSearch_SourceFilterScopes(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -99,7 +107,9 @@ func TestSearch_SourceFilterScopes(t *testing.T) {
 	}
 }
 
+// A Limit of N returns at most N hits even when more matches exist.
 func TestSearch_LimitCapsHits(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -121,7 +131,10 @@ func TestSearch_LimitCapsHits(t *testing.T) {
 	}
 }
 
+// Multiple queries return one result element per query in input order; a query with no matches
+// returns an empty hits list rather than being omitted from the response.
 func TestSearch_MultiQueryResultsPerQueryInOrder(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -148,7 +161,10 @@ func TestSearch_MultiQueryResultsPerQueryInOrder(t *testing.T) {
 	}
 }
 
+// Workload indexes content in namespace A then searches from namespace B; expects zero hits
+// (namespace-isolation: cross-namespace data is invisible, not an error).
 func TestSearch_CrossNamespaceIsInvisible(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -166,7 +182,10 @@ func TestSearch_CrossNamespaceIsInvisible(t *testing.T) {
 	}
 }
 
+// Content indexed into session A is invisible to session B in the same namespace
+// (session-isolation: each session sees only its own content).
 func TestSearch_SessionIsolationWithinNamespace(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -185,7 +204,9 @@ func TestSearch_SessionIsolationWithinNamespace(t *testing.T) {
 	}
 }
 
+// DAL rejects nil queries, empty query strings, and negative limit before touching storage.
 func TestSearch_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)

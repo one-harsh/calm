@@ -18,6 +18,8 @@ import (
 // to start under operator-misconfiguration conditions, which is the kind
 // of claim that's only meaningful end-to-end.
 
+// The service fails fast (non-zero exit, clear message) when no config file is
+// supplied — operator misconfiguration never silently falls back to defaults.
 func TestServiceRefusesWithoutConfigFile(t *testing.T) {
 	stderr, err := spawnCALM(t, map[string]string{
 		"CALM_CONFIG_FILE": "",
@@ -30,6 +32,8 @@ func TestServiceRefusesWithoutConfigFile(t *testing.T) {
 	}
 }
 
+// The service refuses to start with an empty namespace list, failing startup
+// with an explanatory validation error rather than booting unusable.
 func TestServiceRefusesMalformedConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

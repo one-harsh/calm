@@ -15,7 +15,9 @@ import (
 
 // ---------- RegisterClient ----------
 
+// A workload registers a new client; the record must appear exactly once in the DB.
 func TestRegisterClient_NewRowInserted(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -28,7 +30,9 @@ func TestRegisterClient_NewRowInserted(t *testing.T) {
 	}
 }
 
+// Registering the same client N times produces exactly one row; the idempotent-indexing guarantee applies to client registration.
 func TestRegisterClient_IdempotentOnRepeat(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -43,7 +47,9 @@ func TestRegisterClient_IdempotentOnRepeat(t *testing.T) {
 	}
 }
 
+// The same client name registered in two namespaces creates two independent rows; namespace-isolation prevents cross-namespace merging.
 func TestRegisterClient_CrossNamespaceIndependent(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -59,7 +65,9 @@ func TestRegisterClient_CrossNamespaceIndependent(t *testing.T) {
 	}
 }
 
+// Empty namespace is rejected before any DB write; ErrNamespaceRequired is returned.
 func TestRegisterClient_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -72,7 +80,9 @@ func TestRegisterClient_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// Empty client name is rejected before any DB write; ErrClientNameRequired is returned.
 func TestRegisterClient_EmptyName(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -87,7 +97,9 @@ func TestRegisterClient_EmptyName(t *testing.T) {
 
 // ---------- ListClients ----------
 
+// Empty namespace argument is rejected immediately; ErrNamespaceRequired is returned.
 func TestListClients_EmptyNamespaceArg(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -97,7 +109,9 @@ func TestListClients_EmptyNamespaceArg(t *testing.T) {
 	}
 }
 
+// Listing an empty namespace returns a non-nil empty slice, not nil.
 func TestListClients_NoClients(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -113,7 +127,9 @@ func TestListClients_NoClients(t *testing.T) {
 	}
 }
 
+// A registered client with no sessions lists with SessionCount=0 and nil LastActivity.
 func TestListClients_ClientNoSessions(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -134,7 +150,9 @@ func TestListClients_ClientNoSessions(t *testing.T) {
 	}
 }
 
+// A client with multiple sessions reports the correct count and the most-recent session's activity as LastActivity.
 func TestListClients_ClientWithSessions(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -162,7 +180,9 @@ func TestListClients_ClientWithSessions(t *testing.T) {
 	}
 }
 
+// Clients are returned in stable alphabetical order regardless of insertion order.
 func TestListClients_MultipleClientsSortedByName(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -186,7 +206,9 @@ func TestListClients_MultipleClientsSortedByName(t *testing.T) {
 	}
 }
 
+// Session counts for a client in one namespace are invisible to a query against a different namespace; namespace-isolation is enforced at the list level.
 func TestListClients_CrossNamespaceIsolation(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -214,7 +236,9 @@ func TestListClients_CrossNamespaceIsolation(t *testing.T) {
 
 // ---------- CountClientSessions ----------
 
+// A client with no sessions reports a count of zero.
 func TestCountClientSessions_Zero(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -229,7 +253,9 @@ func TestCountClientSessions_Zero(t *testing.T) {
 	}
 }
 
+// Session count reflects all active sessions belonging to the client.
 func TestCountClientSessions_Multiple(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -247,7 +273,9 @@ func TestCountClientSessions_Multiple(t *testing.T) {
 	}
 }
 
+// Counting sessions for a non-existent client returns ErrClientNotFound.
 func TestCountClientSessions_UnknownClient(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -260,7 +288,9 @@ func TestCountClientSessions_UnknownClient(t *testing.T) {
 	}
 }
 
+// A client registered in one namespace is invisible to a count query from another namespace; namespace-isolation applies to CountSessions.
 func TestCountClientSessions_CrossNamespaceUnknown(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -272,7 +302,9 @@ func TestCountClientSessions_CrossNamespaceUnknown(t *testing.T) {
 	}
 }
 
+// Empty namespace argument is rejected; ErrNamespaceRequired is returned.
 func TestCountClientSessions_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -282,7 +314,9 @@ func TestCountClientSessions_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// Empty client name argument is rejected; ErrClientNameRequired is returned.
 func TestCountClientSessions_EmptyName(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -294,7 +328,9 @@ func TestCountClientSessions_EmptyName(t *testing.T) {
 
 // ---------- DeleteClient ----------
 
+// The default client cannot be deleted; ErrClientProtected is returned and no rows are removed.
 func TestDeleteClient_DefaultProtected(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -310,7 +346,9 @@ func TestDeleteClient_DefaultProtected(t *testing.T) {
 	}
 }
 
+// Deleting a non-existent client returns ErrClientNotFound and a zero-valued result.
 func TestDeleteClient_UnknownClient(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -323,7 +361,9 @@ func TestDeleteClient_UnknownClient(t *testing.T) {
 	}
 }
 
+// Deleting a client removes the client row and all dependent sessions, sources, chunks, events, labels, and vocab in a single cascade; the result struct reports accurate counts.
 func TestDeleteClient_HappyPathFullCascade(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -386,7 +426,9 @@ func TestDeleteClient_HappyPathFullCascade(t *testing.T) {
 	}
 }
 
+// Deleting one client in a namespace leaves other clients and their data untouched; session-isolation holds within the same namespace.
 func TestDeleteClient_NegativeIsolation(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -413,7 +455,9 @@ func TestDeleteClient_NegativeIsolation(t *testing.T) {
 	}
 }
 
+// Deleting a client in namespace A leaves the same-named client and its sessions in namespace B intact; namespace-isolation is enforced during cascade.
 func TestDeleteClient_CrossNamespaceIsolation(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -435,12 +479,15 @@ func TestDeleteClient_CrossNamespaceIsolation(t *testing.T) {
 	}
 }
 
+// Cascade counts returned after a delete reflect only the deleted namespace's data; the same-named client's footprint in another namespace is not included and that namespace is not touched.
+//
 // Regression: deleting a client in one namespace must not touch a
 // same-named client (with its own sessions and dependents) in another
 // namespace. Session ids are now globally-unique surrogates so the original
 // "shared session_id" collision is unrepresentable; the namespace-isolation
 // invariant the test guards remains worth pinning.
 func TestDeleteClient_CascadeCountsScopedByNamespace(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -496,7 +543,9 @@ func TestDeleteClient_CascadeCountsScopedByNamespace(t *testing.T) {
 	}
 }
 
+// A client with no sessions is deleted cleanly; the result reports zero cascade counts.
 func TestDeleteClient_NoSessionsCleanDelete(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -515,7 +564,9 @@ func TestDeleteClient_NoSessionsCleanDelete(t *testing.T) {
 	}
 }
 
+// Empty namespace argument is rejected; ErrNamespaceRequired is returned.
 func TestDeleteClient_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -525,7 +576,9 @@ func TestDeleteClient_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// Empty client name argument is rejected; ErrClientNameRequired is returned.
 func TestDeleteClient_EmptyName(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 

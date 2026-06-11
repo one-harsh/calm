@@ -89,6 +89,9 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 	return mkClient(testMasterKey), mkClient(testTenantAKey), srv.URL, srv.Close
 }
 
+// A namespace that outruns its per-second budget past the burst allowance is
+// throttled with 429 + Retry-After and a namespace-scoped detail; requests
+// within the burst still reach the handler.
 func TestRateLimit_NamespaceHammeredReturns429AfterBurst(t *testing.T) {
 	def, _, _, teardown := newRateLimitTestServer(t, ratelimitTestCfg{NSDefault: 5, PerIP: 1000})
 	defer teardown()
@@ -125,6 +128,8 @@ func TestRateLimit_NamespaceHammeredReturns429AfterBurst(t *testing.T) {
 	}
 }
 
+// One namespace exhausting its budget never consumes another's — rate budgets
+// are isolated per namespace (namespace-isolation).
 func TestRateLimit_OtherNamespaceUnaffected(t *testing.T) {
 	def, tenA, _, teardown := newRateLimitTestServer(t, ratelimitTestCfg{NSDefault: 5, PerIP: 1000})
 	defer teardown()
@@ -147,6 +152,8 @@ func TestRateLimit_OtherNamespaceUnaffected(t *testing.T) {
 	}
 }
 
+// A per-namespace rate override caps that namespace at its own limit and does
+// not leak to the default-tier namespaces.
 func TestRateLimit_PerNamespaceOverrideHonored(t *testing.T) {
 	def, tenA, _, teardown := newRateLimitTestServer(t, ratelimitTestCfg{
 		NSDefault:   100,
@@ -179,6 +186,8 @@ func TestRateLimit_PerNamespaceOverrideHonored(t *testing.T) {
 	}
 }
 
+// The global aggregate cap throttles total throughput across namespaces once
+// exceeded, surfacing a global-scoped detail.
 func TestRateLimit_GlobalCapTrips(t *testing.T) {
 	def, _, _, teardown := newRateLimitTestServer(t, ratelimitTestCfg{
 		NSDefault: 1000, // out of the way
@@ -206,6 +215,7 @@ func TestRateLimit_GlobalCapTrips(t *testing.T) {
 	}
 }
 
+// The per-IP cap throttles a single client IP regardless of namespace budget.
 func TestRateLimit_PerIPCapTrips(t *testing.T) {
 	def, _, _, teardown := newRateLimitTestServer(t, ratelimitTestCfg{
 		NSDefault: 1000,
@@ -232,9 +242,10 @@ func TestRateLimit_PerIPCapTrips(t *testing.T) {
 	}
 }
 
+// DDoS-defense contract: the per-IP tier sits before Auth, so once an IP's
+// burst is exhausted even unauthenticated requests get 429, not 401 — bad keys
+// can't burn auth CPU.
 func TestRateLimit_PerIPTrumpsAuthFailure(t *testing.T) {
-	// DDoS-defense contract: IP tier sits before Auth, so once an IP's burst
-	// is exhausted, even unauthenticated requests get 429 (not 401).
 	_, _, serverURL, teardown := newRateLimitTestServer(t, ratelimitTestCfg{
 		NSDefault: 1000,
 		PerIP:     3, // burst = 6
@@ -279,6 +290,8 @@ func TestRateLimit_PerIPTrumpsAuthFailure(t *testing.T) {
 	}
 }
 
+// Throttling is temporary: after a throttled namespace waits out one token's
+// refill interval, requests are admitted again.
 func TestRateLimit_RecoversAfterCooldown(t *testing.T) {
 	def, _, _, teardown := newRateLimitTestServer(t, ratelimitTestCfg{NSDefault: 5, PerIP: 1000})
 	defer teardown()

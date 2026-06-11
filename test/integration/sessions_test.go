@@ -25,7 +25,11 @@ import (
 // the repo no longer auto-registers — that orchestration lives in
 // session.Service.Create. Service-level auto-register coverage is below.
 
+// A workload creates a session in a namespace; expects the session row to be
+// persisted with a server-assigned surrogate ID and the token hash stored, not
+// the raw token.
 func TestCreateSession_HappyMinimal(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -52,7 +56,10 @@ func TestCreateSession_HappyMinimal(t *testing.T) {
 	}
 }
 
+// Labels supplied at session-create time are persisted as child rows and
+// retrievable; session creation does not silently drop metadata.
 func TestCreateSession_HappyWithLabels(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -82,11 +89,14 @@ func TestCreateSession_HappyWithLabels(t *testing.T) {
 	}
 }
 
+// Session creation with an unregistered client returns ErrClientNotFound; the
+// service does not auto-register clients on the fly.
 // Post-WI-09c: clients are first-class entities. session.Service.Create no
 // longer auto-registers — the client must exist beforehand. A missing
 // client surfaces as ErrClientNotFound via the DAL's FK-violation
 // translation.
 func TestSessionService_Create_UnregisteredClientReturnsErrClientNotFound(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -106,7 +116,9 @@ func TestSessionService_Create_UnregisteredClientReturnsErrClientNotFound(t *tes
 	}
 }
 
+// Omitting the client field on session create uses the "default" client, not an error.
 func TestSessionService_Create_EmptyClientDefaultsToDefault(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -128,7 +140,9 @@ func TestSessionService_Create_EmptyClientDefaultsToDefault(t *testing.T) {
 	}
 }
 
+// Creating a session for an already-registered client does not create a duplicate client row.
 func TestCreateSession_ExistingClientIdempotent(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -152,7 +166,9 @@ func TestCreateSession_ExistingClientIdempotent(t *testing.T) {
 	}
 }
 
+// Session creation without a token hash is rejected at the DAL boundary.
 func TestCreateSession_EmptySessionTokenHash(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	err := store.Sessions().Create(context.Background(), &db.Session{Namespace: "ns-a", TTLMinutes: 60})
@@ -161,7 +177,9 @@ func TestCreateSession_EmptySessionTokenHash(t *testing.T) {
 	}
 }
 
+// Session creation without a namespace is rejected at the DAL boundary.
 func TestCreateSession_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	raw, err := auth.NewRandomToken()
@@ -179,7 +197,10 @@ func TestCreateSession_EmptyNamespace(t *testing.T) {
 
 // ---------- GetSession ----------
 
+// A workload retrieves a session it created; expects core fields including
+// namespace, client, and TTL to round-trip correctly through the DAL.
 func TestGetSession_HappyNoLabels(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -198,7 +219,10 @@ func TestGetSession_HappyNoLabels(t *testing.T) {
 	}
 }
 
+// Labels attached after session creation are returned in full on Get, keyed
+// correctly with no duplicates or missing entries.
 func TestGetSession_HappyWithLabels(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -217,7 +241,9 @@ func TestGetSession_HappyWithLabels(t *testing.T) {
 	}
 }
 
+// Looking up a non-existent token returns ErrSessionNotFound, not a nil session.
 func TestGetSession_NotFound(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().Get(context.Background(), "ns-a", auth.HashToken("ns-a", "missing"))
@@ -226,7 +252,10 @@ func TestGetSession_NotFound(t *testing.T) {
 	}
 }
 
+// A session token issued in one namespace is invisible when looked up under a
+// different namespace; namespace-isolation returns ErrSessionNotFound, not the session.
 func TestGetSession_CrossNamespaceReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -241,7 +270,10 @@ func TestGetSession_CrossNamespaceReturnsNotFound(t *testing.T) {
 	}
 }
 
+// Two sessions in different namespaces with identical client names are fully
+// independent; reading one does not bleed data from the other.
 func TestGetSession_SameNamespacesIndependent(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -268,7 +300,9 @@ func TestGetSession_SameNamespacesIndependent(t *testing.T) {
 	}
 }
 
+// Get with an empty namespace is rejected before any DB lookup.
 func TestGetSession_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().Get(context.Background(), "", auth.HashToken("", "anything"))
@@ -277,7 +311,9 @@ func TestGetSession_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// Get with a nil token hash is rejected before any DB lookup.
 func TestGetSession_EmptyHash(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().Get(context.Background(), "ns-a", nil)
@@ -288,7 +324,10 @@ func TestGetSession_EmptyHash(t *testing.T) {
 
 // ---------- TouchSession ----------
 
+// Touching a session with a future timestamp advances last_activity, keeping
+// the session alive and its expiry window extended.
 func TestTouchSession_AdvancesTimestamp(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -313,7 +352,10 @@ func TestTouchSession_AdvancesTimestamp(t *testing.T) {
 	}
 }
 
+// Touching a session with a past timestamp does not move last_activity backwards;
+// touch is monotonic.
 func TestTouchSession_MonotonicIgnoresPast(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -337,7 +379,9 @@ func TestTouchSession_MonotonicIgnoresPast(t *testing.T) {
 	}
 }
 
+// Touching a non-existent session returns ErrSessionNotFound.
 func TestTouchSession_NotFound(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	err := store.Sessions().Touch(context.Background(), "ns-a", auth.HashToken("ns-a", "missing"), time.Now())
@@ -346,7 +390,10 @@ func TestTouchSession_NotFound(t *testing.T) {
 	}
 }
 
+// Touching a session under the wrong namespace returns ErrSessionNotFound;
+// namespace-isolation prevents touching another namespace's session.
 func TestTouchSession_CrossNamespaceNotFound(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -357,7 +404,9 @@ func TestTouchSession_CrossNamespaceNotFound(t *testing.T) {
 	}
 }
 
+// Touch with an empty namespace is rejected before any DB lookup.
 func TestTouchSession_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	err := store.Sessions().Touch(context.Background(), "", auth.HashToken("", "anything"), time.Now())
@@ -366,7 +415,9 @@ func TestTouchSession_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// Touch with a nil token hash is rejected before any DB lookup.
 func TestTouchSession_EmptyHash(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	err := store.Sessions().Touch(context.Background(), "ns-a", nil, time.Now())
@@ -377,7 +428,11 @@ func TestTouchSession_EmptyHash(t *testing.T) {
 
 // ---------- DeleteSession ----------
 
+// Deleting a session removes the session row and all child rows (labels,
+// sources, chunks, events, vocabulary) in a single cascade; the result
+// carries accurate counts of every removed child.
 func TestDeleteSession_HappyPathFullCascade(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -428,7 +483,9 @@ func TestDeleteSession_HappyPathFullCascade(t *testing.T) {
 	}
 }
 
+// Deleting a non-existent session returns ErrSessionNotFound.
 func TestDeleteSession_NotFound(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().Delete(context.Background(), "ns-a", auth.HashToken("ns-a", "missing"))
@@ -437,7 +494,11 @@ func TestDeleteSession_NotFound(t *testing.T) {
 	}
 }
 
+// Deleting a session under the wrong namespace returns ErrSessionNotFound and
+// leaves the original session row untouched; namespace-isolation prevents
+// cross-namespace deletion.
 func TestDeleteSession_CrossNamespaceNotFound(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -453,7 +514,11 @@ func TestDeleteSession_CrossNamespaceNotFound(t *testing.T) {
 	}
 }
 
+// Deleting a session in namespace A does not affect sessions, labels, or sources
+// belonging to the same client name in namespace B; namespace-isolation is
+// enforced even when client names collide across namespaces.
 func TestDeleteSession_SameClientDifferentNamespaceIsolated(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -481,7 +546,9 @@ func TestDeleteSession_SameClientDifferentNamespaceIsolated(t *testing.T) {
 	}
 }
 
+// Deleting a session with no child rows succeeds and returns zero cascade counts.
 func TestDeleteSession_NoChildrenCleanDelete(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -498,7 +565,11 @@ func TestDeleteSession_NoChildrenCleanDelete(t *testing.T) {
 	}
 }
 
+// A workload closes a session explicitly; expects the client's last_activity_at
+// to advance to the close moment so operators can distinguish active clients
+// from idle ones.
 func TestDeleteSession_BumpsClientLastActivityAt(t *testing.T) {
+	t.Parallel()
 	// HLD explicit-close requirement: Delete is itself activity on the client,
 	// so clients.last_activity_at advances to the close moment.
 	store, sqlDB, teardown := openConcreteStore(t)
@@ -528,7 +599,11 @@ func TestDeleteSession_BumpsClientLastActivityAt(t *testing.T) {
 	}
 }
 
+// When the TTL scanner deletes a session, clients.last_activity_at carries the
+// session's own last_activity (the workload's last real action), not the scan
+// time; scanner execution is not itself client activity.
 func TestDeleteByID_ClientLastActivityFollowsSessionNotScanTime(t *testing.T) {
+	t.Parallel()
 	// Scanner-triggered delete is NOT client activity — the workload did
 	// nothing; the TTL scanner ran. clients.last_activity_at must carry the
 	// session's own last_activity forward, not the scan moment, so operators
@@ -569,7 +644,10 @@ func TestDeleteByID_ClientLastActivityFollowsSessionNotScanTime(t *testing.T) {
 	}
 }
 
+// Deleting a session never regresses clients.last_activity_at; if the stored
+// value is already later than the session's own activity, it is left unchanged.
 func TestDeleteSession_MonotonicClientLastActivityAt(t *testing.T) {
+	t.Parallel()
 	// GREATEST guards against tx-start-order racing commit-order: a delete
 	// whose tx started earlier must not stamp clients.last_activity_at with
 	// its older NOW() over a sibling's later bump. We simulate the hazard
@@ -604,7 +682,10 @@ func TestDeleteSession_MonotonicClientLastActivityAt(t *testing.T) {
 	}
 }
 
+// Deleting one session within a namespace does not affect a sibling session's
+// sources or chunks; session-isolation prevents collateral deletion.
 func TestDeleteSession_NegativeIsolation(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -628,7 +709,9 @@ func TestDeleteSession_NegativeIsolation(t *testing.T) {
 	}
 }
 
+// Delete with an empty namespace is rejected before any DB lookup.
 func TestDeleteSession_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().Delete(context.Background(), "", auth.HashToken("", "anything"))
@@ -637,7 +720,9 @@ func TestDeleteSession_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// Delete with a nil token hash is rejected before any DB lookup.
 func TestDeleteSession_EmptyHash(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().Delete(context.Background(), "ns-a", nil)
@@ -648,7 +733,9 @@ func TestDeleteSession_EmptyHash(t *testing.T) {
 
 // ---------- ListManagedSessions ----------
 
+// List with an empty namespace is rejected before any DB query.
 func TestListManagedSessions_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().List(context.Background(), db.ListSessionsFilter{})
@@ -657,7 +744,9 @@ func TestListManagedSessions_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// Listing sessions in a namespace with no sessions returns an empty slice, not an error.
 func TestListManagedSessions_NoSessions(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	got, err := store.Sessions().List(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
@@ -669,7 +758,10 @@ func TestListManagedSessions_NoSessions(t *testing.T) {
 	}
 }
 
+// A single session with no labels is listed with correct ID, zero event count,
+// and nil labels map.
 func TestListManagedSessions_SingleSessionNoLabels(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -688,7 +780,10 @@ func TestListManagedSessions_SingleSessionNoLabels(t *testing.T) {
 	}
 }
 
+// Listing a session returns the correct event_count and the full label map
+// without duplicates or missing entries.
 func TestListManagedSessions_LabelsAndEventCount(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -717,7 +812,10 @@ func TestListManagedSessions_LabelsAndEventCount(t *testing.T) {
 	}
 }
 
+// Sessions are listed in descending last_activity order so the most recently
+// active session appears first, regardless of creation order.
 func TestListManagedSessions_OrderedByLastActivityDesc(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -742,7 +840,10 @@ func TestListManagedSessions_OrderedByLastActivityDesc(t *testing.T) {
 	}
 }
 
+// Filtering sessions by client returns only that client's sessions and excludes
+// sessions belonging to other clients in the same namespace.
 func TestListManagedSessions_ClientFilter(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -766,7 +867,10 @@ func TestListManagedSessions_ClientFilter(t *testing.T) {
 	}
 }
 
+// Filtering sessions by a single label key=value returns only sessions with
+// that exact label; sessions with a different value for the same key are excluded.
 func TestListManagedSessions_LabelFilterSingleKey(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -788,7 +892,10 @@ func TestListManagedSessions_LabelFilterSingleKey(t *testing.T) {
 	}
 }
 
+// Multi-key label filter applies AND semantics; only sessions matching all
+// supplied key=value pairs are returned.
 func TestListManagedSessions_LabelFilterMultiKeyAND(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -811,7 +918,11 @@ func TestListManagedSessions_LabelFilterMultiKeyAND(t *testing.T) {
 	}
 }
 
+// Listing sessions scoped to namespace B returns only namespace B's sessions
+// even when namespace A has sessions with the same client name; namespace-isolation
+// prevents cross-namespace data leakage in list results.
 func TestListManagedSessions_CrossNamespaceIsolation(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -837,7 +948,9 @@ func TestListManagedSessions_CrossNamespaceIsolation(t *testing.T) {
 
 // ---------- CountSessions ----------
 
+// Count with an empty namespace is rejected before any DB query.
 func TestCountSessions_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().Count(context.Background(), db.ListSessionsFilter{})
@@ -846,7 +959,9 @@ func TestCountSessions_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// Count returns zero for a namespace with no sessions, not an error.
 func TestCountSessions_Zero(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	got, err := store.Sessions().Count(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
@@ -858,7 +973,10 @@ func TestCountSessions_Zero(t *testing.T) {
 	}
 }
 
+// Count respects combined client and label filters, returning only the
+// matching subset rather than the full namespace count.
 func TestCountSessions_HappyWithFilters(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -881,7 +999,10 @@ func TestCountSessions_HappyWithFilters(t *testing.T) {
 	}
 }
 
+// Count scoped to one namespace does not include sessions from another
+// namespace; namespace-isolation applies to aggregate queries.
 func TestCountSessions_CrossNamespaceIsolation(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -902,7 +1023,9 @@ func TestCountSessions_CrossNamespaceIsolation(t *testing.T) {
 
 // ---------- DeleteSessions ----------
 
+// DeleteAll with an empty namespace is rejected before any DB mutation.
 func TestDeleteSessions_EmptyNamespace(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	_, err := store.Sessions().DeleteAll(context.Background(), db.ListSessionsFilter{})
@@ -911,7 +1034,9 @@ func TestDeleteSessions_EmptyNamespace(t *testing.T) {
 	}
 }
 
+// DeleteAll on a namespace with no sessions returns a zero result, not an error.
 func TestDeleteSessions_NoMatch(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 	res, err := store.Sessions().DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
@@ -923,7 +1048,11 @@ func TestDeleteSessions_NoMatch(t *testing.T) {
 	}
 }
 
+// Bulk-deleting all sessions in a namespace removes every session row and all
+// child rows across labels, sources, chunks, and events; the result carries
+// accurate cascade counts.
 func TestDeleteSessions_HappyBulkCascade(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -953,7 +1082,10 @@ func TestDeleteSessions_HappyBulkCascade(t *testing.T) {
 	}
 }
 
+// DeleteAll with a client filter removes only that client's sessions and leaves
+// other clients' sessions in the same namespace untouched.
 func TestDeleteSessions_ClientFilter(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -975,7 +1107,10 @@ func TestDeleteSessions_ClientFilter(t *testing.T) {
 	}
 }
 
+// DeleteAll with a label filter removes only sessions matching the label and
+// leaves sessions with different label values untouched.
 func TestDeleteSessions_LabelFilter(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1002,7 +1137,10 @@ func TestDeleteSessions_LabelFilter(t *testing.T) {
 	}
 }
 
+// DeleteAll scoped to namespace A does not touch sessions in namespace B;
+// namespace-isolation prevents bulk deletes from crossing trust boundaries.
 func TestDeleteSessions_CrossNamespaceIsolation(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1025,7 +1163,9 @@ func TestDeleteSessions_CrossNamespaceIsolation(t *testing.T) {
 
 // ---------- ScanExpiredSessions ----------
 
+// A session with a future expiry does not appear in ScanExpired results.
 func TestScanExpiredSessions_NoneExpired(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1041,7 +1181,10 @@ func TestScanExpiredSessions_NoneExpired(t *testing.T) {
 	}
 }
 
+// ScanExpired returns only sessions past their TTL-derived expiry, ordered
+// oldest-expired first; fresh sessions are excluded regardless of TTL length.
 func TestScanExpiredSessions_MixedTTLs(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1073,7 +1216,11 @@ func TestScanExpiredSessions_MixedTTLs(t *testing.T) {
 	}
 }
 
+// ScanExpired returns expired sessions from all namespaces in a single scan
+// and includes the namespace in each result so the caller can route deletions
+// correctly.
 func TestScanExpiredSessions_CrossNamespace(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1114,7 +1261,10 @@ func deleteSessionRowByID(t *testing.T, sqlDB *sql.DB, id int64) {
 	}
 }
 
+// Creating a session primes the in-process cache so a subsequent Lookup hits
+// the cache rather than the DB, even after the DB row is deleted.
 func TestSessionService_Create_PrimesCache(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", "alice")
@@ -1141,7 +1291,10 @@ func TestSessionService_Create_PrimesCache(t *testing.T) {
 	}
 }
 
+// A Lookup that misses the cache loads from DB and populates the cache; a
+// second Lookup after the DB row is deleted still succeeds from cache.
 func TestSessionService_Lookup_MissPopulatesCache(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1163,7 +1316,10 @@ func TestSessionService_Lookup_MissPopulatesCache(t *testing.T) {
 	}
 }
 
+// A failed Lookup (not found) is not negatively cached; a repeat call goes to
+// DB again and still returns ErrSessionNotFound.
 func TestSessionService_Lookup_NotFoundNotCached(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1177,7 +1333,10 @@ func TestSessionService_Lookup_NotFoundNotCached(t *testing.T) {
 	}
 }
 
+// Deleting a session invalidates its cache entry; a subsequent Lookup returns
+// ErrSessionNotFound rather than the stale cached value.
 func TestSessionService_Delete_InvalidatesCache(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -1195,7 +1354,10 @@ func TestSessionService_Delete_InvalidatesCache(t *testing.T) {
 	}
 }
 
+// DeleteAll for namespace A evicts only namespace A's cache entries; namespace
+// B's entries remain cached and serveable without a DB round-trip.
 func TestSessionService_DeleteAll_InvalidatesOnlyTargetNamespace(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -1232,7 +1394,10 @@ func TestSessionService_DeleteAll_InvalidatesOnlyTargetNamespace(t *testing.T) {
 	}
 }
 
+// Touching a session whose DB row was deleted behind the cache evicts the stale
+// entry; a subsequent Lookup goes to DB and correctly returns ErrSessionNotFound.
 func TestSessionService_Touch_OnStaleEntrySelfHeals(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -1254,7 +1419,10 @@ func TestSessionService_Touch_OnStaleEntrySelfHeals(t *testing.T) {
 	}
 }
 
+// Sessions in separate namespaces are independently retrievable from cache;
+// a Lookup in one namespace never returns metadata from the other.
 func TestSessionService_SeparateNamespacesIndependent(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", "alice")
@@ -1285,7 +1453,10 @@ func TestSessionService_SeparateNamespacesIndependent(t *testing.T) {
 	}
 }
 
+// With cache disabled (CacheSize=0), every Lookup goes to the DB; a deleted
+// session is not served from any in-process store.
 func TestSessionService_CacheDisabled_AlwaysHitsDB(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -1308,7 +1479,10 @@ func TestSessionService_CacheDisabled_AlwaysHitsDB(t *testing.T) {
 // surfaces it via RETURNING; Get re-reads it; Touch causes the trigger to
 // recompute it.
 
+// The expires_at column is populated by the DB trigger on Create and returned
+// via RETURNING; its value equals last_activity + TTL within a small tolerance.
 func TestSession_ExpiresAtPopulatedOnCreate(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -1325,7 +1499,10 @@ func TestSession_ExpiresAtPopulatedOnCreate(t *testing.T) {
 	}
 }
 
+// Get reads expires_at from the DB and returns it in the session struct; the
+// field is never zero after a successful fetch.
 func TestSession_ExpiresAtPopulatedOnGet(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1346,7 +1523,10 @@ func TestSession_ExpiresAtPopulatedOnGet(t *testing.T) {
 	}
 }
 
+// Touching a session with a later timestamp causes the trigger to recompute
+// expires_at; a subsequent Get returns an expiry later than the pre-touch value.
 func TestSession_ExpiresAtRecomputesOnTouch(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
@@ -1378,7 +1558,10 @@ func TestSession_ExpiresAtRecomputesOnTouch(t *testing.T) {
 // short interval (20 ms) so the scan happens before the test budget runs out.
 // The scanner exits on context cancel; tests cancel + wait on a done channel.
 
+// The TTL scanner deletes a session whose TTL has already elapsed within a
+// single scan tick; the session row is gone from the DB within 500ms.
 func TestTTLScanner_ReapsExpiredSessionWithinOneTick(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1415,7 +1598,10 @@ func TestTTLScanner_ReapsExpiredSessionWithinOneTick(t *testing.T) {
 	t.Fatal("scanner did not delete expired session within 500ms")
 }
 
+// The TTL scanner reaps expired sessions across all namespaces in a single
+// pass and does not delete unexpired sessions from any namespace.
 func TestTTLScanner_CrossNamespaceExpiry(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1467,7 +1653,10 @@ func TestTTLScanner_CrossNamespaceExpiry(t *testing.T) {
 	}
 }
 
+// Cancelling the scanner's context causes it to stop promptly without blocking
+// or leaking goroutines.
 func TestTTLScanner_ContextCancelStopsCleanly(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -1490,7 +1679,10 @@ func TestTTLScanner_ContextCancelStopsCleanly(t *testing.T) {
 	}
 }
 
+// The ScanExpired query can use the sessions_expires_at_idx index; this guards
+// against schema or query changes that would force a full table scan at scale.
 func TestTTLScanner_QueryUsesIndex(t *testing.T) {
+	t.Parallel()
 	// Guard against future regressions where someone alters the schema or
 	// the query in a way that drops index usage. Forces enable_seqscan=off
 	// for the EXPLAIN — at integration-test row counts the planner would

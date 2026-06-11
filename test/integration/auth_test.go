@@ -14,6 +14,7 @@ import (
 	"github.com/one-harsh/calm/internal/auth"
 )
 
+// A request with the correct Bearer API key is accepted and creates a session (201).
 func TestBearerAuthSucceeds(t *testing.T) {
 	resp, err := env.client.CreateSessionWithResponse(
 		context.Background(),
@@ -28,6 +29,7 @@ func TestBearerAuthSucceeds(t *testing.T) {
 	}
 }
 
+// A request with no Authorization header is rejected with 401.
 func TestMissingAuthHeaderRejected(t *testing.T) {
 	status := rawPOSTStatus(t, "/v1/sessions", `{}`, nil)
 	if status != http.StatusUnauthorized {
@@ -35,6 +37,7 @@ func TestMissingAuthHeaderRejected(t *testing.T) {
 	}
 }
 
+// An Authorization header using a scheme other than Bearer (e.g. Basic) is rejected with 401.
 func TestNonBearerSchemeRejected(t *testing.T) {
 	status := rawPOSTStatus(t, "/v1/sessions", `{}`, map[string]string{
 		auth.HeaderAuthorization: "Basic dXNlcjpwYXNz",
@@ -44,6 +47,7 @@ func TestNonBearerSchemeRejected(t *testing.T) {
 	}
 }
 
+// A Bearer token that is not registered in the namespace registry is rejected with 401.
 func TestUnknownBearerKeyRejected(t *testing.T) {
 	status := rawPOSTStatus(t, "/v1/sessions", `{}`, map[string]string{
 		auth.HeaderAuthorization: auth.BearerPrefix + "not-a-real-key",

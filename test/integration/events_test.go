@@ -14,7 +14,10 @@ import (
 
 // ---------- WriteEvents ----------
 
+// A workload writes a single event to its session; CALM persists exactly one row
+// and reports accepted=1.
 func TestWriteEvents_SingleEventInserted(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -36,7 +39,10 @@ func TestWriteEvents_SingleEventInserted(t *testing.T) {
 	}
 }
 
+// A workload writes a multi-event batch; all events are persisted and the
+// accepted count matches the batch size.
 func TestWriteEvents_BatchAllInserted(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -63,7 +69,9 @@ func TestWriteEvents_BatchAllInserted(t *testing.T) {
 	}
 }
 
+// An empty/nil batch is a no-op: zero rows inserted, zero accepted, no error.
 func TestWriteEvents_EmptyBatchNoOp(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -83,7 +91,9 @@ func TestWriteEvents_EmptyBatchNoOp(t *testing.T) {
 	}
 }
 
+// An empty namespace string is rejected with ErrNamespaceRequired before any DB touch.
 func TestWriteEvents_EmptyNamespaceRejects(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -98,7 +108,10 @@ func TestWriteEvents_EmptyNamespaceRejects(t *testing.T) {
 	}
 }
 
+// Priority 0 in any event of a batch causes the entire batch to be rejected
+// atomically — zero rows land and ErrInvalidPriority is returned.
 func TestWriteEvents_PriorityZeroRejectsBatch(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -123,7 +136,9 @@ func TestWriteEvents_PriorityZeroRejectsBatch(t *testing.T) {
 	}
 }
 
+// Priority 5 (above the 1–4 valid range) is rejected with ErrInvalidPriority.
 func TestWriteEvents_PriorityFiveRejectsBatch(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -141,7 +156,9 @@ func TestWriteEvents_PriorityFiveRejectsBatch(t *testing.T) {
 	}
 }
 
+// Writing to a non-existent session_id returns ErrSessionNotFound.
 func TestWriteEvents_UnknownSessionMapsToNotFound(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -156,10 +173,11 @@ func TestWriteEvents_UnknownSessionMapsToNotFound(t *testing.T) {
 	}
 }
 
-// Defense-in-depth: a session_id from another namespace must read as
-// ErrSessionNotFound even though session_ids are globally unique. Same
-// invisibility-not-denial semantic the rest of the DAL enforces.
+// A workload in namespace B attempts to write events into a session that belongs
+// to namespace A; the DAL returns ErrSessionNotFound (namespace-isolation:
+// invisibility-not-denial) and no rows are written.
 func TestWriteEvents_CrossNamespaceSessionMapsToNotFound(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -179,7 +197,10 @@ func TestWriteEvents_CrossNamespaceSessionMapsToNotFound(t *testing.T) {
 	}
 }
 
+// Two sessions in the same namespace each write distinct events; reading either
+// session returns only its own events and never the other's (session-isolation).
 func TestWriteEvents_SessionIsolationWithinNamespace(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -214,7 +235,10 @@ func TestWriteEvents_SessionIsolationWithinNamespace(t *testing.T) {
 	}
 }
 
+// Events written under namespace A are invisible when reading from namespace B
+// even when both use the same session_id surrogate (namespace-isolation).
 func TestWriteEvents_CrossNamespaceIsolation(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -245,7 +269,9 @@ func TestWriteEvents_CrossNamespaceIsolation(t *testing.T) {
 
 // ---------- ReadEvents ----------
 
+// Reading from a session that has no events returns an empty slice, not an error.
 func TestReadEvents_EmptySessionReturnsEmptySlice(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -261,7 +287,9 @@ func TestReadEvents_EmptySessionReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+// An empty namespace string on a read is rejected with ErrNamespaceRequired.
 func TestReadEvents_EmptyNamespaceRejects(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -274,7 +302,10 @@ func TestReadEvents_EmptyNamespaceRejects(t *testing.T) {
 	}
 }
 
+// Reading a session_id from a different namespace returns empty results, not an
+// error — namespace-isolation invisibility-not-denial on the read path.
 func TestReadEvents_CrossNamespaceSessionIsInvisible(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -292,7 +323,10 @@ func TestReadEvents_CrossNamespaceSessionIsInvisible(t *testing.T) {
 	}
 }
 
+// Events are returned ordered ascending by priority, then descending by
+// created_at within the same priority (most recent first within each tier).
 func TestReadEvents_OrderedByPriorityThenCreatedAtDesc(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -320,7 +354,9 @@ func TestReadEvents_OrderedByPriorityThenCreatedAtDesc(t *testing.T) {
 	}
 }
 
+// The Types filter with a single value returns only matching events.
 func TestReadEvents_TypeFilterSingle(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -339,7 +375,9 @@ func TestReadEvents_TypeFilterSingle(t *testing.T) {
 	}
 }
 
+// The Types filter with multiple values returns exactly those matching types.
 func TestReadEvents_TypeFilterMultiple(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -362,7 +400,10 @@ func TestReadEvents_TypeFilterMultiple(t *testing.T) {
 	}
 }
 
+// MinPriority acts as an inclusive ceiling: only events with priority ≤
+// MinPriority are returned.
 func TestReadEvents_MinPriorityCeiling(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -386,7 +427,9 @@ func TestReadEvents_MinPriorityCeiling(t *testing.T) {
 	}
 }
 
+// MinPriority above the valid range (5+) is rejected with ErrInvalidPriority.
 func TestReadEvents_MinPriorityAboveRangeRejects(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -399,7 +442,9 @@ func TestReadEvents_MinPriorityAboveRangeRejects(t *testing.T) {
 	}
 }
 
+// A negative MinPriority is rejected with ErrInvalidPriority.
 func TestReadEvents_MinPriorityNegativeRejects(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -412,7 +457,9 @@ func TestReadEvents_MinPriorityNegativeRejects(t *testing.T) {
 	}
 }
 
+// An explicit Limit caps the number of returned events to that value.
 func TestReadEvents_LimitHonored(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -431,7 +478,9 @@ func TestReadEvents_LimitHonored(t *testing.T) {
 	}
 }
 
+// When no Limit is set, the DAL caps results at 100 (the documented default).
 func TestReadEvents_LimitDefaultsTo100(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -450,7 +499,9 @@ func TestReadEvents_LimitDefaultsTo100(t *testing.T) {
 	}
 }
 
+// A negative Limit is rejected with ErrInvalidLimit.
 func TestReadEvents_LimitNegativeRejects(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 

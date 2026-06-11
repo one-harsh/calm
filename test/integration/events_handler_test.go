@@ -14,7 +14,10 @@ import (
 
 // ---------- WriteEvents handler ----------
 
+// A workload posts a single event to its session; CALM accepts it (202 accepted=1)
+// and the row lands in the DB.
 func TestWriteEventsHandler_HappySingleEvent(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 
 	resp, err := env.client.WriteEventsWithResponse(
@@ -41,7 +44,9 @@ func TestWriteEventsHandler_HappySingleEvent(t *testing.T) {
 	}
 }
 
+// A workload posts a batch of events; all are accepted with zero rejections.
 func TestWriteEventsHandler_HappyBatch(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 
 	resp, err := env.client.WriteEventsWithResponse(
@@ -69,7 +74,9 @@ func TestWriteEventsHandler_HappyBatch(t *testing.T) {
 	}
 }
 
+// A token that resolves to no session returns 404 before reaching the handler.
 func TestWriteEventsHandler_UnknownSessionReturns404(t *testing.T) {
+	t.Parallel()
 	resp, err := env.client.WriteEventsWithResponse(
 		context.Background(),
 		&genapi.WriteEventsParams{XCALMSessionToken: "unknown-session-token-xxx"},
@@ -87,7 +94,10 @@ func TestWriteEventsHandler_UnknownSessionReturns404(t *testing.T) {
 	}
 }
 
+// A tenant B client presenting a session token from tenant A is rejected with
+// 404 (namespace-isolation: invisibility-not-denial) and no events are written.
 func TestWriteEventsHandler_CrossNamespaceSessionReturns404(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 	tenantClient := env.clientForNamespace(t, testTenantANamespace)
 
@@ -112,7 +122,9 @@ func TestWriteEventsHandler_CrossNamespaceSessionReturns404(t *testing.T) {
 	}
 }
 
+// An event with priority outside 1–4 is rejected with 400.
 func TestWriteEventsHandler_PriorityOutOfRangeReturns400(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 
 	resp, err := env.client.WriteEventsWithResponse(
@@ -132,7 +144,9 @@ func TestWriteEventsHandler_PriorityOutOfRangeReturns400(t *testing.T) {
 	}
 }
 
+// An empty events array fails OpenAPI validation and is rejected with 400.
 func TestWriteEventsHandler_EmptyEventsArrayReturns400(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 
 	resp, err := env.client.WriteEventsWithResponse(
@@ -148,7 +162,11 @@ func TestWriteEventsHandler_EmptyEventsArrayReturns400(t *testing.T) {
 	}
 }
 
+// The SessionResolve middleware advances last_activity after both write and read
+// calls — confirming the Touch fires on every 2xx, not only on session-creating
+// endpoints.
 func TestEventsHandler_MiddlewareTouchesOnWriteAndRead(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 	var beforeWrite time.Time
 	if err := env.sqlDB.QueryRowContext(context.Background(),
@@ -196,7 +214,9 @@ func TestEventsHandler_MiddlewareTouchesOnWriteAndRead(t *testing.T) {
 
 // ---------- ReadEvents handler ----------
 
+// A workload reads from a session with no events; CALM returns 200 with an empty list.
 func TestReadEventsHandler_EmptySession(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 
 	resp, err := env.client.ReadEventsWithResponse(
@@ -214,7 +234,10 @@ func TestReadEventsHandler_EmptySession(t *testing.T) {
 	}
 }
 
+// A workload writes two events then reads them back; CALM returns both ordered
+// by ascending priority and the data payload is preserved exactly.
 func TestReadEventsHandler_AfterWrite(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 
 	if _, err := env.client.WriteEventsWithResponse(
@@ -252,7 +275,9 @@ func TestReadEventsHandler_AfterWrite(t *testing.T) {
 	}
 }
 
+// The types query parameter filters events to the requested types only.
 func TestReadEventsHandler_TypesFilter(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 	seedEvent(t, env.sqlDB, s.ID, "a", 2, []byte(`{}`))
 	seedEvent(t, env.sqlDB, s.ID, "b", 2, []byte(`{}`))
@@ -274,7 +299,9 @@ func TestReadEventsHandler_TypesFilter(t *testing.T) {
 	}
 }
 
+// The min_priority parameter filters events to those with priority ≤ the value.
 func TestReadEventsHandler_MinPriorityFilter(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 	seedEvent(t, env.sqlDB, s.ID, "p1", 1, []byte(`{}`))
 	seedEvent(t, env.sqlDB, s.ID, "p2", 2, []byte(`{}`))
@@ -301,7 +328,9 @@ func TestReadEventsHandler_MinPriorityFilter(t *testing.T) {
 	}
 }
 
+// The limit query parameter caps the number of events returned.
 func TestReadEventsHandler_LimitHonored(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 	for i := 0; i < 5; i++ {
 		seedEvent(t, env.sqlDB, s.ID, "t", 2, []byte(`{}`))
@@ -323,7 +352,9 @@ func TestReadEventsHandler_LimitHonored(t *testing.T) {
 	}
 }
 
+// A token that resolves to no session returns 404 before reaching the handler.
 func TestReadEventsHandler_UnknownSessionReturns404(t *testing.T) {
+	t.Parallel()
 	resp, err := env.client.ReadEventsWithResponse(
 		context.Background(),
 		&genapi.ReadEventsParams{XCALMSessionToken: "unknown-session-token-xxx"},
@@ -336,7 +367,10 @@ func TestReadEventsHandler_UnknownSessionReturns404(t *testing.T) {
 	}
 }
 
+// A tenant B client presenting a session token from tenant A is rejected with
+// 404 on reads (namespace-isolation: invisibility-not-denial).
 func TestReadEventsHandler_CrossNamespaceSessionReturns404(t *testing.T) {
+	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
 	tenantClient := env.clientForNamespace(t, testTenantANamespace)
 

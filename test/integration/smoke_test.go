@@ -15,6 +15,8 @@ import (
 	"github.com/one-harsh/calm/internal/auth"
 )
 
+// A real request traverses the full middleware chain and route tree to the live
+// handler (200 + JSON) — proves the harness wiring, not just a unit handler.
 func TestHarness_RoutesResolve(t *testing.T) {
 	t.Parallel()
 	s := createSessionForTest(t, testNamespace)
@@ -33,6 +35,8 @@ func TestHarness_RoutesResolve(t *testing.T) {
 	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
 }
 
+// Every response carries a server-minted X-CALM-Correlation-Id, stamped by the
+// context middleware even when the workload sends none.
 func TestHarness_CorrelationIDPropagation(t *testing.T) {
 	t.Parallel()
 
@@ -49,6 +53,8 @@ func TestHarness_CorrelationIDPropagation(t *testing.T) {
 		"context middleware must stamp a correlation id on every response")
 }
 
+// A malformed request body is rejected with 400 by the OpenAPI validator before
+// the handler ever runs.
 func TestHarness_OpenAPIValidationFiresBeforeHandler(t *testing.T) {
 	t.Parallel()
 

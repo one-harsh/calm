@@ -54,12 +54,16 @@ func (r *sessionRepo) Create(ctx context.Context, sess *Session) error {
 	}
 
 	return inTx(ctx, r.queryer, func(tx *sql.Tx) error {
+		// last_activity is stamped from the app clock (not the column's NOW()
+		// default) so it shares a clock with Touch; otherwise GREATEST would mix
+		// the DB clock at create with the app clock on Touch and last_activity
+		// could appear to move backward under DB/app clock skew.
 		if err := tx.QueryRowContext(
 			ctx,
-			`INSERT INTO sessions (namespace, session_token_hash, client, ttl_minutes)
-			 VALUES ($1, $2, $3, $4)
+			`INSERT INTO sessions (namespace, session_token_hash, client, ttl_minutes, last_activity)
+			 VALUES ($1, $2, $3, $4, $5)
 			 RETURNING id, created_at, last_activity, expires_at`,
-			sess.Namespace, sess.SessionTokenHash, sess.Client, sess.TTLMinutes,
+			sess.Namespace, sess.SessionTokenHash, sess.Client, sess.TTLMinutes, time.Now().UTC(),
 		).Scan(&sess.ID, &sess.CreatedAt, &sess.LastActivity, &sess.ExpiresAt); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) {

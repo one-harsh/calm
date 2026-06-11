@@ -15,6 +15,7 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
 
+// GET /v1/health returns ok with a passing postgres check when the DB is reachable.
 func TestHealthReportsPostgresReachable(t *testing.T) {
 	t.Parallel()
 
@@ -33,6 +34,7 @@ func TestHealthReportsPostgresReachable(t *testing.T) {
 	assert.Equal(t, genapi.Ok, body.Checks["postgres"])
 }
 
+// GET /v1/version reports the version string the service was configured with.
 func TestVersionReportsConfiguredVersion(t *testing.T) {
 	t.Parallel()
 

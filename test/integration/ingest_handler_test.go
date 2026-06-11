@@ -13,7 +13,10 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
 
+// Workload ingests a two-paragraph document; expects 200 with source echoed, sections_total 2,
+// a two-entry summary, and summary_truncated false.
 func TestIngestHandler_Happy(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -37,7 +40,10 @@ func TestIngestHandler_Happy(t *testing.T) {
 	}
 }
 
+// Re-ingesting the same source with different content replaces prior chunks atomically;
+// the session shows exactly one source with the updated chunk count (idempotent-indexing).
 func TestIngestHandler_IdempotentReingest(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	ctx := context.Background()
@@ -71,7 +77,10 @@ func TestIngestHandler_IdempotentReingest(t *testing.T) {
 	}
 }
 
+// Ingesting more than 50 sections returns sections_total equal to the full count, summary
+// capped at 50 entries, and summary_truncated true.
 func TestIngestHandler_SummaryTruncatedAt50(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -99,7 +108,10 @@ func TestIngestHandler_SummaryTruncatedAt50(t *testing.T) {
 	}
 }
 
+// Whitespace-only content ingests without error; the source is recorded with zero chunks
+// and the response shows 0 for sections_total, sections_indexed, and summary length.
 func TestIngestHandler_EmptyContentZeroSections(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	ctx := context.Background()
@@ -128,7 +140,10 @@ func TestIngestHandler_EmptyContentZeroSections(t *testing.T) {
 	}
 }
 
+// Ingest with intents returns a summary in document order; no per-section match signal is
+// emitted because intent filtering is not yet applied.
 func TestIngestHandler_IntentsAcceptedDocumentOrder(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -153,7 +168,10 @@ func TestIngestHandler_IntentsAcceptedDocumentOrder(t *testing.T) {
 	}
 }
 
+// Presenting a session token to a namespace different from the one that minted it returns 404
+// (namespace-isolation: cross-namespace sessions are invisible).
 func TestIngestHandler_CrossNamespaceInvisible404(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testTenantANamespace)
 
@@ -168,7 +186,9 @@ func TestIngestHandler_CrossNamespaceInvisible404(t *testing.T) {
 	}
 }
 
+// A request body exceeding 1 MB is rejected with 413 before reaching the handler.
 func TestIngestHandler_PayloadTooLarge413(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -184,7 +204,9 @@ func TestIngestHandler_PayloadTooLarge413(t *testing.T) {
 	}
 }
 
+// A freshly created session with no ingested content returns an empty sources list.
 func TestListSourcesHandler_Empty(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -201,7 +223,9 @@ func TestListSourcesHandler_Empty(t *testing.T) {
 	}
 }
 
+// Listing sources with a session token from a different namespace returns 404 (namespace-isolation).
 func TestListSourcesHandler_CrossNamespaceInvisible404(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testTenantANamespace)
 

@@ -18,6 +18,7 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 )
 
+// A workload creates a session with no optional fields; the server mints a session token, resolves the namespace from the API key, and returns the committed TTL and client.
 func TestCreateSessionHandler_HappyMinimal(t *testing.T) {
 	resp, err := env.client.CreateSessionWithResponse(
 		context.Background(),
@@ -59,6 +60,7 @@ func TestCreateSessionHandler_HappyMinimal(t *testing.T) {
 	}
 }
 
+// A workload creates a session with all optional fields set; client, TTL override, and labels are committed and the response echoes the committed shape.
 func TestCreateSessionHandler_HappyWithAllFields(t *testing.T) {
 	client := "alice"
 	seedClient(t, env.sqlDB, testNamespace, client)
@@ -104,6 +106,7 @@ func TestCreateSessionHandler_HappyWithAllFields(t *testing.T) {
 	}
 }
 
+// Attempting to create a session for a client that has not been registered returns 400 with error=client_not_found; the handler must not implicitly register clients.
 func TestCreateSessionHandler_UnregisteredClientReturns400(t *testing.T) {
 	// Post-WI-09c: client is a first-class entity. Sessions cannot be created
 	// for an unregistered client — the FK violation surfaces as 400
@@ -136,6 +139,7 @@ func TestCreateSessionHandler_UnregisteredClientReturns400(t *testing.T) {
 	}
 }
 
+// Omitting the client field defaults to the built-in default client; no explicit registration is required.
 func TestCreateSessionHandler_DefaultsEmptyClient(t *testing.T) {
 	resp, err := env.client.CreateSessionWithResponse(
 		context.Background(),
@@ -153,6 +157,7 @@ func TestCreateSessionHandler_DefaultsEmptyClient(t *testing.T) {
 	}
 }
 
+// Omitting ttl_minutes uses the operator-configured default; the response echoes the committed value.
 func TestCreateSessionHandler_AbsentTTLUsesConfigInactivityValue(t *testing.T) {
 	resp, err := env.client.CreateSessionWithResponse(
 		context.Background(),
@@ -168,6 +173,7 @@ func TestCreateSessionHandler_AbsentTTLUsesConfigInactivityValue(t *testing.T) {
 	}
 }
 
+// A session-create request without X-CALM-API-Key returns 401; auth is enforced before any session logic runs.
 func TestCreateSessionHandler_MissingBearerReturns401(t *testing.T) {
 	// Raw HTTP — bypassing the typed client (which always attaches the bearer).
 	httpReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost,
@@ -184,6 +190,7 @@ func TestCreateSessionHandler_MissingBearerReturns401(t *testing.T) {
 	}
 }
 
+// A requested TTL between the operator max and the OpenAPI cap is clamped to the operator max; the response echoes the committed (clamped) value.
 func TestCreateSessionHandler_RequestedTTLAboveOperatorMaxClamped(t *testing.T) {
 	// testMaxTTLMinutes is 240; OpenAPI cap is 10080. A value between them
 	// passes the validator and gets clamped by the handler. Response echoes
@@ -207,6 +214,7 @@ func TestCreateSessionHandler_RequestedTTLAboveOperatorMaxClamped(t *testing.T) 
 	}
 }
 
+// A ttl_minutes value above the OpenAPI maximum is rejected by the validator with 400 before reaching handler logic.
 func TestCreateSessionHandler_OverMaxTTLRejected400(t *testing.T) {
 	overMax := 20_000 // > OpenAPI max of 10080
 	resp, err := env.client.CreateSessionWithResponse(
@@ -225,6 +233,7 @@ func TestCreateSessionHandler_OverMaxTTLRejected400(t *testing.T) {
 	}
 }
 
+// Session-create response never includes a labels field; the minimal Session shape omits labels even when labels were submitted.
 func TestCreateSessionHandler_ResponseHasNoLabelsField(t *testing.T) {
 	labels := map[string]string{"x": "y"}
 	resp, err := env.client.CreateSessionWithResponse(
@@ -249,6 +258,7 @@ func TestCreateSessionHandler_ResponseHasNoLabelsField(t *testing.T) {
 	}
 }
 
+// Routes that exist in the OpenAPI spec but have no handler implementation return 501 with error=not_implemented.
 func TestNotImplementedHandlersStillReturn501(t *testing.T) {
 	httpReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
 		env.serverURL+"/v1/manage/sessions", http.NoBody)
@@ -270,6 +280,7 @@ func TestNotImplementedHandlersStillReturn501(t *testing.T) {
 	}
 }
 
+// A workload deletes its session; the session row and all dependent rows (labels, sources, chunks, events) are removed in cascade, and the client's last_activity_at is stamped.
 func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
 	s := seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, 60)
@@ -324,6 +335,8 @@ func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 	}
 }
 
+// An explicit workload DELETE bumps clients.last_activity_at to the current time, not the session's last_activity; the scanner-driven path behaves differently.
+//
 // Regression: explicit DELETE bumps clients.last_activity_at to NOW(); the
 // scanner-driven DeleteByID path preserves session.last_activity instead.
 func TestDeleteSessionHandler_BumpsClientActivityToNow(t *testing.T) {
@@ -358,6 +371,7 @@ func TestDeleteSessionHandler_BumpsClientActivityToNow(t *testing.T) {
 	}
 }
 
+// Deleting a session that does not exist returns 404 with error=session_not_found.
 func TestDeleteSessionHandler_UnknownSessionReturns404(t *testing.T) {
 	resp, err := env.client.DeleteSessionWithResponse(context.Background(),
 		&genapi.DeleteSessionParams{XCALMSessionToken: "never-existed-token"})
@@ -378,6 +392,7 @@ func TestDeleteSessionHandler_UnknownSessionReturns404(t *testing.T) {
 	}
 }
 
+// A workload in namespace B holding namespace A's session token cannot delete the session; the lookup misses and returns 404 (namespace-isolation: invisibility, not denial).
 func TestDeleteSessionHandler_CrossNamespaceReturns404(t *testing.T) {
 	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
 	s := seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, 60)
@@ -403,6 +418,7 @@ func TestDeleteSessionHandler_CrossNamespaceReturns404(t *testing.T) {
 	}
 }
 
+// A session-delete request without X-CALM-API-Key returns 401; auth is enforced before session lookup.
 func TestDeleteSessionHandler_MissingBearerReturns401(t *testing.T) {
 	httpReq, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete,
 		env.serverURL+"/v1/sessions", http.NoBody)
@@ -416,6 +432,7 @@ func TestDeleteSessionHandler_MissingBearerReturns401(t *testing.T) {
 	}
 }
 
+// A second delete of the same session token returns 404; session teardown is not idempotent in the "succeed silently" sense.
 func TestDeleteSessionHandler_IdempotentSecondDeleteReturns404(t *testing.T) {
 	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
 	s := seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, 60)
@@ -440,6 +457,7 @@ func TestDeleteSessionHandler_IdempotentSecondDeleteReturns404(t *testing.T) {
 
 // ---------- Idempotency-Key dedup ----------
 
+// Two create-session calls with the same Idempotency-Key return the same session token and write exactly one DB row; the workload sees a stable session reference across retries.
 func TestCreateSessionHandler_IdempotencyKeySameKeyReturnsSameToken(t *testing.T) {
 	key := "idem-" + randHex(8)
 
@@ -482,6 +500,7 @@ func TestCreateSessionHandler_IdempotencyKeySameKeyReturnsSameToken(t *testing.T
 	}
 }
 
+// Two distinct Idempotency-Keys produce two distinct session tokens; dedup scope is per-key, not per-workload.
 func TestCreateSessionHandler_IdempotencyKeyDifferentKeyReturnsDifferentToken(t *testing.T) {
 	keyA := "idem-" + randHex(8)
 	keyB := "idem-" + randHex(8)
@@ -507,6 +526,7 @@ func TestCreateSessionHandler_IdempotencyKeyDifferentKeyReturnsDifferentToken(t 
 	}
 }
 
+// Without an Idempotency-Key every create-session call mints a distinct token; dedup is opt-in and does not apply implicitly.
 func TestCreateSessionHandler_NoIdempotencyKeyMintsDistinctTokens(t *testing.T) {
 	// Without a key, every call is fresh. Two back-to-back creates produce
 	// two distinct sessions — proves dedup is opt-in, not implicit.
@@ -531,6 +551,7 @@ func TestCreateSessionHandler_NoIdempotencyKeyMintsDistinctTokens(t *testing.T) 
 	}
 }
 
+// N concurrent retries with the same Idempotency-Key all receive the same session token and exactly one DB row is written; singleflight collapses the burst into one create.
 func TestCreateSessionHandler_IdempotencyKeyConcurrentRetriesProduceOneSession(t *testing.T) {
 	// N concurrent retries with the same key. Without singleflight, two or
 	// more goroutines miss the LRU together, each mint+INSERT, and the DB
@@ -595,6 +616,7 @@ func TestCreateSessionHandler_IdempotencyKeyConcurrentRetriesProduceOneSession(t
 	}
 }
 
+// A retry with the same Idempotency-Key returns the first call's committed fields regardless of what the retry request contains; the dedup entry is immutable after the first commit.
 func TestCreateSessionHandler_IdempotencyKeyRetryReturnsSameCommittedFields(t *testing.T) {
 	// A retry's response must echo the FIRST call's committed fields, not
 	// the retry-time request fields. Specifically: a non-zero created_at,

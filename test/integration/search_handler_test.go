@@ -25,7 +25,10 @@ func ingestForSearch(t *testing.T, client *genapi.ClientWithResponses, token, so
 	}
 }
 
+// Workload ingests a document then searches it via the HTTP API; expects a 200 response with
+// a hit whose source, match_layer, and snippet (containing the query term) are all correct.
 func TestSearchHandler_Happy(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	ingestForSearch(t, client, sess.SessionToken, "build.log", "the build failed with a fatal linker error")
@@ -55,7 +58,10 @@ func TestSearchHandler_Happy(t *testing.T) {
 	}
 }
 
+// Source filter restricts results to the named source and limit caps the hit count; both
+// controls compose without error when applied together.
 func TestSearchHandler_SourceFilterAndLimit(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	ingestForSearch(t, client, sess.SessionToken, "a.log", "needle one\n\nneedle two\n\nneedle three")
@@ -83,7 +89,10 @@ func TestSearchHandler_SourceFilterAndLimit(t *testing.T) {
 	}
 }
 
+// Multi-query response preserves input order; a query with no matches returns an empty hits
+// list rather than being omitted.
 func TestSearchHandler_MultiQueryOrderedWithEmpty(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	ingestForSearch(t, client, sess.SessionToken, "s", "the linker failed")
@@ -109,7 +118,10 @@ func TestSearchHandler_MultiQueryOrderedWithEmpty(t *testing.T) {
 	}
 }
 
+// A session token presented to a different namespace's API key returns 404; the session is
+// invisible to the foreign namespace (namespace-isolation).
 func TestSearchHandler_CrossNamespaceInvisible404(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testTenantANamespace)
 
@@ -124,7 +136,9 @@ func TestSearchHandler_CrossNamespaceInvisible404(t *testing.T) {
 	}
 }
 
+// An empty queries array is rejected with 400 by the OpenAPI validator before reaching the handler.
 func TestSearchHandler_MissingQueriesRejected400(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 

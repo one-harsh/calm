@@ -90,9 +90,14 @@ tasks:
       Mocks are in-package (same Go package as the interface) and carry
       `//go:build mocks` so they don't ship in prod binaries. Tests run
       with `-tags=mocks` (set in this Taskfile).
+
+      The trailing goimports pass normalizes mockery's import grouping to
+      repo style (-local) — without it, `task fmt` and `gen:check` fight
+      over any mock that imports another local package.
     cmds:
       - find internal -type f -name 'mock_*.go' -delete
       - mockery
+      - find internal -type f -name 'mock_*.go' -exec goimports -local github.com/one-harsh/calm -w {} +
 
   gen:check:
     desc: Re-run codegen and fail if generated files drift from committed state

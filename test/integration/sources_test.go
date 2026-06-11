@@ -12,7 +12,10 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 )
 
+// First Upsert of a source label returns created=true; a subsequent Upsert of the same
+// label returns the same id with created=false (stable identity, idempotent-indexing).
 func TestSourcesUpsert_ReportsCreatedThenUpdated(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -39,7 +42,9 @@ func TestSourcesUpsert_ReportsCreatedThenUpdated(t *testing.T) {
 	}
 }
 
+// Upserting a source for a non-existent session returns ErrSessionNotFound.
 func TestSourcesUpsert_UnknownSessionMapsToNotFound(t *testing.T) {
+	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -49,7 +54,10 @@ func TestSourcesUpsert_UnknownSessionMapsToNotFound(t *testing.T) {
 	}
 }
 
+// Upserting a source using a session id that belongs to a different namespace returns
+// ErrSessionNotFound (namespace-isolation enforced at the DAL write boundary).
 func TestSourcesUpsert_CrossNamespaceMapsToNotFound(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -62,7 +70,10 @@ func TestSourcesUpsert_CrossNamespaceMapsToNotFound(t *testing.T) {
 	}
 }
 
+// Insert adds chunk rows for a source; an empty slice is a no-op; DeleteForSource removes
+// all chunks for the source leaving the source row intact.
 func TestChunks_InsertAndDeleteForSource(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -102,7 +113,10 @@ func TestChunks_InsertAndDeleteForSource(t *testing.T) {
 	}
 }
 
+// List returns sources ordered by indexed_at descending and includes the correct chunk count
+// per source; an empty session returns a non-nil empty slice.
 func TestSourcesList_OrdersByIndexedAtDescWithChunkCounts(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
@@ -147,7 +161,10 @@ func TestSourcesList_OrdersByIndexedAtDescWithChunkCounts(t *testing.T) {
 	}
 }
 
+// Sources indexed into session A are invisible when listing session B's sources within the
+// same namespace (session-isolation).
 func TestSourcesList_SessionIsolationWithinNamespace(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 

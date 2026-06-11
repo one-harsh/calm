@@ -56,7 +56,11 @@ func hitCount(t *testing.T, c calm.Client, token, source, query string) int {
 	return len(res.Queries[0].Hits)
 }
 
+// Dual-mode labeling (e.g. git diff): each invocation gets a distinct history
+// source while one latest source always holds the newest content; both are
+// retrievable and the finalize event cross-links the persisted sources.
 func TestAdapterLabeling_DualPreservesDistinctHistory(t *testing.T) {
+	t.Parallel()
 	c, token := adapterSession(t)
 	root := "/work"
 
@@ -116,7 +120,10 @@ func TestAdapterLabeling_DualPreservesDistinctHistory(t *testing.T) {
 	}
 }
 
+// Replace-mode labeling (e.g. cat file): a re-read reuses one source with no
+// history, and the newest content supersedes the old — no stale hits (idempotent-indexing).
 func TestAdapterLabeling_ReplaceDedupsOnReread(t *testing.T) {
+	t.Parallel()
 	c, token := adapterSession(t)
 	root := "/work"
 

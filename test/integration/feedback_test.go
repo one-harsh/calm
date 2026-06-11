@@ -18,10 +18,10 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 )
 
+// Missing X-CALM-Session-Token is caught by the validation middleware and returns
+// 400 before any handler or DAL touch.
 func TestFeedback_RequiresSessionToken(t *testing.T) {
-	// The OpenAPI spec declares X-CALM-Session-Token as required on POST /v1/feedback.
-	// Missing token is rejected by the validation middleware (400) — before any handler
-	// or DAL touch.
+	t.Parallel()
 	resp, err := env.client.FeedbackWithResponse(context.Background(),
 		&genapi.FeedbackParams{XCALMSessionToken: ""},
 		genapi.FeedbackJSONRequestBody{
@@ -36,7 +36,9 @@ func TestFeedback_RequiresSessionToken(t *testing.T) {
 	}
 }
 
+// An outcome value not in the enum is rejected with 400 by the validation middleware.
 func TestFeedback_UnknownOutcomeEnumRejected400(t *testing.T) {
+	t.Parallel()
 	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
 	s := seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, 60)
 
@@ -56,7 +58,10 @@ func TestFeedback_UnknownOutcomeEnumRejected400(t *testing.T) {
 	}
 }
 
+// A correlation_id whose embedded UUIDv7 timestamp predates the feedback TTL
+// window is rejected with 410 without a DAL lookup.
 func TestFeedback_OutsideWindowReturns410(t *testing.T) {
+	t.Parallel()
 	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
 	s := seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, 60)
 
@@ -77,7 +82,10 @@ func TestFeedback_OutsideWindowReturns410(t *testing.T) {
 	}
 }
 
+// A workload that deletes its session and then attempts feedback on the same
+// token receives 404 because SessionResolve fires before the handler.
 func TestFeedback_TornDownSessionReturns404SessionNotFound(t *testing.T) {
+	t.Parallel()
 	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)
 	s := seedSession(t, env.sqlDB, testNamespace, db.DefaultClient, 60)
 
@@ -105,7 +113,10 @@ func TestFeedback_TornDownSessionReturns404SessionNotFound(t *testing.T) {
 	}
 }
 
+// A workload submits feedback for a correlation it owns; CALM records the
+// outcome and stamps feedback_received_at on the correlations row.
 func TestFeedback_HappyPathRecordsOutcome(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	correlationID := ingestForCorrelation(t, client, sess.SessionToken)
@@ -140,7 +151,10 @@ func TestFeedback_HappyPathRecordsOutcome(t *testing.T) {
 	}
 }
 
+// A second feedback submission for the same correlation_id returns 409 —
+// feedback is single-shot, enforced by PK.
 func TestFeedback_DoubleSubmit409(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	correlationID := ingestForCorrelation(t, client, sess.SessionToken)
@@ -172,7 +186,9 @@ func TestFeedback_DoubleSubmit409(t *testing.T) {
 	}
 }
 
+// Submitting feedback for a correlation_id that was never minted returns 404.
 func TestFeedback_UnknownCorrelation404(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -193,7 +209,11 @@ func TestFeedback_UnknownCorrelation404(t *testing.T) {
 	}
 }
 
+// A workload presents session B's token while referencing a correlation from
+// session A (same namespace); session-isolation collapses this to 404 and
+// the correlation row is not mutated.
 func TestFeedback_CrossSessionWithinNamespace404(t *testing.T) {
+	t.Parallel()
 	sessA := createSessionForTest(t, testNamespace)
 	sessB := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
@@ -228,6 +248,9 @@ func TestFeedback_CrossSessionWithinNamespace404(t *testing.T) {
 	}
 }
 
+// Ten goroutines race to submit feedback for the same correlation; exactly one
+// wins (204) and all others receive 409 — the row lock serializes the race so
+// a losing goroutine never sees the correlation as "not found".
 func TestFeedback_ConcurrentSubmitOnlyOneWinsRestAre409(t *testing.T) {
 	// Two-callers race: GetWithLockedRow's row lock serializes the transactions
 	// so exactly one POST returns 204; every other concurrent POST blocks on
@@ -235,6 +258,7 @@ func TestFeedback_ConcurrentSubmitOnlyOneWinsRestAre409(t *testing.T) {
 	// public 409 path. A 404 here would mean the loser slipped past Get with
 	// feedback_received_at IS NULL and the UpdateOutcome guard converted the
 	// race into a misleading "correlation not found".
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 	correlationID := ingestForCorrelation(t, client, sess.SessionToken)
@@ -299,7 +323,10 @@ func TestFeedback_ConcurrentSubmitOnlyOneWinsRestAre409(t *testing.T) {
 	}
 }
 
+// Tenant B's client referencing a correlation minted under tenant A receives
+// 404 — namespace-isolation prevents cross-namespace feedback attribution.
 func TestFeedback_CrossNamespaceReturns404(t *testing.T) {
+	t.Parallel()
 	sessA := createSessionForTest(t, testNamespace)
 	sessB := createSessionForTest(t, testTenantANamespace)
 	clientA := env.clientForNamespace(t, testNamespace)

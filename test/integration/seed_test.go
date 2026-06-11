@@ -15,7 +15,10 @@ import (
 	"github.com/one-harsh/calm/internal/db"
 )
 
+// SeedDefaults creates exactly one default-client row per namespace and is safe to call
+// multiple times; re-running produces the same single row (idempotent-indexing for bootstrap).
 func TestSeedNamespaceClients_HappyAndIdempotent(t *testing.T) {
+	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 

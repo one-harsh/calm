@@ -14,7 +14,10 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
 
+// A freshly created session with no events returns 200 with an empty events list,
+// budget_exceeded false, and byte_budget_used 0.
 func TestGetSnapshotHandler_EmptySession(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -38,7 +41,10 @@ func TestGetSnapshotHandler_EmptySession(t *testing.T) {
 	}
 }
 
+// Events are returned ordered by ascending priority then descending recency; the handler
+// preserves the DAL ordering through to the wire response.
 func TestGetSnapshotHandler_OrdersByPriorityAndRecency(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -68,7 +74,10 @@ func TestGetSnapshotHandler_OrdersByPriorityAndRecency(t *testing.T) {
 	}
 }
 
+// When total event payload exceeds the requested byte budget, the response includes only
+// a truncated subset of events with budget_exceeded true and byte_budget_used within the limit.
 func TestGetSnapshotHandler_BudgetCapTruncates(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -101,7 +110,11 @@ func TestGetSnapshotHandler_BudgetCapTruncates(t *testing.T) {
 	}
 }
 
+// A single priority-1 event larger than the byte budget is returned anyway rather than
+// dropped; budget_exceeded is true and byte_budget_used overshoots the limit (never-worse:
+// high-priority context is never silently omitted).
 func TestGetSnapshotHandler_OversizedP1ReturnedNotDropped(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	client := env.clientForNamespace(t, testNamespace)
 
@@ -132,7 +145,10 @@ func TestGetSnapshotHandler_OversizedP1ReturnedNotDropped(t *testing.T) {
 	}
 }
 
+// A default-namespace session token presented with a tenant-a API key returns 404;
+// SessionResolve hashes under tenant-a and finds nothing (namespace-isolation).
 func TestGetSnapshotHandler_CrossNamespaceInvisible404(t *testing.T) {
+	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
 	// Present a default-namespace token while authenticated to tenant-a:
 	// SessionResolve hashes under tenant-a and finds nothing.
