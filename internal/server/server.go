@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,6 +30,9 @@ type Config struct {
 	TrustProxyHeaders        bool
 	RequestTimeout           time.Duration
 	GracefulShutdownWait     time.Duration
+	// TLSCert, when non-nil, makes the server terminate TLS itself
+	// (server-auth). nil ⇒ plain HTTP (edge-terminated, the default).
+	TLSCert *tls.Certificate
 }
 
 type Deps struct {
@@ -83,15 +87,18 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
-		cfg:  cfg,
-		deps: deps,
-		srv: &http.Server{
-			Addr:              cfg.Address,
-			Handler:           h,
-			ReadHeaderTimeout: 5 * time.Second,
-		},
-	}, nil
+	srv := &http.Server{
+		Addr:              cfg.Address,
+		Handler:           h,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	if cfg.TLSCert != nil {
+		srv.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{*cfg.TLSCert},
+			MinVersion:   tls.VersionTLS12,
+		}
+	}
+	return &Server{cfg: cfg, deps: deps, srv: srv}, nil
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -100,8 +107,15 @@ func (s *Server) Run(ctx context.Context) error {
 		s.deps.Logger.WithContext(ctx).Info(
 			"http listening",
 			logging.StringField("address", s.cfg.Address),
+			logging.BoolField("tls", s.srv.TLSConfig != nil),
 		)
-		if err := s.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		var err error
+		if s.srv.TLSConfig != nil {
+			err = s.srv.ListenAndServeTLS("", "")
+		} else {
+			err = s.srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}

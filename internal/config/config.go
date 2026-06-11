@@ -68,6 +68,16 @@ type ServerConfig struct {
 	RateLimitGlobalPerSecond int           `mapstructure:"rate_limit_global_per_second"`
 	RateLimitPerIPPerSecond  int           `mapstructure:"rate_limit_per_ip_per_second"`
 	TrustProxyHeaders        bool          `mapstructure:"trust_proxy_headers"`
+	TLS                      TLSConfig     `mapstructure:"tls"`
+}
+
+// TLSConfig is opt-in: when Enabled, CALM terminates TLS itself (server-auth
+// only). Default off — transport security is edge-terminated. CertFile/KeyFile
+// resolve through the secret dialect to PEM contents (see internal/secrets).
+type TLSConfig struct {
+	Enabled  bool           `mapstructure:"enabled"`
+	CertFile secrets.Secret `mapstructure:"cert_file"`
+	KeyFile  secrets.Secret `mapstructure:"key_file"`
 }
 
 type SessionsConfig struct {
@@ -142,6 +152,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.rate_limit_global_per_second", 0)
 	v.SetDefault("server.rate_limit_per_ip_per_second", 100)
 	v.SetDefault("server.trust_proxy_headers", false)
+	// Registered (zero-value defaults) so the keys are env-overridable
+	// (CALM_SERVER_TLS_*); empty cert/key + enabled=false ⇒ TLS off.
+	v.SetDefault("server.tls.enabled", false)
+	v.SetDefault("server.tls.cert_file", "")
+	v.SetDefault("server.tls.key_file", "")
 
 	v.SetDefault("sessions.default_ttl_minutes", 120)
 	v.SetDefault("sessions.max_ttl_minutes", 10_080)
@@ -170,6 +185,19 @@ func validate(cfg *Config) error {
 	}
 	if err := validateRate("server.rate_limit_per_ip_per_second", cfg.Server.RateLimitPerIPPerSecond); err != nil {
 		return err
+	}
+	if cfg.Server.TLS.Enabled {
+		if cfg.Server.TLS.CertFile == "" || cfg.Server.TLS.KeyFile == "" {
+			return errors.New("server.tls: cert_file and key_file are required when enabled")
+		}
+		cert := string(cfg.Server.TLS.CertFile)
+		if !strings.HasPrefix(cert, "[") || !strings.HasSuffix(cert, "]") {
+			return fmt.Errorf("server.tls.cert_file must be a bracketed secret reference [scheme:payload]; got %q", cert)
+		}
+		key := string(cfg.Server.TLS.KeyFile)
+		if !strings.HasPrefix(key, "[") || !strings.HasSuffix(key, "]") {
+			return fmt.Errorf("server.tls.key_file must be a bracketed secret reference [scheme:payload]; got %q", key)
+		}
 	}
 	if cfg.Sessions.CacheSize < 0 {
 		return fmt.Errorf("sessions.cache_size must be >= 0 (0 disables cache); got %d", cfg.Sessions.CacheSize)

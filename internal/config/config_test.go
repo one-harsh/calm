@@ -568,3 +568,91 @@ namespaces:
 		})
 	}
 }
+
+func TestLoad_TLSEnabledRequiresCertAndKey(t *testing.T) {
+	path := writeConfig(t, `
+server:
+  tls:
+    enabled: true
+    cert_file: "[file:/etc/calm/tls.crt]"
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("tls.enabled with missing key_file: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "server.tls") {
+		t.Errorf("error should mention server.tls; got %v", err)
+	}
+}
+
+func TestLoad_TLSEnabledRawPathRejected(t *testing.T) {
+	path := writeConfig(t, `
+server:
+  tls:
+    enabled: true
+    cert_file: "/etc/calm/tls.crt"
+    key_file: "/etc/calm/tls.key"
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("tls with raw (unbracketed) cert path: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "bracketed secret reference") {
+		t.Errorf("error should mention bracketed secret reference; got %v", err)
+	}
+}
+
+func TestLoad_TLSEnabledWithCertAndKeyAccepted(t *testing.T) {
+	path := writeConfig(t, `
+server:
+  tls:
+    enabled: true
+    cert_file: "[file:/etc/calm/tls.crt]"
+    key_file: "[file:/etc/calm/tls.key]"
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load with valid tls config: %v", err)
+	}
+	if !cfg.Server.TLS.Enabled {
+		t.Error("server.tls.enabled: want true")
+	}
+	if string(cfg.Server.TLS.CertFile) != "[file:/etc/calm/tls.crt]" || string(cfg.Server.TLS.KeyFile) != "[file:/etc/calm/tls.key]" {
+		t.Errorf("tls cert/key not bound: %+v", cfg.Server.TLS)
+	}
+}
+
+func TestLoad_TLSDisabledIgnoresCertKey(t *testing.T) {
+	path := writeConfig(t, `
+server:
+  tls:
+    enabled: false
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load with tls disabled: %v", err)
+	}
+	if cfg.Server.TLS.Enabled {
+		t.Error("server.tls.enabled: want false")
+	}
+}

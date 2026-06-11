@@ -1357,7 +1357,7 @@ A bootstrap API key is printed on first run; the operator uses it to authenticat
 
 ## Security considerations
 
-CALM stores tool output that may contain logs, code, telemetry, and potentially sensitive data embedded in those things. Transport security is assumed — TLS via service mesh or ingress controller for production deployments. Encryption at rest follows the storage backend's capabilities (Postgres TDE or volume-level encryption). All session data is ephemeral and cleaned up by explicit close or TTL — CALM is not a long-term data store, which limits the exposure window. Management API endpoints (`/v1/manage/*`) should be restricted to ops-scoped API keys that are not shared with workload service accounts.
+CALM stores tool output that may contain logs, code, telemetry, and potentially sensitive data embedded in those things. Transport security is edge-terminated by default — TLS via service mesh or ingress controller for production deployments. CALM may optionally terminate TLS itself (and, later, mutual TLS) for deployments without such an edge; edge termination remains the default. Encryption at rest follows the storage backend's capabilities (Postgres TDE or volume-level encryption). All session data is ephemeral and cleaned up by explicit close or TTL — CALM is not a long-term data store, which limits the exposure window. Management API endpoints (`/v1/manage/*`) should be restricted to ops-scoped API keys that are not shared with workload service accounts.
 
 ---
 

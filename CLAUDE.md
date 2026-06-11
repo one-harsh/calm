@@ -181,6 +181,7 @@ from the spec, copy `secrets`, keep the adapter `internal/` in the new module.
 ## HTTP server boundaries (canonical — do not drift)
 
 - `internal/server` owns the HTTP server lifecycle (listener, middleware chain, graceful shutdown). No route or domain code here.
+- **TLS is opt-in, edge-terminated by default.** Plain HTTP unless `server.tls.enabled` with `cert_file`/`key_file` (`secrets.Secret` → PEM, resolved in `cmd/calm/main.go` and passed as a loaded keypair into `server.Config`); then `ListenAndServeTLS` (server-auth only, TLS 1.2 floor). Not mTLS — client/org-membership gating stays an edge concern.
 - `internal/api` owns handlers and DTOs. Handlers parse → domain call → marshal. No business logic.
 - **Middleware chain order is canonical**: do not reorder without an HLD discussion.
 

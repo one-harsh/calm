@@ -28,6 +28,10 @@ server:
   graceful_shutdown_wait: 10s
   max_ingest_payload_kb: 1024       # body-size cap on /v1/ingest (>1MB -> 413)
   rate_limit_per_second: 100        # global default; per-namespace overrides below win
+  # tls:                            # opt-in: CALM terminates TLS itself (server-auth). Default off — transport security is edge-terminated (mesh/ingress).
+  #   enabled: true                 # when true, cert_file + key_file are required
+  #   cert_file: "[file:/etc/calm/tls/tls.crt]"   # secret-dialect ([file:]/[env:]/[text:]) -> PEM contents
+  #   key_file:  "[file:/etc/calm/tls/tls.key]"
 
 sessions:
   default_ttl_minutes: 120       # absent-TTL fallback for CreateSession. Active sessions never expire (Touch refreshes); only abandoned ones reach this.

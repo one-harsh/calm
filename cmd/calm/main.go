@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"os"
@@ -88,6 +89,11 @@ func run() error {
 		return fmt.Errorf("seed clients: %w", err)
 	}
 
+	tlsCert, err := loadTLSCert(ctx, cfg.Server.TLS, secretReader)
+	if err != nil {
+		return err
+	}
+
 	srv, err := server.New(server.Config{
 		Address:                  cfg.Server.Address,
 		MaxIngestPayloadKB:       cfg.Server.MaxIngestPayloadKB,
@@ -97,6 +103,7 @@ func run() error {
 		TrustProxyHeaders:        cfg.Server.TrustProxyHeaders,
 		RequestTimeout:           cfg.Server.RequestTimeout,
 		GracefulShutdownWait:     cfg.Server.GracefulShutdownWait,
+		TLSCert:                  tlsCert,
 	}, server.Deps{
 		Logger:         logger,
 		Registry:       registry,
@@ -163,4 +170,21 @@ func uncredentialedNamespaceNames(ns []config.NamespaceConfig) []string {
 		}
 	}
 	return out
+}
+
+// loadTLSCert builds the server keypair when TLS is enabled; nil ⇒ plain HTTP
+// (edge-terminated, the default). Missing/unreadable cert/key references Fatal
+// via SecretReader; only an invalid PEM pair surfaces as a returned error.
+func loadTLSCert(ctx context.Context, cfg config.TLSConfig, r secrets.SecretReader) (*tls.Certificate, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	cert, err := tls.X509KeyPair(
+		[]byte(r.ReadSecret(ctx, cfg.CertFile)),
+		[]byte(r.ReadSecret(ctx, cfg.KeyFile)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("server.tls: load keypair: %w", err)
+	}
+	return &cert, nil
 }
