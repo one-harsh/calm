@@ -195,6 +195,21 @@ into CALM and returned compact) and `calm_search` (retrieve captured output on d
 — never stdout. `CALM_ADAPTER_CALM_API_KEY` uses the secret-reference dialect
 (`[text:..]` / `[env:..]` / `[file:..]`; raw values are rejected).
 
+**Make CALM the default (not just available).** Registration only *exposes* the tools; the tool
+descriptions nudge the agent toward them, but to make routing-through-CALM the agent's default
+behavior, add a directive to your project's `CLAUDE.md` / `AGENTS.md` (whatever rules file your
+host reads):
+
+```markdown
+- Use `calm_run_command` instead of the native shell/Bash tool to run shell commands — it keeps
+  raw output out of the context window and indexes it for retrieval.
+- Use `calm_search` to retrieve a command's earlier output instead of re-running the command.
+```
+
+Without this, the agent will often fall back to its native shell tool. (A host-level hook that
+hard-blocks the native shell is possible but heavier — and must fail open so commands still run
+when CALM is unreachable, per the `never-worse` invariant.)
+
 **Debugging the integration.** Each tool call stamps a `workload_request_id` and a
 `trace_id`, and every CALM request the adapter makes is logged with its latency, status,
 and the server-minted `correlation_id` — all of which also appear in CALM's own logs, so

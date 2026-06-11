@@ -8,8 +8,9 @@ package middleware
 import (
 	context "context"
 
-	session "github.com/one-harsh/calm/internal/session"
 	mock "github.com/stretchr/testify/mock"
+
+	session "github.com/one-harsh/calm/internal/session"
 
 	time "time"
 )

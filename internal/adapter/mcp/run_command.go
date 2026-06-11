@@ -25,10 +25,12 @@ const (
 	eventTimeout  = 5 * time.Second
 )
 
-const runCommandDescription = "Run a shell command locally and capture its output into CALM instead of " +
-	"returning it raw. Use this in place of your native shell tool. Returns a compact summary plus a " +
-	"source label; retrieve the full captured output with calm_search source=<label>. The base label is " +
-	"the latest output for that identity; <label>#<n> is one specific past run."
+const runCommandDescription = "Run a shell command locally, capturing its output into CALM instead of " +
+	"returning it raw. Prefer this over the native shell/Bash tool for every shell command: it keeps " +
+	"large/raw output out of the context window and indexes it for on-demand retrieval. Returns a compact " +
+	"summary plus a source label; fetch the full captured output later with calm_search source=<label> " +
+	"rather than re-running. The base label is the latest output for that identity; <label>#<n> is one " +
+	"specific past run."
 
 const runCommandSchema = `{
   "type": "object",

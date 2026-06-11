@@ -75,7 +75,7 @@ func (h *Handlers) Feedback(ctx context.Context, request genapi.FeedbackRequestO
 		obs.AuditInitiatorAPI,
 		obs.Client(md.Client),
 		obs.FeedbackOutcome(string(request.Body.Outcome)),
-		obs.ReferencedCorrelationID(correlationID.String()),
+		obs.FeedbackReferencedCorrelationID(correlationID.String()),
 	)
 
 	return genapi.Feedback204Response{}, nil

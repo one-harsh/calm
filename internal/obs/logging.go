@@ -40,26 +40,56 @@ func NewLogger(serviceName, version, environment, region, level, format string) 
 }
 
 const (
-	KeySessionID               = "session.id"
-	KeyNamespace               = "namespace"
-	KeyClient                  = "client"
-	KeySource                  = "source"
-	KeyMatchLayer              = "match_layer"
-	KeyEndpoint                = "endpoint"
-	KeyEventType               = "event_type"
-	KeyFormatHint              = "format_hint"
-	KeyCloseReason             = "close_reason"
-	KeyRateLimitTier           = "ratelimit.tier"
-	KeyAuditInitiator          = "audit_initiator"
-	KeyCascadedSources         = "session.delete.cascaded_sources"
-	KeyCascadedChunks          = "session.delete.cascaded_chunks"
-	KeyCascadedEvents          = "session.delete.cascaded_events"
-	KeyCascadedLabels          = "session.delete.cascaded_labels"
-	KeyCorrelationID           = "correlation_id"
-	KeyFeedbackOutcome         = "feedback_outcome"
-	KeyReferencedCorrelationID = "feedback.referenced_correlation_id"
-	KeyRequestType             = "request_type"
-	KeyErrorBody               = "error_body"
+	// Request / correlation scope.
+	KeyCorrelationID  = "correlation_id"
+	KeyRequestType    = "request_type"
+	KeyEndpoint       = "endpoint"
+	KeyErrorBody      = "error_body"
+	KeyAuditInitiator = "audit_initiator"
+
+	// Isolation identity.
+	KeyNamespace = "namespace"
+	KeyClient    = "client"
+
+	// Session scope.
+	KeySessionID       = "session_id"
+	KeyCloseReason     = "close_reason"
+	KeyCascadedSources = "session.delete.cascaded_sources"
+	KeyCascadedChunks  = "session.delete.cascaded_chunks"
+	KeyCascadedEvents  = "session.delete.cascaded_events"
+	KeyCascadedLabels  = "session.delete.cascaded_labels"
+
+	// Source / content scope.
+	KeySource     = "source"
+	KeyFormatHint = "format_hint"
+
+	// Event scope.
+	KeyEventType = "event_type"
+
+	// Ingest scope.
+	KeyIngestSectionsTotal   = "ingest.sections_total"
+	KeyIngestSectionsIndexed = "ingest.sections_indexed"
+	KeyIngestSourceCreated   = "ingest.source_created"
+
+	// Search scope.
+	KeyMatchLayer        = "match_layer"
+	KeySearchQueries     = "search.queries"
+	KeySearchHitsTotal   = "search.hits_total"
+	KeySearchHitsPrimary = "search.hits_primary"
+	KeySearchHitsTrigram = "search.hits_trigram"
+
+	// Snapshot scope.
+	KeySnapshotEventsIncluded = "snapshot.events_included"
+	KeySnapshotEventsTotal    = "snapshot.events_total"
+	KeySnapshotByteBudgetUsed = "snapshot.byte_budget_used"
+	KeySnapshotBudgetExceeded = "snapshot.budget_exceeded"
+
+	// Feedback scope.
+	KeyFeedbackOutcome                 = "feedback_outcome"
+	KeyFeedbackReferencedCorrelationID = "feedback_referenced_correlation_id"
+
+	// Rate limiting.
+	KeyRateLimitTier = "ratelimit_tier"
 )
 
 var (
@@ -130,8 +160,8 @@ func FeedbackOutcome(value string) logging.LoggingField {
 	return logging.StringField(KeyFeedbackOutcome, value)
 }
 
-func ReferencedCorrelationID(value string) logging.LoggingField {
-	return logging.StringField(KeyReferencedCorrelationID, value)
+func FeedbackReferencedCorrelationID(value string) logging.LoggingField {
+	return logging.StringField(KeyFeedbackReferencedCorrelationID, value)
 }
 
 func RequestType(value string) logging.LoggingField {
@@ -140,4 +170,48 @@ func RequestType(value string) logging.LoggingField {
 
 func ErrorBody(value string) logging.LoggingField {
 	return logging.StringField(KeyErrorBody, value)
+}
+
+func SearchQueries(value int) logging.LoggingField {
+	return logging.IntField(KeySearchQueries, value)
+}
+
+func SearchHitsTotal(value int) logging.LoggingField {
+	return logging.IntField(KeySearchHitsTotal, value)
+}
+
+func SearchHitsPrimary(value int) logging.LoggingField {
+	return logging.IntField(KeySearchHitsPrimary, value)
+}
+
+func SearchHitsTrigram(value int) logging.LoggingField {
+	return logging.IntField(KeySearchHitsTrigram, value)
+}
+
+func IngestSectionsTotal(value int) logging.LoggingField {
+	return logging.IntField(KeyIngestSectionsTotal, value)
+}
+
+func IngestSectionsIndexed(value int) logging.LoggingField {
+	return logging.IntField(KeyIngestSectionsIndexed, value)
+}
+
+func IngestSourceCreated(value bool) logging.LoggingField {
+	return logging.BoolField(KeyIngestSourceCreated, value)
+}
+
+func SnapshotEventsIncluded(value int) logging.LoggingField {
+	return logging.IntField(KeySnapshotEventsIncluded, value)
+}
+
+func SnapshotEventsTotal(value int) logging.LoggingField {
+	return logging.IntField(KeySnapshotEventsTotal, value)
+}
+
+func SnapshotByteBudgetUsed(value int) logging.LoggingField {
+	return logging.IntField(KeySnapshotByteBudgetUsed, value)
+}
+
+func SnapshotBudgetExceeded(value bool) logging.LoggingField {
+	return logging.BoolField(KeySnapshotBudgetExceeded, value)
 }

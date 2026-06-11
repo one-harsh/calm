@@ -8,8 +8,9 @@ package session
 import (
 	context "context"
 
-	db "github.com/one-harsh/calm/internal/db"
 	mock "github.com/stretchr/testify/mock"
+
+	db "github.com/one-harsh/calm/internal/db"
 
 	time "time"
 )

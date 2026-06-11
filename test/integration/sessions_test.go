@@ -90,7 +90,7 @@ func TestSessionService_Create_UnregisteredClientReturnsErrClientNotFound(t *tes
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	err := svc.Create(context.Background(), &db.Session{
 		Namespace: "ns-a", Client: "alice", TTLMinutes: 60,
 	}, "")
@@ -111,7 +111,7 @@ func TestSessionService_Create_EmptyClientDefaultsToDefault(t *testing.T) {
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	sess := &db.Session{Namespace: "ns-a", TTLMinutes: 60}
 	if err := svc.Create(context.Background(), sess, ""); err != nil {
 		t.Fatalf("service Create: %v", err)
@@ -1119,7 +1119,7 @@ func TestSessionService_Create_PrimesCache(t *testing.T) {
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", "alice")
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	sess := &db.Session{Namespace: "ns-a", Client: "alice", TTLMinutes: 60}
 	if err := svc.Create(context.Background(), sess, ""); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -1148,7 +1148,7 @@ func TestSessionService_Lookup_MissPopulatesCache(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	seeded := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	if _, err := svc.Lookup(context.Background(), "ns-a", seeded.SessionToken); err != nil {
 		t.Fatalf("first Lookup (populate): %v", err)
 	}
@@ -1167,7 +1167,7 @@ func TestSessionService_Lookup_NotFoundNotCached(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	if _, err := svc.Lookup(context.Background(), "ns-a", "missing"); !errors.Is(err, db.ErrSessionNotFound) {
 		t.Fatalf("first Lookup: want ErrSessionNotFound, got %v", err)
 	}
@@ -1182,7 +1182,7 @@ func TestSessionService_Delete_InvalidatesCache(t *testing.T) {
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	sess := &db.Session{Namespace: "ns-a", TTLMinutes: 60}
 	if err := svc.Create(context.Background(), sess, ""); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -1201,7 +1201,7 @@ func TestSessionService_DeleteAll_InvalidatesOnlyTargetNamespace(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	seedClient(t, sqlDB, "ns-b", db.DefaultClient)
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	var aTokens []string
 	for i := 0; i < 2; i++ {
 		s := &db.Session{Namespace: "ns-a", TTLMinutes: 60}
@@ -1237,7 +1237,7 @@ func TestSessionService_Touch_OnStaleEntrySelfHeals(t *testing.T) {
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	sess := &db.Session{Namespace: "ns-a", TTLMinutes: 60}
 	if err := svc.Create(context.Background(), sess, ""); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -1260,7 +1260,7 @@ func TestSessionService_SeparateNamespacesIndependent(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", "alice")
 	seedClient(t, sqlDB, "ns-b", "bob")
 
-	svc := session.New(store, session.Config{CacheSize: 10_000})
+	svc := session.New(store, session.Config{CacheSize: 10_000}, logging.Nop())
 	sessA := &db.Session{Namespace: "ns-a", Client: "alice", TTLMinutes: 60}
 	if err := svc.Create(context.Background(), sessA, ""); err != nil {
 		t.Fatalf("Create ns-a: %v", err)
@@ -1290,7 +1290,7 @@ func TestSessionService_CacheDisabled_AlwaysHitsDB(t *testing.T) {
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
-	svc := session.New(store, session.Config{}) // cache disabled
+	svc := session.New(store, session.Config{}, logging.Nop()) // cache disabled
 	sess := &db.Session{Namespace: "ns-a", TTLMinutes: 60}
 	if err := svc.Create(context.Background(), sess, ""); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -1313,7 +1313,7 @@ func TestSession_ExpiresAtPopulatedOnCreate(t *testing.T) {
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
-	svc := session.New(store, session.Config{})
+	svc := session.New(store, session.Config{}, logging.Nop())
 	sess := &db.Session{Namespace: "ns-a", TTLMinutes: 60}
 	if err := svc.Create(context.Background(), sess, ""); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -1332,7 +1332,7 @@ func TestSession_ExpiresAtPopulatedOnGet(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	seeded := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 30)
 
-	svc := session.New(store, session.Config{})
+	svc := session.New(store, session.Config{}, logging.Nop())
 	got, err := svc.Get(context.Background(), "ns-a", seeded.SessionToken)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -1351,7 +1351,7 @@ func TestSession_ExpiresAtRecomputesOnTouch(t *testing.T) {
 	defer teardown()
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 
-	svc := session.New(store, session.Config{})
+	svc := session.New(store, session.Config{}, logging.Nop())
 	sess := &db.Session{Namespace: "ns-a", TTLMinutes: 30}
 	if err := svc.Create(context.Background(), sess, ""); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -1386,7 +1386,7 @@ func TestTTLScanner_ReapsExpiredSessionWithinOneTick(t *testing.T) {
 	// ttl_minutes=0 → expires_at == last_activity → immediately expired.
 	expired := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 0)
 
-	svc := session.New(store, session.Config{})
+	svc := session.New(store, session.Config{}, logging.Nop())
 	scanner := session.NewScanner(svc, session.ScannerConfig{
 		Interval: 20 * time.Millisecond,
 	}, logging.Nop())
@@ -1427,7 +1427,7 @@ func TestTTLScanner_CrossNamespaceExpiry(t *testing.T) {
 	freshA := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 	freshB := seedSession(t, sqlDB, "ns-b", db.DefaultClient, 60)
 
-	svc := session.New(store, session.Config{})
+	svc := session.New(store, session.Config{}, logging.Nop())
 	scanner := session.NewScanner(svc, session.ScannerConfig{
 		Interval: 20 * time.Millisecond,
 	}, logging.Nop())
@@ -1471,7 +1471,7 @@ func TestTTLScanner_ContextCancelStopsCleanly(t *testing.T) {
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
 
-	svc := session.New(store, session.Config{})
+	svc := session.New(store, session.Config{}, logging.Nop())
 	scanner := session.NewScanner(svc, session.ScannerConfig{
 		Interval: time.Second, // long enough that we cancel before any tick
 	}, logging.Nop())

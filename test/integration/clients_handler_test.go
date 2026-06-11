@@ -117,7 +117,7 @@ func newCredentialedTestServer(t *testing.T) (apiClient *genapi.ClientWithRespon
 	)
 	clientSvc := clientreg.New(env.store, logging.Nop())
 
-	sessionSvc := session.New(env.store, session.Config{CacheSize: 10_000})
+	sessionSvc := session.New(env.store, session.Config{CacheSize: 10_000}, logging.Nop())
 	handler, err := server.NewHandler(server.Config{
 		MaxIngestPayloadKB:   1024,
 		RateLimitPerSecond:   1000, // out of the way

@@ -114,7 +114,7 @@ Concrete disciplines that fall out:
 - **`sessions`-table composite indexes lead with `namespace`** for cache locality. Filter-by-label queries on child tables join through `sessions` for namespace scope rather than carrying a redundant predicate.
 - **Cross-namespace mismatch returns 404.** Invisibility, not "you don't have access." The OpenAPI spec encodes this.
 - **Integration tests assert both isolations explicitly.** Standard patterns: write to namespace A, read from namespace B → 404 (security); write to session-A in namespace X, read from session-B in namespace X → empty (content). Both are durable proofs in CI.
-- **Logging carries `namespace` and `session.id` (the int64 surrogate)** in every per-request log line. Use `obs.Namespace(...)` and `obs.SessionID(...)` (the latter takes `int64`). The raw `session_token` has no logging helper by design — it's a credential. Cross-session log entries (e.g., the TTL scanner before it has a specific ref in hand) are explicitly logged without `session.id` so the absence is intentional, not a leak.
+- **Logging carries `namespace` and `session_id` (the int64 surrogate)** in every per-request log line. Use `obs.Namespace(...)` and `obs.SessionID(...)` (the latter takes `int64`). The raw `session_token` has no logging helper by design — it's a credential. Cross-session log entries (e.g., the TTL scanner before it has a specific ref in hand) are explicitly logged without `session_id` so the absence is intentional, not a leak.
 
 If you find yourself wanting a query that intentionally crosses session boundaries within a namespace, stop. Either it belongs in `/v1/manage/*` (the only legitimate cross-session surface, still namespace-scoped), or it's a design gap that requires HLD discussion before code lands. Cross-namespace queries should never appear in code at all outside the TTL scanner.
 
@@ -176,6 +176,7 @@ from the spec, copy `secrets`, keep the adapter `internal/` in the new module.
 - Inner-loop dev: `go test ./<pkg>` and `go vet ./...` are fine. Anything whose result must match across machines (CI, full builds, deploys, lint, format) goes through `task`.
 - Never edit `go.mod` by hand for routine adds — `task tidy` is the entry.
 - `task ci` is the gate: lint + test + build, all green.
+- **Dogfood the adapter when it's registered.** If the `calm` MCP server is connected in your session, route shell commands through `calm_run_command` (not the native shell) and retrieve prior output via `calm_search` instead of re-running. You still run the same `task …`/shell commands — they're just captured into CALM; pull full output with `calm_search source=<label>` when the compact summary isn't enough. Native shell is the fallback when CALM is unreachable (`never-worse`).
 
 ## HTTP server boundaries (canonical — do not drift)
 

@@ -9,14 +9,18 @@ import (
 	"fmt"
 	"time"
 
+	logging "github.com/one-harsh/context-logging"
+
 	"github.com/one-harsh/calm/internal/auth"
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/obs"
 )
 
 type Service struct {
 	store       db.DAL
 	cache       cache
 	idempotency *idempotencyStore
+	logger      *logging.Logger
 }
 
 type Config struct {
@@ -25,11 +29,12 @@ type Config struct {
 	IdempotencyKeySize int
 }
 
-func New(store db.DAL, cfg Config) *Service {
+func New(store db.DAL, cfg Config, logger *logging.Logger) *Service {
 	return &Service{
 		store:       store,
 		cache:       newCache(cfg.CacheSize),
 		idempotency: newIdempotencyStore(cfg.IdempotencyKeySize, cfg.IdempotencyKeyTTL, time.Now),
+		logger:      logger,
 	}
 }
 
@@ -46,6 +51,13 @@ func (s *Service) Create(ctx context.Context, sess *db.Session, idempotencyKey s
 
 	entry, err := s.idempotency.Do(sess.Namespace, sess.Client, idempotencyKey, func() (dedupEntry, error) {
 		if cached, ok := s.idempotency.Resolve(sess.Namespace, sess.Client, idempotencyKey); ok {
+			if s.logger.Enabled(logging.DebugLevel) {
+				s.logger.WithContext(ctx).Debug(
+					"session create deduped to existing",
+					obs.Client(sess.Client),
+					obs.SessionID(cached.SessionID),
+				)
+			}
 			return cached, nil
 		}
 		raw, err := auth.NewRandomToken()

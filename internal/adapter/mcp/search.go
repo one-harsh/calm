@@ -19,10 +19,10 @@ const toolNameSearch = "calm_search"
 
 const searchTimeout = 10 * time.Second
 
-const searchDescription = "Search the tool output captured into CALM this session and get back ranked, " +
-	"verbatim snippets. Pass one or more queries; optionally scope to a single source label with " +
-	"`source` (the label calm_run_command returns) and cap hits per query with `limit`. Use this to " +
-	"retrieve earlier command output on demand instead of re-running it."
+const searchDescription = "Retrieve tool output already captured into CALM this session as ranked, " +
+	"verbatim snippets. Prefer this over re-running a command to see its output again. Pass one or more " +
+	"queries; optionally scope to a single source label with `source` (the label calm_run_command returns) " +
+	"and cap hits per query with `limit`."
 
 const searchSchema = `{
   "type": "object",

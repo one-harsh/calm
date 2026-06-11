@@ -71,6 +71,15 @@ func (s *Service) Build(ctx context.Context, namespace string, sessionID int64, 
 	}
 
 	result := Result{Events: included, ByteBudgetUsed: used, BudgetExceeded: exceeded}
+	if s.logger.Enabled(logging.DebugLevel) {
+		s.logger.WithContext(ctx).Debug(
+			"snapshot built",
+			obs.SnapshotEventsIncluded(len(result.Events)),
+			obs.SnapshotEventsTotal(len(events)),
+			obs.SnapshotByteBudgetUsed(result.ByteBudgetUsed),
+			obs.SnapshotBudgetExceeded(result.BudgetExceeded),
+		)
+	}
 	s.captureCorrelation(ctx, namespace, sessionID, correlationID, result)
 	return result, nil
 }

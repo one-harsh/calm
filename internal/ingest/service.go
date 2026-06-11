@@ -98,6 +98,15 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 		Summary:          summary,
 		DistinctiveTerms: []string{},
 	}
+	if s.logger.Enabled(logging.DebugLevel) {
+		s.logger.WithContext(ctx).Debug(
+			"ingest indexed",
+			obs.Source(in.Source),
+			obs.IngestSectionsTotal(result.SectionsTotal),
+			obs.IngestSectionsIndexed(result.SectionsIndexed),
+			obs.IngestSourceCreated(result.Created),
+		)
+	}
 	s.captureCorrelation(ctx, namespace, sessionID, correlationID, result)
 	return result, nil
 }

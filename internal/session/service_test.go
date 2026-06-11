@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	logging "github.com/one-harsh/context-logging"
 	"github.com/stretchr/testify/mock"
 
 	"github.com/one-harsh/calm/internal/auth"
@@ -34,7 +35,7 @@ func newServiceHarness(t *testing.T, cacheSize int) *serviceHarness {
 	dal.EXPECT().Sessions().Return(sessions).Maybe()
 	dal.EXPECT().Clients().Return(clients).Maybe()
 	return &serviceHarness{
-		svc:      New(dal, Config{CacheSize: cacheSize}),
+		svc:      New(dal, Config{CacheSize: cacheSize}, logging.Nop()),
 		dal:      dal,
 		sessions: sessions,
 		clients:  clients,
@@ -52,7 +53,7 @@ func hashFor(namespace, sessionToken string) []byte {
 
 func TestNew_NonPositiveCacheSizeUsesNoopCache(t *testing.T) {
 	dal := db.NewMockDAL(t)
-	svc := New(dal, Config{})
+	svc := New(dal, Config{}, logging.Nop())
 	if _, ok := svc.cache.(noopCache); !ok {
 		t.Errorf("New(_, Config{}) cache type = %T; want noopCache", svc.cache)
 	}
@@ -551,7 +552,7 @@ func TestCreate_ConcurrentRetriesAfterTTLExpiryProduceOneSession(t *testing.T) {
 		CacheSize:          100,
 		IdempotencyKeyTTL:  50 * time.Millisecond,
 		IdempotencyKeySize: 100,
-	})
+	}, logging.Nop())
 
 	const key = "key-X"
 	const namespace = "ns-a"

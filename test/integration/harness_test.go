@@ -109,7 +109,7 @@ func bootstrap() (*harness, error) {
 		CacheSize:          10_000,
 		IdempotencyKeyTTL:  time.Hour,
 		IdempotencyKeySize: 10_000,
-	})
+	}, logging.Nop())
 	snapshotSvc := snapshot.New(store, logging.Nop())
 	ingestSvc := ingest.New(store, logging.Nop())
 	searchSvc := search.New(store, logging.Nop())

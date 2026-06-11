@@ -38,12 +38,21 @@ func (s *Service) Search(ctx context.Context, namespace string, sessionID int64,
 	if err != nil {
 		return nil, err
 	}
-	s.captureCorrelation(ctx, namespace, sessionID, correlationID, results)
+	primary, trigram, total := hitBreakdown(results)
+	if s.logger.Enabled(logging.DebugLevel) {
+		s.logger.WithContext(ctx).Debug(
+			"search executed",
+			obs.SearchQueries(len(in.Queries)),
+			obs.SearchHitsTotal(total),
+			obs.SearchHitsPrimary(primary),
+			obs.SearchHitsTrigram(trigram),
+		)
+	}
+	s.captureCorrelation(ctx, namespace, sessionID, correlationID, primary, trigram, total)
 	return results, nil
 }
 
-func (s *Service) captureCorrelation(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, results []db.SearchResult) {
-	primary, trigram, total := 0, 0, 0
+func hitBreakdown(results []db.SearchResult) (primary, trigram, total int) {
 	for _, r := range results {
 		for _, h := range r.Hits {
 			total++
@@ -55,6 +64,10 @@ func (s *Service) captureCorrelation(ctx context.Context, namespace string, sess
 			}
 		}
 	}
+	return primary, trigram, total
+}
+
+func (s *Service) captureCorrelation(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, primary, trigram, total int) {
 	meta, err := json.Marshal(map[string]any{
 		"hits_primary": primary,
 		"hits_trigram": trigram,

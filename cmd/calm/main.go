@@ -79,7 +79,7 @@ func run() error {
 		CacheSize:          cfg.Sessions.CacheSize,
 		IdempotencyKeyTTL:  cfg.Sessions.IdempotencyKeyTTL,
 		IdempotencyKeySize: cfg.Sessions.IdempotencyKeySize,
-	})
+	}, logger)
 	snapshotSvc := snapshot.New(store, logger)
 	ingestSvc := ingest.New(store, logger)
 	searchSvc := search.New(store, logger)
