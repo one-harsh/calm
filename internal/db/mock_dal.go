@@ -306,6 +306,53 @@ func (_c *MockDAL_Sources_Call) RunAndReturn(run func() SourcesRepo) *MockDAL_So
 	return _c
 }
 
+// Vocabulary provides a mock function with no fields
+func (_m *MockDAL) Vocabulary() VocabularyRepo {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Vocabulary")
+	}
+
+	var r0 VocabularyRepo
+	if rf, ok := ret.Get(0).(func() VocabularyRepo); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(VocabularyRepo)
+		}
+	}
+
+	return r0
+}
+
+// MockDAL_Vocabulary_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Vocabulary'
+type MockDAL_Vocabulary_Call struct {
+	*mock.Call
+}
+
+// Vocabulary is a helper method to define mock.On call
+func (_e *MockDAL_Expecter) Vocabulary() *MockDAL_Vocabulary_Call {
+	return &MockDAL_Vocabulary_Call{Call: _e.mock.On("Vocabulary")}
+}
+
+func (_c *MockDAL_Vocabulary_Call) Run(run func()) *MockDAL_Vocabulary_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockDAL_Vocabulary_Call) Return(_a0 VocabularyRepo) *MockDAL_Vocabulary_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockDAL_Vocabulary_Call) RunAndReturn(run func() VocabularyRepo) *MockDAL_Vocabulary_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // WithTx provides a mock function with given fields: ctx, fn
 func (_m *MockDAL) WithTx(ctx context.Context, fn func(Repos) error) error {
 	ret := _m.Called(ctx, fn)

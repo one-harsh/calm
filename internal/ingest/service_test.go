@@ -73,6 +73,7 @@ func TestChunk_HonorsContentTypeHint(t *testing.T) {
 type ingestMocks struct {
 	sources      *db.MockSourcesRepo
 	chunks       *db.MockChunksRepo
+	vocabulary   *db.MockVocabularyRepo
 	correlations *db.MockCorrelationsRepo
 }
 
@@ -85,12 +86,13 @@ func newMockService(t *testing.T) (*Service, ingestMocks) {
 	m := ingestMocks{
 		sources:      db.NewMockSourcesRepo(t),
 		chunks:       db.NewMockChunksRepo(t),
+		vocabulary:   db.NewMockVocabularyRepo(t),
 		correlations: db.NewMockCorrelationsRepo(t),
 	}
 	dal := db.NewMockDAL(t)
 	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, fn func(db.Repos) error) error {
-			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Correlations: m.correlations})
+			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Vocabulary: m.vocabulary, Correlations: m.correlations})
 		},
 	).Maybe()
 	dal.EXPECT().Correlations().Return(m.correlations).Maybe()
@@ -101,11 +103,15 @@ func newMockService(t *testing.T) (*Service, ingestMocks) {
 }
 
 // expectIndex sets the happy-path WithTx composition: upsert (namespace-scoped) →
-// delete → insert. Insert is always called (it no-ops on empty content).
+// vocab decrement → delete → insert → vocab increment → vocab prune. Insert is
+// always called (it no-ops on empty content).
 func (m ingestMocks) expectIndex(sessionID int64, source string, created bool) {
 	m.sources.EXPECT().Upsert(mock.Anything, "ns-a", sessionID, source).Return(int64(7), created, nil).Once()
+	m.vocabulary.EXPECT().DecrementForSource(mock.Anything, int64(7)).Return(nil).Once()
 	m.chunks.EXPECT().DeleteForSource(mock.Anything, int64(7)).Return(nil).Once()
 	m.chunks.EXPECT().Insert(mock.Anything, int64(7), mock.Anything).Return(nil).Once()
+	m.vocabulary.EXPECT().IncrementForSource(mock.Anything, int64(7)).Return(nil).Once()
+	m.vocabulary.EXPECT().PruneZeros(mock.Anything, sessionID).Return(nil).Once()
 }
 
 func TestIngest_HappyBuildsSummary(t *testing.T) {
@@ -221,12 +227,13 @@ func TestIngest_PersistsCorrelationOnSuccess(t *testing.T) {
 	m := ingestMocks{
 		sources:      db.NewMockSourcesRepo(t),
 		chunks:       db.NewMockChunksRepo(t),
+		vocabulary:   db.NewMockVocabularyRepo(t),
 		correlations: db.NewMockCorrelationsRepo(t),
 	}
 	dal := db.NewMockDAL(t)
 	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, fn func(db.Repos) error) error {
-			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Correlations: m.correlations})
+			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Vocabulary: m.vocabulary, Correlations: m.correlations})
 		},
 	).Once()
 	dal.EXPECT().Correlations().Return(m.correlations).Once()
@@ -255,12 +262,13 @@ func TestIngest_CorrelationInsertFailureDoesNotBreakIngest(t *testing.T) {
 	m := ingestMocks{
 		sources:      db.NewMockSourcesRepo(t),
 		chunks:       db.NewMockChunksRepo(t),
+		vocabulary:   db.NewMockVocabularyRepo(t),
 		correlations: db.NewMockCorrelationsRepo(t),
 	}
 	dal := db.NewMockDAL(t)
 	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, fn func(db.Repos) error) error {
-			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Correlations: m.correlations})
+			return fn(db.Repos{Sources: m.sources, Chunks: m.chunks, Vocabulary: m.vocabulary, Correlations: m.correlations})
 		},
 	).Once()
 	dal.EXPECT().Correlations().Return(m.correlations).Once()

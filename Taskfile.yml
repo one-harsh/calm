@@ -25,11 +25,13 @@ tasks:
       - task: build
 
   tools:install:
-    desc: Install developer tools and refresh goenv shims
+    desc: Install all developer tools and refresh goenv shims
     summary: |
-      Installs gofumpt, goimports, mockery v2, golangci-lint v2, and
-      oapi-codegen v2 into the active Go version's GOPATH/bin, then runs
-      `goenv rehash` so the binaries become visible on PATH via shim.
+      Installs gofumpt plus the lint-gate and codegen-gate tool groups
+      (tools:install:lint, tools:install:gen) into the active Go
+      version's GOPATH/bin, then runs `goenv rehash` so the binaries
+      become visible on PATH via shim. CI jobs install only the group
+      their gate needs.
 
       Without the rehash step, newly-installed tools aren't reachable
       from `task` invocations because the goenv shim only proxies tools
@@ -38,12 +40,22 @@ tasks:
       Run once after switching Go versions, or after editing this list.
     cmds:
       - go install mvdan.cc/gofumpt@latest
-      - go install golang.org/x/tools/cmd/goimports@latest
-      - go install github.com/vektra/mockery/v2@v2.53.6
-      - go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.7.0
+      - task: tools:install:lint
+      - task: tools:install:gen
+      - command -v goenv >/dev/null 2>&1 && goenv rehash || true
+
+  tools:install:lint:
+    desc: Install the lint-gate tools (golangci-lint, addlicense)
+    cmds:
       - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
       - go install github.com/google/addlicense@latest
-      - command -v goenv >/dev/null 2>&1 && goenv rehash || true
+
+  tools:install:gen:
+    desc: Install the codegen-gate tools (mockery, oapi-codegen, goimports)
+    cmds:
+      - go install github.com/vektra/mockery/v2@v2.53.6
+      - go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.7.0
+      - go install golang.org/x/tools/cmd/goimports@latest
 
   tidy:
     desc: go mod tidy
@@ -287,9 +299,11 @@ tasks:
       the race-checked test:unit pass independent of the coverage gate makes
       flake triage clearer.
 
-      Safe to run anywhere with the toolchain installed. CI calls this; humans
-      can run it before pushing. For inner-loop "am I clean?" without the
-      drift + coverage checks, use bare `task` (the default target).
+      Safe to run anywhere with the toolchain installed. This is the serial
+      local equivalent of the CI workflow, which runs the same gates as
+      parallel jobs (.github/workflows/ci.yml). For inner-loop "am I clean?"
+      without the drift + coverage checks, use bare `task` (the default
+      target).
     cmds:
       - task: dco:check
       - task: gen:check

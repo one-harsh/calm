@@ -27,6 +27,7 @@ type Store struct {
 	events       *eventsRepo
 	sources      *sourcesRepo
 	chunks       *chunksRepo
+	vocabulary   *vocabularyRepo
 	correlations *correlationsRepo
 }
 
@@ -35,6 +36,7 @@ func (s *Store) Sessions() SessionRepo          { return s.sessions }
 func (s *Store) Events() EventsRepo             { return s.events }
 func (s *Store) Sources() SourcesRepo           { return s.sources }
 func (s *Store) Chunks() ChunksRepo             { return s.chunks }
+func (s *Store) Vocabulary() VocabularyRepo     { return s.vocabulary }
 func (s *Store) Correlations() CorrelationsRepo { return s.correlations }
 
 func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *logging.Logger) (*Store, error) {
@@ -68,6 +70,7 @@ func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *loggin
 	s.events = &eventsRepo{queryer: conn, logger: logger}
 	s.sources = &sourcesRepo{queryer: conn, logger: logger}
 	s.chunks = &chunksRepo{queryer: conn, logger: logger}
+	s.vocabulary = &vocabularyRepo{queryer: conn, logger: logger}
 	s.correlations = &correlationsRepo{queryer: conn, logger: logger}
 	return s, nil
 }

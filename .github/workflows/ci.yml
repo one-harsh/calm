@@ -1,3 +1,5 @@
+# Parallel fan-out of the gates in `task ci` (the serial local equivalent).
+# Each job is an independent runner; only `test` needs Postgres.
 name: CI
 
 on:
@@ -17,9 +19,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  dco:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +36,22 @@ jobs:
         if: github.event_name == 'pull_request'
         run: git fetch --deepen=1
 
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: DCO sign-off check
+        env:
+          DCO_BASE: ${{ github.event_name == 'pull_request' && format('HEAD~{0}', github.event.pull_request.commits) || github.event.before }}
+        run: task dco:check
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: '.go-version'
@@ -44,20 +62,74 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: DCO sign-off check
-        # Hoisted out of `task ci` so it fails early.
-        env:
-          DCO_BASE: ${{ github.event_name == 'pull_request' && format('HEAD~{0}', github.event.pull_request.commits) || github.event.before }}
-        run: task dco:check
+      - name: Install lint tools
+        run: task tools:install:lint
 
-      - name: Install Go tools
-        run: task tools:install
+      - name: Lint
+        run: task lint
+
+  gen-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install codegen tools
+        run: task tools:install:gen
+
+      - name: Codegen drift check
+        run: task gen:check
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Start Postgres (custom pg_textsearch image)
         run: task dev:up
 
-      - name: Run CI gate
-        run: task ci
+      - name: Unit + integration tests
+        run: task test
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Coverage gate
+        run: task test:cover
 
       - name: Upload coverage profile
         if: always()
@@ -70,6 +142,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Stop Postgres
-        if: always()
-        run: task dev:down
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build binaries
+        run: task build

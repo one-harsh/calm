@@ -23,6 +23,7 @@ packages:
       EventsRepo:
       SourcesRepo:
       ChunksRepo:
+      VocabularyRepo:
       CorrelationsRepo:
       DAL:
       HealthChecker:

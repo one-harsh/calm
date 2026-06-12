@@ -51,6 +51,12 @@ type ChunksRepo interface {
 	Insert(ctx context.Context, sourceID int64, chunks []Chunk) error
 }
 
+type VocabularyRepo interface {
+	DecrementForSource(ctx context.Context, sourceID int64) error
+	IncrementForSource(ctx context.Context, sourceID int64) error
+	PruneZeros(ctx context.Context, sessionID int64) error
+}
+
 type CorrelationsRepo interface {
 	Insert(ctx context.Context, namespace string, sessionID int64, correlationID []byte, requestType string, requestMeta []byte) error
 	GetWithLockedRow(ctx context.Context, namespace string, sessionID int64, correlationID []byte) (CorrelationRecord, error)
@@ -63,6 +69,7 @@ type DAL interface {
 	Events() EventsRepo
 	Sources() SourcesRepo
 	Chunks() ChunksRepo
+	Vocabulary() VocabularyRepo
 	Correlations() CorrelationsRepo
 	WithTx(ctx context.Context, fn func(Repos) error) error
 }
@@ -73,6 +80,7 @@ var (
 	_ EventsRepo       = (*eventsRepo)(nil)
 	_ SourcesRepo      = (*sourcesRepo)(nil)
 	_ ChunksRepo       = (*chunksRepo)(nil)
+	_ VocabularyRepo   = (*vocabularyRepo)(nil)
 	_ CorrelationsRepo = (*correlationsRepo)(nil)
 	_ DAL              = (*Store)(nil)
 )

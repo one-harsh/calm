@@ -65,11 +65,21 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 			return err
 		}
 		created = c
+		// Old-term derivation reads the outgoing chunk rows — decrement must precede the delete.
+		if err := r.Vocabulary.DecrementForSource(ctx, srcID); err != nil {
+			return err
+		}
 		if err := r.Chunks.DeleteForSource(ctx, srcID); err != nil {
 			return err
 		}
 		// Empty content is valid: the delete above leaves the source with no chunks.
-		return r.Chunks.Insert(ctx, srcID, chunks)
+		if err := r.Chunks.Insert(ctx, srcID, chunks); err != nil {
+			return err
+		}
+		if err := r.Vocabulary.IncrementForSource(ctx, srcID); err != nil {
+			return err
+		}
+		return r.Vocabulary.PruneZeros(ctx, sessionID)
 	})
 	if err != nil {
 		return Result{}, err
@@ -87,8 +97,8 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 		summary[i] = Section{Title: chunks[i].Title, Preview: preview(chunks[i].Content)}
 	}
 
-	// HLD-DEVIATION: distinctive_terms requires the vocabulary doc_freq table
-	// (HLD ingest section); smoke returns none.
+	// HLD-DEVIATION: distinctive_terms (top-N IDF over the vocabulary table,
+	// HLD ingest section) is not yet computed; returns none.
 	result := Result{
 		Source:           in.Source,
 		Created:          created,

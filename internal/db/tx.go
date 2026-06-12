@@ -47,6 +47,7 @@ type Repos struct {
 	Events       EventsRepo
 	Sources      SourcesRepo
 	Chunks       ChunksRepo
+	Vocabulary   VocabularyRepo
 	Correlations CorrelationsRepo
 }
 
@@ -58,6 +59,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(Repos) error) error {
 			Events:       &eventsRepo{queryer: tx, logger: s.logger},
 			Sources:      &sourcesRepo{queryer: tx, logger: s.logger},
 			Chunks:       &chunksRepo{queryer: tx, logger: s.logger},
+			Vocabulary:   &vocabularyRepo{queryer: tx, logger: s.logger},
 			Correlations: &correlationsRepo{queryer: tx, logger: s.logger},
 		})
 	})

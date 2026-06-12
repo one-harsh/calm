@@ -19,19 +19,30 @@ import (
 // so tests bypass the surface they're verifying.
 
 // seedIndexedSource indexes a source + chunks via the DAL transaction primitives
-// (Upsert + DeleteForSource + Insert inside WithTx), mirroring how ingest.Service
-// writes.
+// (Upsert + vocab Decrement + DeleteForSource + Insert + vocab Increment +
+// PruneZeros inside WithTx), mirroring how ingest.Service writes so seeded
+// state stays internally consistent (chunks and vocabulary agree).
 func seedIndexedSource(t *testing.T, store *db.Store, namespace string, sessionID int64, source string, chunks []db.Chunk) {
 	t.Helper()
-	err := store.WithTx(context.Background(), func(r db.Repos) error {
-		id, _, err := r.Sources.Upsert(context.Background(), namespace, sessionID, source)
+	ctx := context.Background()
+	err := store.WithTx(ctx, func(r db.Repos) error {
+		id, _, err := r.Sources.Upsert(ctx, namespace, sessionID, source)
 		if err != nil {
 			return err
 		}
-		if err := r.Chunks.DeleteForSource(context.Background(), id); err != nil {
+		if err := r.Vocabulary.DecrementForSource(ctx, id); err != nil {
 			return err
 		}
-		return r.Chunks.Insert(context.Background(), id, chunks)
+		if err := r.Chunks.DeleteForSource(ctx, id); err != nil {
+			return err
+		}
+		if err := r.Chunks.Insert(ctx, id, chunks); err != nil {
+			return err
+		}
+		if err := r.Vocabulary.IncrementForSource(ctx, id); err != nil {
+			return err
+		}
+		return r.Vocabulary.PruneZeros(ctx, sessionID)
 	})
 	if err != nil {
 		t.Fatalf("seedIndexedSource(%q): %v", source, err)
