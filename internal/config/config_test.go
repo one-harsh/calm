@@ -101,6 +101,31 @@ namespaces:
 	if !cfg.Storage.MigrateOnStartup {
 		t.Errorf("storage.migrate_on_startup default should be true")
 	}
+	if cfg.Storage.MaxOpenConns != 25 || cfg.Storage.MaxIdleConns != 25 {
+		t.Errorf("storage pool defaults: want 25/25, got %d/%d", cfg.Storage.MaxOpenConns, cfg.Storage.MaxIdleConns)
+	}
+	if cfg.Storage.ConnMaxLifetime != 30*time.Minute {
+		t.Errorf("storage.conn_max_lifetime default: want 30m, got %v", cfg.Storage.ConnMaxLifetime)
+	}
+}
+
+func TestLoad_StorageIdleAboveOpenRejected(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+  max_open_conns: 10
+  max_idle_conns: 20
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load with max_idle_conns > max_open_conns: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "storage.max_idle_conns") {
+		t.Errorf("error should mention storage.max_idle_conns; got %v", err)
+	}
 }
 
 func TestLoad_SessionsCacheSizeOverride(t *testing.T) {

@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	summaryCap = 50
-	previewMax = 200
+	summaryCap          = 50
+	previewMax          = 200
+	distinctiveTermsCap = 40
 
 	requestTypeIngest = "ingest"
 )
@@ -59,6 +60,7 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 	chunks := chunk(in.Source, in.Content, in.Format, in.ContentType)
 
 	var created bool
+	var terms []string
 	err := s.store.WithTx(ctx, func(r db.Repos) error {
 		srcID, c, err := r.Sources.Upsert(ctx, namespace, sessionID, in.Source)
 		if err != nil {
@@ -79,7 +81,14 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 		if err := r.Vocabulary.IncrementForSource(ctx, srcID); err != nil {
 			return err
 		}
-		return r.Vocabulary.PruneZeros(ctx, sessionID)
+		if err := r.Vocabulary.PruneZeros(ctx, sessionID); err != nil {
+			return err
+		}
+		// Read in-tx so the selection observes this ingest's writes post-prune;
+		// a post-commit read could interleave with a concurrent re-ingest and
+		// return terms inconsistent with this response's summary.
+		terms, err = r.Vocabulary.TopByIDF(ctx, sessionID, distinctiveTermsCap)
+		return err
 	})
 	if err != nil {
 		return Result{}, err
@@ -97,8 +106,6 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 		summary[i] = Section{Title: chunks[i].Title, Preview: preview(chunks[i].Content)}
 	}
 
-	// HLD-DEVIATION: distinctive_terms (top-N IDF over the vocabulary table,
-	// HLD ingest section) is not yet computed; returns none.
 	result := Result{
 		Source:           in.Source,
 		Created:          created,
@@ -106,7 +113,7 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 		SectionsTotal:    total,
 		SummaryTruncated: truncated,
 		Summary:          summary,
-		DistinctiveTerms: []string{},
+		DistinctiveTerms: terms,
 	}
 	if s.logger.Enabled(logging.DebugLevel) {
 		s.logger.WithContext(ctx).Debug(

@@ -69,7 +69,13 @@ func run() error {
 
 	openCtx, openCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer openCancel()
-	store, err := db.Open(openCtx, cfg.Storage.DSN, cfg.Storage.MigrateOnStartup, logger)
+	store, err := db.Open(openCtx, db.OpenConfig{
+		DSN:              cfg.Storage.DSN,
+		MigrateOnStartup: cfg.Storage.MigrateOnStartup,
+		MaxOpenConns:     cfg.Storage.MaxOpenConns,
+		MaxIdleConns:     cfg.Storage.MaxIdleConns,
+		ConnMaxLifetime:  cfg.Storage.ConnMaxLifetime,
+	}, logger)
 	if err != nil {
 		return fmt.Errorf("open storage: %w", err)
 	}

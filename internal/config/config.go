@@ -95,6 +95,10 @@ type StorageConfig struct {
 	DSN string `mapstructure:"dsn"`
 	// MigrateOnStartup off in multi-replica deploys to avoid concurrent migrator races.
 	MigrateOnStartup bool `mapstructure:"migrate_on_startup"`
+	// Zero on any pool field leaves the database/sql driver default.
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
 }
 
 type NamespaceConfig struct {
@@ -168,6 +172,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sessions.idempotency_key_size", 10_000)
 
 	v.SetDefault("storage.migrate_on_startup", true)
+	v.SetDefault("storage.max_open_conns", 25)
+	v.SetDefault("storage.max_idle_conns", 25)
+	v.SetDefault("storage.conn_max_lifetime", 30*time.Minute)
 }
 
 func validate(cfg *Config) error {
@@ -176,6 +183,19 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.DSN == "" {
 		return errors.New("storage.dsn is required")
+	}
+	if cfg.Storage.MaxOpenConns < 0 {
+		return fmt.Errorf("storage.max_open_conns must be >= 0 (0 means driver default); got %d", cfg.Storage.MaxOpenConns)
+	}
+	if cfg.Storage.MaxIdleConns < 0 {
+		return fmt.Errorf("storage.max_idle_conns must be >= 0 (0 means driver default); got %d", cfg.Storage.MaxIdleConns)
+	}
+	if cfg.Storage.ConnMaxLifetime < 0 {
+		return fmt.Errorf("storage.conn_max_lifetime must be >= 0 (0 means no lifetime cap); got %v", cfg.Storage.ConnMaxLifetime)
+	}
+	if cfg.Storage.MaxOpenConns > 0 && cfg.Storage.MaxIdleConns > cfg.Storage.MaxOpenConns {
+		return fmt.Errorf("storage.max_idle_conns (%d) must be <= storage.max_open_conns (%d) — database/sql would silently clamp it",
+			cfg.Storage.MaxIdleConns, cfg.Storage.MaxOpenConns)
 	}
 	if err := validateRate("server.rate_limit_per_second", cfg.Server.RateLimitPerSecond); err != nil {
 		return err

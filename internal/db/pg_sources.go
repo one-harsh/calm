@@ -4,10 +4,12 @@
 package db
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -17,11 +19,13 @@ import (
 const (
 	defaultSearchLimit = 5
 	snippetRadius      = 50
+	rrfK               = 60
 )
 
 type sourcesRepo struct {
 	queryer queryer
 	logger  *logging.Logger
+	bm25    bm25Extension
 }
 
 func (r *sourcesRepo) Upsert(ctx context.Context, namespace string, sessionID int64, source string) (int64, bool, error) {
@@ -84,10 +88,6 @@ func (r *sourcesRepo) List(ctx context.Context, namespace string, sessionID int6
 	return out, nil
 }
 
-// HLD-DEVIATION: the HLD search section specifies a two-layer fallback
-// (BM25 RRF → trigram) with title-weighted ranking; smoke does a single
-// case-insensitive literal-substring scan over title+content, unranked
-// (id order), and tags every hit match_layer="primary".
 func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInput) ([]SearchResult, error) {
 	if namespace == "" {
 		return nil, ErrNamespaceRequired
@@ -95,13 +95,8 @@ func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInp
 	if len(in.Queries) == 0 {
 		return nil, ErrQueryRequired
 	}
-	// An empty query string is a literal-substring match against everything
-	// (position('' in x) > 0 is always true), so reject it here rather than
-	// rely on the HTTP layer's minLength validation.
-	for _, q := range in.Queries {
-		if q == "" {
-			return nil, ErrQueryRequired
-		}
+	if slices.Contains(in.Queries, "") {
+		return nil, ErrQueryRequired
 	}
 	if in.Limit < 0 {
 		return nil, ErrInvalidLimit
@@ -112,23 +107,12 @@ func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInp
 		limit = defaultSearchLimit
 	}
 
-	const query = `SELECT c.title, c.content, s.label
-	               FROM chunks c
-	               JOIN sources s ON c.source_id = s.id
-	               WHERE s.session_id = $1
-	                 AND EXISTS (SELECT 1 FROM sessions WHERE id = $1 AND namespace = $5)
-	                 AND ($2 = '' OR s.label = $2)
-	                 AND (position(lower($3) in lower(c.content)) > 0
-	                      OR position(lower($3) in lower(c.title)) > 0)
-	               ORDER BY c.id
-	               LIMIT $4`
-
-	// PERF: queries run sequentially — intentional for the smoke substring scan,
-	// where the win isn't there. Once BM25 search lands, fan these out with an
-	// errgroup (~10× wall-clock); don't parallelize the substring path prematurely.
+	// Queries run sequentially: this repo is tx-agnostic and *sql.Tx is not
+	// safe for concurrent use — fan-out belongs at a layer that knows it
+	// holds *sql.DB.
 	out := make([]SearchResult, 0, len(in.Queries))
 	for _, q := range in.Queries {
-		hits, err := r.searchOne(ctx, namespace, query, in.SessionID, in.Source, q, limit)
+		hits, err := r.searchOne(ctx, namespace, in.SessionID, in.Source, q, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -137,48 +121,110 @@ func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInp
 	return out, nil
 }
 
-func (r *sourcesRepo) searchOne(ctx context.Context, namespace, query string, sessionID int64, source, q string, limit int) ([]SearchHit, error) {
-	rows, err := r.queryer.QueryContext(ctx, query, sessionID, source, q, limit, namespace)
+type bm25Candidate struct {
+	id         int64
+	title      string
+	content    string
+	label      string
+	matchesAll bool
+	rrf        float64
+}
+
+// searchOne is the layer-1 query: each tokenizer class contributes its top
+// 2×limit BM25-ranked candidates, fused via Reciprocal Rank Fusion (k=60) per
+// HLD's layer-1-fusion contract. content_type partitions chunks between the
+// classes, so the lists are disjoint and fusion reduces to interleaving —
+// no shared-document reinforcement can occur. AND-matches outrank any RRF
+// score (AND across query terms first, then the OR fallback).
+func (r *sourcesRepo) searchOne(ctx context.Context, namespace string, sessionID int64, source, q string, limit int) ([]SearchHit, error) {
+	fused := []bm25Candidate{}
+	for _, class := range bm25Classes {
+		cands, err := r.classCandidates(ctx, namespace, class, sessionID, source, q, 2*limit)
+		if err != nil {
+			return nil, err
+		}
+		fused = append(fused, cands...)
+	}
+
+	slices.SortFunc(fused, func(a, b bm25Candidate) int {
+		if a.matchesAll != b.matchesAll {
+			if a.matchesAll {
+				return -1
+			}
+			return 1
+		}
+		if a.rrf != b.rrf {
+			return cmp.Compare(b.rrf, a.rrf)
+		}
+		return cmp.Compare(a.id, b.id)
+	})
+	if len(fused) > limit {
+		fused = fused[:limit]
+	}
+
+	hits := make([]SearchHit, 0, len(fused))
+	for _, c := range fused {
+		hits = append(hits, SearchHit{
+			Title:      c.title,
+			Snippet:    snippet(c.content, q),
+			Source:     c.label,
+			MatchLayer: "primary",
+		})
+	}
+	return hits, nil
+}
+
+func (r *sourcesRepo) classCandidates(ctx context.Context, namespace string, class bm25Class, sessionID int64, source, q string, k int) ([]bm25Candidate, error) {
+	rows, err := r.queryer.QueryContext(ctx, r.bm25.classCandidatesSQL(class), sessionID, source, namespace, q, k)
 	if err != nil {
 		return nil, fmt.Errorf("%w: search session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	hits := []SearchHit{}
+	cands := []bm25Candidate{}
+	rank := 0
 	for rows.Next() {
-		var title, content, label string
-		if err := rows.Scan(&title, &content, &label); err != nil {
+		var c bm25Candidate
+		if err := rows.Scan(&c.id, &c.title, &c.content, &c.label, &c.matchesAll); err != nil {
 			return nil, fmt.Errorf("%w: scan search hit for session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
 		}
-		hits = append(hits, SearchHit{
-			Title:      title,
-			Snippet:    snippet(content, q),
-			Source:     label,
-			MatchLayer: "primary",
-		})
+		rank++
+		c.rrf = 1.0 / float64(rrfK+rank)
+		cands = append(cands, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("%w: iterate search hits for session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
 	}
-	return hits, nil
+	return cands, nil
 }
 
 // snippet returns a ±snippetRadius-rune window of content around the first
-// case-insensitive match of query — exact text (content-fidelity), never
-// paraphrased. If the match was on the title (not present in content), it
-// returns a leading window of the content instead.
+// case-insensitive occurrence of the query or, failing that, of any single
+// query term — BM25 matches stemmed/derived forms, so the literal query may
+// be absent from the matched content. Exact text (content-fidelity), never
+// paraphrased; no occurrence at all (e.g. title-only or stemmed match) falls
+// back to a leading window of the content.
 func snippet(content, query string) string {
-	runes := []rune(content)
-	at := strings.Index(strings.ToLower(content), strings.ToLower(query))
-	if at < 0 {
-		if len(runes) <= 2*snippetRadius {
-			return content
-		}
-		return string(runes[:2*snippetRadius])
+	lower := strings.ToLower(content)
+	needles := []string{query}
+	if terms := strings.Fields(query); len(terms) > 1 {
+		needles = append(needles, terms...)
 	}
-	start := utf8.RuneCountInString(content[:at])
-	end := start + utf8.RuneCountInString(query)
-	from := max(start-snippetRadius, 0)
-	to := min(end+snippetRadius, len(runes))
-	return string(runes[from:to])
+	for _, needle := range needles {
+		at := strings.Index(lower, strings.ToLower(needle))
+		if at < 0 {
+			continue
+		}
+		runes := []rune(content)
+		start := utf8.RuneCountInString(content[:at])
+		end := start + utf8.RuneCountInString(needle)
+		from := max(start-snippetRadius, 0)
+		to := min(end+snippetRadius, len(runes))
+		return string(runes[from:to])
+	}
+	runes := []rune(content)
+	if len(runes) <= 2*snippetRadius {
+		return content
+	}
+	return string(runes[:2*snippetRadius])
 }

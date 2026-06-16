@@ -52,7 +52,7 @@ func openConcreteStore(t *testing.T) (*db.Store, *sql.DB, func()) {
 		t.Fatalf("rewrite test dsn: %v", err)
 	}
 
-	store, err := db.Open(context.Background(), suiteDSN, true, logging.Nop())
+	store, err := db.Open(context.Background(), db.OpenConfig{DSN: suiteDSN, MigrateOnStartup: true}, logging.Nop())
 	if err != nil {
 		_ = dropTestDB(adminDSN, dbName)
 		t.Fatalf("open store: %v", err)

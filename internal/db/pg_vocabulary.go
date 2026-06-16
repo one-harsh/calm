@@ -10,14 +10,21 @@ import (
 	logging "github.com/one-harsh/context-logging"
 )
 
-// Vocabulary writes are single-statement leaves: term derivation happens inside
-// each statement, not as Go-side read-then-write steps in the service's WithTx —
-// splitting would ship the session's vocabulary across the wire twice per
-// re-index and add parameter-limit failure modes without making the service
-// choreography more legible. Tokenization uses to_tsvector with the same
-// text-search configs the bm25 indexes name, so "counted" and "queryable" align
-// by construction; to_tsvector dedupes lexemes per document, making
-// COUNT(*) GROUP BY word exactly doc_freq's unit (chunks containing the word).
+// Vocabulary is the compact handle CALM returns for follow-up search. It uses
+// the same tokenizer classes as layer-1 search, but counts chunk content rather
+// than title text: titles are already returned in the ingest summary, while
+// distinctive_terms describe the body vocabulary used for follow-up search.
+//
+// to_tsvector(...) is the boundary between raw text and vocabulary terms. It
+// tokenizes each chunk under the chunk's text-search config ("english" for
+// prose, "simple" for code), normalizes surface forms into lexemes, and records
+// one searchable lexical view of the content. tsvector_to_array(...) emits the
+// distinct lexemes from that vector, so COUNT(*) GROUP BY word is exactly
+// doc_freq's unit: chunks containing the term.
+//
+// Vocabulary writes stay as single-statement leaves: deriving terms in SQL
+// avoids Go-side read-then-write steps, large parameter lists, and shipping the
+// session vocabulary across the wire during every re-index.
 // Like the chunk leaf-writes, methods key off a source_id minted by the
 // namespace-verified Sources.Upsert in the same transaction (a capability), and
 // derive session_id from sources inside the statement.
@@ -77,4 +84,30 @@ func (r *vocabularyRepo) PruneZeros(ctx context.Context, sessionID int64) error 
 		return fmt.Errorf("%w: prune vocabulary for session %d: %w", ErrStorageBackend, sessionID, err)
 	}
 	return nil
+}
+
+// TopByIDF orders by doc_freq ASC, not log(N/doc_freq) DESC: N (the session's
+// chunk count) is fixed within one selection and log is monotone, so both
+// orderings pick the identical set. word ASC pins ties deterministically.
+func (r *vocabularyRepo) TopByIDF(ctx context.Context, sessionID int64, limit int) ([]string, error) {
+	rows, err := r.queryer.QueryContext(ctx,
+		`SELECT word FROM vocabulary WHERE session_id = $1 ORDER BY doc_freq ASC, word ASC LIMIT $2`,
+		sessionID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("%w: top vocabulary terms for session %d: %w", ErrStorageBackend, sessionID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	words := []string{}
+	for rows.Next() {
+		var w string
+		if err := rows.Scan(&w); err != nil {
+			return nil, fmt.Errorf("%w: scan vocabulary term for session %d: %w", ErrStorageBackend, sessionID, err)
+		}
+		words = append(words, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: iterate vocabulary terms for session %d: %w", ErrStorageBackend, sessionID, err)
+	}
+	return words, nil
 }

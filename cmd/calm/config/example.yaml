@@ -43,6 +43,9 @@ sessions:
 storage:
   dsn: postgres://calm:CHANGE_ME@postgres:5432/calm?sslmode=require
   migrate_on_startup: true          # set false for multi-replica deploys; run migrations as a job
+  max_open_conns: 25                # 0 = driver default (unlimited)
+  max_idle_conns: 25                # keep equal to max_open_conns so bursts reuse warm connections; must be <= max_open_conns
+  conn_max_lifetime: 30m            # 0 = connections never recycled
 
 # Identity. Each namespace owns its own sessions, clients, and rate budget.
 # api_key is a bracketed secret reference resolved at startup:

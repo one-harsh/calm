@@ -19,7 +19,7 @@ func seedSearchCorpus(t *testing.T, store *db.Store, namespace string, sessionID
 		{Title: "test step", Content: "all unit tests passed cleanly", ContentType: "prose"},
 	})
 	seedIndexedSource(t, store, namespace, sessionID, "main.go", []db.Chunk{
-		{Title: "handler", Content: "func handleLinkerError() { return }", ContentType: "code"},
+		{Title: "handler", Content: "// linker recovery helper\nfunc handleLinkerError() { return }", ContentType: "code"},
 	})
 }
 
@@ -204,6 +204,167 @@ func TestSearch_SessionIsolationWithinNamespace(t *testing.T) {
 	}
 }
 
+// A prose query matches stemmed variants of its terms: "caching" retrieves a chunk whose
+// content says "cached" — lexeme matching, not substring matching. The snippet is exact
+// indexed text (content-fidelity), so it carries the stored form, not the query's.
+func TestSearch_StemmedProseMatch(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	seedIndexedSource(t, store, "ns-a", sess.ID, "notes.md",
+		[]db.Chunk{{Title: "perf", Content: "the lookup result was cached for later reuse", ContentType: "prose"}})
+
+	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Queries: []string{"caching"},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got[0].Hits) != 1 {
+		t.Fatalf("hits = %+v; want one stemmed match", got[0].Hits)
+	}
+	if !strings.Contains(got[0].Hits[0].Snippet, "cached") {
+		t.Errorf("snippet = %q; want the stored form \"cached\"", got[0].Hits[0].Snippet)
+	}
+}
+
+// Code-class matching is whole-identifier: "handleLinkerError" retrieves the code chunk
+// (the code tokenizer keeps identifiers intact), while the partial identifier "LinkerError"
+// finds nothing — substring retrieval is the secondary layer's job, not primary's.
+func TestSearch_CodeIdentifierWholeTokenMatch(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	seedIndexedSource(t, store, "ns-a", sess.ID, "main.go",
+		[]db.Chunk{{Title: "handler", Content: "func handleLinkerError() { return }", ContentType: "code"}})
+
+	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Queries: []string{"handleLinkerError", "LinkerError"},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got[0].Hits) != 1 {
+		t.Fatalf("whole-identifier hits = %+v; want one", got[0].Hits)
+	}
+	if !strings.Contains(got[0].Hits[0].Snippet, "handleLinkerError") {
+		t.Errorf("snippet = %q; want the identifier verbatim", got[0].Hits[0].Snippet)
+	}
+	if len(got[1].Hits) != 0 {
+		t.Errorf("partial-identifier hits = %+v; want none at the primary layer", got[1].Hits)
+	}
+}
+
+// With the same term in chunk A's title and chunk B's content, A ranks first (title weighted
+// 2.0 vs content 1.0). The content-match chunk is seeded first (lower id) so the ordering can
+// only come from the score, not the id tie-break.
+func TestSearch_TitleMatchOutranksContentMatch(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	seedIndexedSource(t, store, "ns-a", sess.ID, "runbook.md", []db.Chunk{
+		{Title: "deploy notes", Content: "the rollback completed without incident", ContentType: "prose"},
+		{Title: "rollback procedure", Content: "step two restarts the service", ContentType: "prose"},
+	})
+
+	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Queries: []string{"rollback"},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got[0].Hits) != 2 {
+		t.Fatalf("hits = %+v; want both chunks", got[0].Hits)
+	}
+	if got[0].Hits[0].Title != "rollback procedure" {
+		t.Errorf("first hit = %q; want the title match ranked above the content match", got[0].Hits[0].Title)
+	}
+}
+
+// A two-term query tiers AND-matches above OR-matches: the chunk containing both terms ranks
+// first, and the single-term chunk is still returned as fallback rather than dropped.
+func TestSearch_AllTermsMatchOutranksPartial(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	seedIndexedSource(t, store, "ns-a", sess.ID, "build.log", []db.Chunk{
+		{Title: "warning", Content: "the linker emitted a deprecation warning", ContentType: "prose"},
+		{Title: "failure", Content: "a fatal linker fault stopped the build", ContentType: "prose"},
+	})
+
+	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Queries: []string{"fatal linker"},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got[0].Hits) != 2 {
+		t.Fatalf("hits = %+v; want the AND match plus the partial match", got[0].Hits)
+	}
+	if got[0].Hits[0].Title != "failure" || got[0].Hits[1].Title != "warning" {
+		t.Errorf("order = [%q, %q]; want the AND tier first: [failure, warning]",
+			got[0].Hits[0].Title, got[0].Hits[1].Title)
+	}
+}
+
+// One query whose term appears in both prose and code chunks returns hits from both tokenizer
+// classes fused into a single ranked list, every hit labeled match_layer=primary — the two
+// classes are one search surface, not two.
+func TestSearch_MixedClassFusionSingleList(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	seedSearchCorpus(t, store, "ns-a", sess.ID)
+
+	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Queries: []string{"linker"},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	sources := map[string]bool{}
+	for _, h := range got[0].Hits {
+		sources[h.Source] = true
+		if h.MatchLayer != "primary" {
+			t.Errorf("match_layer = %q; want primary for both classes", h.MatchLayer)
+		}
+	}
+	if !sources["build.log"] || !sources["main.go"] {
+		t.Errorf("hit sources = %v; want both the prose (build.log) and code (main.go) chunks", sources)
+	}
+}
+
+// A query of only stopwords yields no prose lexemes and matches no code tokens; the result is
+// an empty hit list, not an error — token-less queries degrade to no-match.
+func TestSearch_AllStopwordQueryReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	seedSearchCorpus(t, store, "ns-a", sess.ID)
+
+	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Queries: []string{"the of and"},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got[0].Hits) != 0 {
+		t.Errorf("hits = %+v; want none for an all-stopword query", got[0].Hits)
+	}
+}
+
 // DAL rejects nil queries, empty query strings, and negative limit before touching storage.
 func TestSearch_ValidationErrors(t *testing.T) {
 	t.Parallel()
@@ -217,8 +378,8 @@ func TestSearch_ValidationErrors(t *testing.T) {
 	}); !errors.Is(err, db.ErrQueryRequired) {
 		t.Errorf("empty queries err = %v; want ErrQueryRequired", err)
 	}
-	// An empty query string must be rejected at the DAL (it would otherwise
-	// match every chunk), not silently relied on HTTP validation to catch.
+	// An empty query string is rejected at the DAL boundary, not silently
+	// relied on HTTP validation to catch.
 	if _, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
 		SessionID: sess.ID, Queries: []string{"ok", ""},
 	}); !errors.Is(err, db.ErrQueryRequired) {

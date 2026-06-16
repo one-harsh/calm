@@ -57,7 +57,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(Repos) error) error {
 			Clients:      &clientRepo{queryer: tx, logger: s.logger},
 			Sessions:     &sessionRepo{queryer: tx, logger: s.logger},
 			Events:       &eventsRepo{queryer: tx, logger: s.logger},
-			Sources:      &sourcesRepo{queryer: tx, logger: s.logger},
+			Sources:      &sourcesRepo{queryer: tx, logger: s.logger, bm25: pgTextsearchExtension{}},
 			Chunks:       &chunksRepo{queryer: tx, logger: s.logger},
 			Vocabulary:   &vocabularyRepo{queryer: tx, logger: s.logger},
 			Correlations: &correlationsRepo{queryer: tx, logger: s.logger},

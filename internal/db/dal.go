@@ -55,6 +55,7 @@ type VocabularyRepo interface {
 	DecrementForSource(ctx context.Context, sourceID int64) error
 	IncrementForSource(ctx context.Context, sourceID int64) error
 	PruneZeros(ctx context.Context, sessionID int64) error
+	TopByIDF(ctx context.Context, sessionID int64, limit int) ([]string, error)
 }
 
 type CorrelationsRepo interface {

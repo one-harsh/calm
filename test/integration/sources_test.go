@@ -236,3 +236,24 @@ func TestSourcesList_SessionIsolationWithinNamespace(t *testing.T) {
 		t.Errorf("session B sees %+v; want none (session isolation)", got)
 	}
 }
+
+// Listing a session's sources under the wrong namespace returns an empty list, not an
+// error — cross-namespace data is invisible (namespace-isolation), and list reads collapse
+// to the natural no-match.
+func TestSourcesList_CrossNamespaceIsInvisible(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	seedIndexedSource(t, store, "ns-a", sess.ID, "in-a", []db.Chunk{{Title: "t", Content: "c", ContentType: "prose"}})
+
+	got, err := store.Sources().List(context.Background(), "ns-b", sess.ID)
+	if err != nil {
+		t.Fatalf("List cross-namespace: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("ns-b sees %+v; want none (namespace isolation)", got)
+	}
+}

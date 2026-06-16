@@ -218,7 +218,7 @@ func openTestStore() (*db.Store, *sql.DB, func(), error) {
 		}
 	}
 
-	store, err := db.Open(context.Background(), suiteDSN, true, logging.Nop())
+	store, err := db.Open(context.Background(), db.OpenConfig{DSN: suiteDSN, MigrateOnStartup: true}, logging.Nop())
 	if err != nil {
 		cleanup()
 		return nil, nil, nil, fmt.Errorf("open store: %w", err)

@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	pgxdriver "github.com/golang-migrate/migrate/v4/database/pgx/v5"
@@ -39,10 +40,28 @@ func (s *Store) Chunks() ChunksRepo             { return s.chunks }
 func (s *Store) Vocabulary() VocabularyRepo     { return s.vocabulary }
 func (s *Store) Correlations() CorrelationsRepo { return s.correlations }
 
-func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *logging.Logger) (*Store, error) {
-	conn, err := sql.Open("pgx", dsn)
+type OpenConfig struct {
+	DSN              string
+	MigrateOnStartup bool
+	// Zero on any pool field leaves the database/sql driver default.
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+}
+
+func Open(ctx context.Context, cfg OpenConfig, logger *logging.Logger) (*Store, error) {
+	conn, err := sql.Open("pgx", cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("postgres open: %w", err)
+	}
+	if cfg.MaxOpenConns > 0 {
+		conn.SetMaxOpenConns(cfg.MaxOpenConns)
+	}
+	if cfg.MaxIdleConns > 0 {
+		conn.SetMaxIdleConns(cfg.MaxIdleConns)
+	}
+	if cfg.ConnMaxLifetime > 0 {
+		conn.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	}
 
 	if err := conn.PingContext(ctx); err != nil {
@@ -55,7 +74,7 @@ func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *loggin
 		return nil, err
 	}
 
-	if migrateOnStartup {
+	if cfg.MigrateOnStartup {
 		if err := migrateUp(ctx, conn, logger); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("postgres migrate: %w", err)
@@ -68,7 +87,7 @@ func Open(ctx context.Context, dsn string, migrateOnStartup bool, logger *loggin
 	s.clients = &clientRepo{queryer: conn, logger: logger}
 	s.sessions = &sessionRepo{queryer: conn, logger: logger}
 	s.events = &eventsRepo{queryer: conn, logger: logger}
-	s.sources = &sourcesRepo{queryer: conn, logger: logger}
+	s.sources = &sourcesRepo{queryer: conn, logger: logger, bm25: pgTextsearchExtension{}}
 	s.chunks = &chunksRepo{queryer: conn, logger: logger}
 	s.vocabulary = &vocabularyRepo{queryer: conn, logger: logger}
 	s.correlations = &correlationsRepo{queryer: conn, logger: logger}

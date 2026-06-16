@@ -46,6 +46,8 @@ func Context(logger *logging.Logger) func(http.Handler) http.Handler {
 				ctx = obs.WithCorrelationID(ctx, correlationID)
 			}
 
+			// Go's OTel HTTP instrumentation never emits W3C traceresponse —
+			// this explicit write is the only place the header is set.
 			if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
 				w.Header().Set(traceResponseHeader, fmt.Sprintf(
 					"00-%s-%s-%02x",

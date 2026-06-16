@@ -7,6 +7,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	logging "github.com/one-harsh/context-logging"
@@ -191,5 +194,87 @@ func TestVocabulary_EmptyReingestClearsSourceTerms(t *testing.T) {
 	}
 	if got := vocabDocFreq(t, sqlDB, sess.ID, "omega"); got != 1 {
 		t.Errorf("doc_freq(omega) = %d; want 1 (b's contribution intact)", got)
+	}
+}
+
+// The ingest response's distinctive_terms lists the session's rarest vocabulary
+// first (highest IDF = lowest doc_freq), with equal-frequency words ordered
+// deterministically — the searchable handle the LLM gets without guessing.
+func TestDistinctiveTerms_RarestFirstDeterministicTies(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	svc := ingest.New(store, logging.Nop())
+
+	res, err := svc.Ingest(context.Background(), "ns-a", sess.ID, mustNewV7(t),
+		ingest.Input{Source: "s", Content: "zeta widget\n\nkappa widget\n\nwidget"})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	want := []string{"kappa", "zeta", "widget"}
+	if !slices.Equal(res.DistinctiveTerms, want) {
+		t.Errorf("DistinctiveTerms = %v; want %v (doc_freq ascending, ties by word)", res.DistinctiveTerms, want)
+	}
+}
+
+// distinctive_terms is capped at 40 even when the session vocabulary is larger.
+func TestDistinctiveTerms_CappedAt40(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	svc := ingest.New(store, logging.Nop())
+
+	words := make([]string, 45)
+	for i := range words {
+		words[i] = fmt.Sprintf("term%02d", i)
+	}
+	res, err := svc.Ingest(context.Background(), "ns-a", sess.ID, mustNewV7(t),
+		ingest.Input{Source: "s", Content: strings.Join(words, " ")})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	if !slices.Equal(res.DistinctiveTerms, words[:40]) {
+		t.Errorf("DistinctiveTerms = %v; want term00..term39 (40-term cap, word-ordered ties)", res.DistinctiveTerms)
+	}
+}
+
+// Re-ingesting a source refreshes the returned distinctive_terms in the same
+// transaction: terms unique to the replaced content disappear immediately, and
+// an empty re-ingest of the session's only source returns no terms.
+func TestDistinctiveTerms_ReingestRefreshesSelection(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+	svc := ingest.New(store, logging.Nop())
+	ctx := context.Background()
+
+	if _, err := svc.Ingest(ctx, "ns-a", sess.ID, mustNewV7(t), ingest.Input{Source: "s", Content: "alpha beta"}); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	res, err := svc.Ingest(ctx, "ns-a", sess.ID, mustNewV7(t), ingest.Input{Source: "s", Content: "beta gamma"})
+	if err != nil {
+		t.Fatalf("re-ingest: %v", err)
+	}
+	if want := []string{"beta", "gamma"}; !slices.Equal(res.DistinctiveTerms, want) {
+		t.Errorf("DistinctiveTerms = %v; want %v (alpha pruned in the same tx)", res.DistinctiveTerms, want)
+	}
+
+	res, err = svc.Ingest(ctx, "ns-a", sess.ID, mustNewV7(t), ingest.Input{Source: "s", Content: ""})
+	if err != nil {
+		t.Fatalf("empty re-ingest: %v", err)
+	}
+	if res.DistinctiveTerms == nil || len(res.DistinctiveTerms) != 0 {
+		t.Errorf("DistinctiveTerms = %#v; want non-nil empty slice for an emptied session", res.DistinctiveTerms)
 	}
 }

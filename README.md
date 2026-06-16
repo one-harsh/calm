@@ -20,12 +20,13 @@ attribution (a correlation row per value-producing call, updated via
 `/v1/feedback`), and the MCP adapter (capture→retrieve through a coding
 agent) are end-to-end.
 
-Still stubbed (`501`): the `/v1/manage/*` administrative API. Ingest and
-search run a baseline implementation; ingest maintains per-session vocabulary
-statistics (how many chunks contain each term, tokenized to match the search
-indexes) as the substrate for IDF-based distinctive terms. Ranking
-and compression quality (BM25/RRF, context budgeting) is the active refinement
-area, improved in place without changing the wire contract.
+Still stubbed (`501`): the `/v1/manage/*` administrative API. Search ranks
+with BM25 per tokenizer class (prose and code), title-weighted, fused via
+reciprocal rank fusion; ingest maintains per-session vocabulary statistics
+and returns the highest-IDF distinctive terms with each response. The trigram
+fallback layer (partial-identifier matching) and compression quality (context
+budgeting) are the active refinement areas, improved in place without changing
+the wire contract.
 
 ## What problem this addresses
 

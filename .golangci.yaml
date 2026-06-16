@@ -21,6 +21,8 @@ linters:
     revive:
       # Aligned with CLAUDE.md: comments only when they describe a non-obvious
       # constraint. Don't force generic doc comments on every exported symbol.
+      # unused-parameter/-receiver are off: interface-matching stubs legitimately
+      # ignore arguments.
       rules:
         - name: package-comments
           disabled: true

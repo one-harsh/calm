@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -103,20 +104,21 @@ func newMockService(t *testing.T) (*Service, ingestMocks) {
 }
 
 // expectIndex sets the happy-path WithTx composition: upsert (namespace-scoped) →
-// vocab decrement → delete → insert → vocab increment → vocab prune. Insert is
-// always called (it no-ops on empty content).
-func (m ingestMocks) expectIndex(sessionID int64, source string, created bool) {
+// vocab decrement → delete → insert → vocab increment → vocab prune → top-IDF
+// read. Insert is always called (it no-ops on empty content).
+func (m ingestMocks) expectIndex(sessionID int64, source string, created bool, terms []string) {
 	m.sources.EXPECT().Upsert(mock.Anything, "ns-a", sessionID, source).Return(int64(7), created, nil).Once()
 	m.vocabulary.EXPECT().DecrementForSource(mock.Anything, int64(7)).Return(nil).Once()
 	m.chunks.EXPECT().DeleteForSource(mock.Anything, int64(7)).Return(nil).Once()
 	m.chunks.EXPECT().Insert(mock.Anything, int64(7), mock.Anything).Return(nil).Once()
 	m.vocabulary.EXPECT().IncrementForSource(mock.Anything, int64(7)).Return(nil).Once()
 	m.vocabulary.EXPECT().PruneZeros(mock.Anything, sessionID).Return(nil).Once()
+	m.vocabulary.EXPECT().TopByIDF(mock.Anything, sessionID, distinctiveTermsCap).Return(terms, nil).Once()
 }
 
 func TestIngest_HappyBuildsSummary(t *testing.T) {
 	svc, m := newMockService(t)
-	m.expectIndex(1, "out", true)
+	m.expectIndex(1, "out", true, []string{"alpha", "beta"})
 
 	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "out", Content: "alpha\n\nbeta"})
 	if err != nil {
@@ -134,8 +136,8 @@ func TestIngest_HappyBuildsSummary(t *testing.T) {
 	if len(res.Summary) != 2 {
 		t.Errorf("summary len = %d; want 2", len(res.Summary))
 	}
-	if res.DistinctiveTerms == nil || len(res.DistinctiveTerms) != 0 {
-		t.Errorf("DistinctiveTerms = %#v; want non-nil empty slice", res.DistinctiveTerms)
+	if !slices.Equal(res.DistinctiveTerms, []string{"alpha", "beta"}) {
+		t.Errorf("DistinctiveTerms = %#v; want the in-tx TopByIDF terms passed through", res.DistinctiveTerms)
 	}
 	if !res.Created {
 		t.Error("Created = false; want true (Upsert reported a fresh insert)")
@@ -144,7 +146,7 @@ func TestIngest_HappyBuildsSummary(t *testing.T) {
 
 func TestIngest_ReindexReportsNotCreated(t *testing.T) {
 	svc, m := newMockService(t)
-	m.expectIndex(1, "out", false)
+	m.expectIndex(1, "out", false, nil)
 
 	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "out", Content: "alpha"})
 	if err != nil {
@@ -158,7 +160,7 @@ func TestIngest_ReindexReportsNotCreated(t *testing.T) {
 func TestIngest_EmptyContentIndexesNothing(t *testing.T) {
 	svc, m := newMockService(t)
 	// DeleteForSource is still called (clears prior content); Insert no-ops on zero chunks.
-	m.expectIndex(1, "out", true)
+	m.expectIndex(1, "out", true, []string{})
 
 	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "out", Content: "   "})
 	if err != nil {
@@ -177,7 +179,7 @@ func TestIngest_EmptyContentIndexesNothing(t *testing.T) {
 
 func TestIngest_TruncatesSummaryAt50(t *testing.T) {
 	svc, m := newMockService(t)
-	m.expectIndex(1, "big", true)
+	m.expectIndex(1, "big", true, nil)
 
 	var sb strings.Builder
 	for i := range 60 {
@@ -237,7 +239,7 @@ func TestIngest_PersistsCorrelationOnSuccess(t *testing.T) {
 		},
 	).Once()
 	dal.EXPECT().Correlations().Return(m.correlations).Once()
-	m.expectIndex(1, "out", true)
+	m.expectIndex(1, "out", true, nil)
 	m.correlations.EXPECT().Insert(
 		mock.Anything, "ns-a", int64(1), corrID[:], "ingest",
 		mock.MatchedBy(func(meta []byte) bool {
@@ -272,7 +274,7 @@ func TestIngest_CorrelationInsertFailureDoesNotBreakIngest(t *testing.T) {
 		},
 	).Once()
 	dal.EXPECT().Correlations().Return(m.correlations).Once()
-	m.expectIndex(1, "out", true)
+	m.expectIndex(1, "out", true, nil)
 	m.correlations.EXPECT().Insert(
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 	).Return(errors.New("correlations table dropped")).Once()

@@ -165,6 +165,66 @@ func (_c *MockVocabularyRepo_PruneZeros_Call) RunAndReturn(run func(context.Cont
 	return _c
 }
 
+// TopByIDF provides a mock function with given fields: ctx, sessionID, limit
+func (_m *MockVocabularyRepo) TopByIDF(ctx context.Context, sessionID int64, limit int) ([]string, error) {
+	ret := _m.Called(ctx, sessionID, limit)
+
+	if len(ret) == 0 {
+		panic("no return value specified for TopByIDF")
+	}
+
+	var r0 []string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, int64, int) ([]string, error)); ok {
+		return rf(ctx, sessionID, limit)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, int64, int) []string); ok {
+		r0 = rf(ctx, sessionID, limit)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]string)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, int64, int) error); ok {
+		r1 = rf(ctx, sessionID, limit)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockVocabularyRepo_TopByIDF_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'TopByIDF'
+type MockVocabularyRepo_TopByIDF_Call struct {
+	*mock.Call
+}
+
+// TopByIDF is a helper method to define mock.On call
+//   - ctx context.Context
+//   - sessionID int64
+//   - limit int
+func (_e *MockVocabularyRepo_Expecter) TopByIDF(ctx interface{}, sessionID interface{}, limit interface{}) *MockVocabularyRepo_TopByIDF_Call {
+	return &MockVocabularyRepo_TopByIDF_Call{Call: _e.mock.On("TopByIDF", ctx, sessionID, limit)}
+}
+
+func (_c *MockVocabularyRepo_TopByIDF_Call) Run(run func(ctx context.Context, sessionID int64, limit int)) *MockVocabularyRepo_TopByIDF_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(int64), args[2].(int))
+	})
+	return _c
+}
+
+func (_c *MockVocabularyRepo_TopByIDF_Call) Return(_a0 []string, _a1 error) *MockVocabularyRepo_TopByIDF_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockVocabularyRepo_TopByIDF_Call) RunAndReturn(run func(context.Context, int64, int) ([]string, error)) *MockVocabularyRepo_TopByIDF_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewMockVocabularyRepo creates a new instance of MockVocabularyRepo. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewMockVocabularyRepo(t interface {

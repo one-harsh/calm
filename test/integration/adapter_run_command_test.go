@@ -316,10 +316,10 @@ func TestAdapterRunCommand_DualPersistsHistoryAndFreshLatest(t *testing.T) {
 	}
 	history := "calm:v1:vcs:git:status#1"
 
-	if n := hitCount(t, inner, token, latest, "zphloxtracked"); n == 0 {
+	if n := hitCount(t, inner, token, latest, "zphloxtracked.txt"); n == 0 {
 		t.Errorf("git status output not retrievable via latest source %q", latest)
 	}
-	if n := hitCount(t, inner, token, history, "zphloxtracked"); n == 0 {
+	if n := hitCount(t, inner, token, history, "zphloxtracked.txt"); n == 0 {
 		t.Errorf("history source %q not retrievable", history)
 	}
 

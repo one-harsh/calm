@@ -61,21 +61,26 @@ func NewHandler(cfg Config, deps Deps) (http.Handler, error) {
 
 	r := chi.NewRouter()
 
-	r.Use(middleware.Recovery(deps.Logger))
-	r.Use(middleware.Context(deps.Logger))
-	r.Use(middleware.Logging(deps.Logger))
+	// Chain order is canonical — reordering is HLD-touching.
+	r.Use(middleware.Recovery(deps.Logger)) // outermost: records panics even when ctx was never hydrated
+	r.Use(middleware.Context(deps.Logger))  // before Logging: every log line carries correlation/trace ids
+	r.Use(middleware.Logging(deps.Logger))  // before Auth: failed-auth attempts are still logged with full context
+	// After Logging (its 400 still emits a completion line); before RateLimitIP
+	// (a malformed workload id is rejected without burning rate-limit tokens).
 	r.Use(middleware.WorkloadRequestID())
+	// Pre-auth: unauthenticated floods can't burn registry-lookup CPU.
 	r.Use(middleware.RateLimitIP(cfg.RateLimitPerIPPerSecond, cfg.TrustProxyHeaders, deps.Logger))
-	r.Use(middleware.Auth(deps.Registry, deps.ClientResolver, deps.Logger))
+	r.Use(middleware.Auth(deps.Registry, deps.ClientResolver, deps.Logger)) // stamps the namespace the next tier reads
 	r.Use(middleware.RateLimitNamespaceAndGlobal(
 		deps.Registry,
 		cfg.RateLimitPerSecond,
 		cfg.RateLimitGlobalPerSecond,
 		deps.Logger,
 	))
+	// Before Timeout: rejecting an oversized body shouldn't consume the timeout budget.
 	r.Use(middleware.BodySizeLimit(int64(cfg.MaxIngestPayloadKB) * 1024))
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
-	r.Use(middleware.OpenAPIValidator(spec))
+	r.Use(middleware.OpenAPIValidator(spec)) // before SessionResolve: missing-required-header fails before a DB lookup
 	r.Use(middleware.SessionResolve(deps.Sessions, sessionRoutes, deps.Logger))
 
 	api.Mount(r, deps.Handlers)
