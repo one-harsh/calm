@@ -1,0 +1,4 @@
+# Copyright 2026 The CALM Authors
+# SPDX-License-Identifier: Apache-2.0
+
+httpx>=0.28,<1

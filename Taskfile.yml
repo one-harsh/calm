@@ -9,19 +9,20 @@ vars:
 
 tasks:
   default:
-    desc: Quality gate — fmt, lint, test, build (inner-loop "am I clean?" check)
+    desc: Quality gate — fmt, lint, test, examples, build (inner-loop "am I clean?" check)
     summary: |
-      Inner-loop quality gate. Runs fmt → lint → test → build in order
-      so the source tree is formatted, lint-clean, fully tested, and
-      buildable in one shot.
+      Inner-loop quality gate. Runs fmt → lint → test → example checks → build
+      in order so the source tree is formatted, lint-clean, fully tested,
+      example-checked, and buildable in one shot.
 
       Differs from `task ci`: `ci` also runs `gen:check` to assert that
-      generated files (genapi, mocks) match the spec/interfaces. Use `ci`
-      before pushing; use bare `task` while iterating.
+      generated files (genapi, mocks) match the spec/interfaces, plus the
+      coverage gate. Use `ci` before pushing; use bare `task` while iterating.
     cmds:
       - task: fmt
       - task: lint
       - task: test
+      - task: example:eval:check
       - task: build
 
   tools:install:
@@ -63,14 +64,14 @@ tasks:
       - go mod tidy
 
   fmt:
-    desc: Format code (gofumpt + goimports + SPDX headers on Go files)
+    desc: Format code (gofumpt + goimports + SPDX headers)
     cmds:
       - gofumpt -w .
       - goimports -local github.com/one-harsh/calm -w .
       - addlicense -c "The CALM Authors" -s=only -l apache -ignore '**/*.yaml' -ignore '**/*.yml' -ignore '**/*.sql' -ignore '**/Dockerfile' -ignore '**/*.gen.go' -ignore '**/mock_*.go' -ignore 'bin/**' -ignore '.task/**' .
 
   lint:
-    desc: Run golangci-lint and verify SPDX headers on Go files
+    desc: Run golangci-lint and verify SPDX headers
     cmds:
       - golangci-lint run ./...
       - addlicense -check -c "The CALM Authors" -s=only -l apache -ignore '**/*.yaml' -ignore '**/*.yml' -ignore '**/*.sql' -ignore '**/Dockerfile' -ignore '**/*.gen.go' -ignore '**/mock_*.go' -ignore 'bin/**' -ignore '.task/**' .
@@ -253,6 +254,36 @@ tasks:
     cmds:
       - go test -tags={{.TEST_TAGS}} -bench=. -benchmem -run=^$ ./internal/...
 
+  example:eval:demo:
+    desc: Run the Python eval-harness demo against a local CALM server
+    cmds:
+      - python3 -B examples/eval-harness/eval_harness.py demo
+
+  example:eval:bench:
+    desc: Run the Python eval-harness byte benchmark against a local CALM server
+    cmds:
+      - python3 -B examples/eval-harness/eval_harness.py bench
+
+  example:eval:verify:
+    desc: Run the Python eval-harness golden-query verification and feedback loop
+    cmds:
+      - python3 -B examples/eval-harness/eval_harness.py verify
+
+  example:eval:deps:
+    desc: Install Python dependencies for the eval-harness example
+    cmds:
+      - python3 -m pip install -r examples/eval-harness/requirements.txt
+
+  example:eval:test:
+    desc: Run unit tests for the Python eval-harness example
+    cmds:
+      - python3 -B -m unittest discover -s examples/eval-harness -p '*_test.py'
+
+  example:eval:check:
+    desc: Run all non-live checks for the Python eval-harness example
+    cmds:
+      - task: example:eval:test
+
   dco:check:
     desc: Verify every commit in DCO_BASE..HEAD carries a Signed-off-by trailer
     summary: |
@@ -285,9 +316,10 @@ tasks:
         fi
 
   ci:
-    desc: CI gate - DCO sign-off, codegen drift check, lint, test, coverage, build
+    desc: CI gate - DCO sign-off, codegen drift check, lint, test, examples, coverage, build
     summary: |
-      Full pre-merge gate: dco:check → gen:check → lint → test → test:cover → build.
+      Full pre-merge gate: dco:check → gen:check → lint → test →
+      example:eval:check → test:cover → build.
 
       dco:check is the first step (fail-fast on commit hygiene before slow
       work). Locally checks just the most recent commit; in CI checks every
@@ -309,6 +341,7 @@ tasks:
       - task: gen:check
       - task: lint
       - task: test
+      - task: example:eval:check
       - task: test:cover
       - task: build
 

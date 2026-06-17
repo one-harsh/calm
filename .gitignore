@@ -2,6 +2,8 @@
 /bin/
 /dist/
 /build/
+__pycache__/
+*.py[cod]
 *.exe
 *.test
 *.out

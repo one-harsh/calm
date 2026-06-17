@@ -264,6 +264,12 @@ file; operators provision secrets via their platform's existing tooling.
 Any scalar field can also be overridden by an environment variable:
 `CALM_<PATH_IN_UPPERCASE>` with `.` and `-` replaced by `_`. Examples:
 `CALM_SERVER_ADDRESS=":9090"`, `CALM_STORAGE_DSN="postgres://..."`,
+`CALM_STORAGE_MAX_OPEN_CONNS=25` and `CALM_STORAGE_MAX_IDLE_CONNS=25`
+(database/sql connection-pool caps; defaults 25/25, idle must be ≤ open;
+`0` falls through to the driver default of unlimited open / 2 idle, which
+causes reconnect churn under load), `CALM_STORAGE_CONN_MAX_LIFETIME=30m`
+(recycles connections so credential rotation and LB changes take effect;
+`0` keeps them indefinitely),
 `CALM_OBSERVABILITY_LOGGING_LEVEL=debug`,
 `CALM_OBSERVABILITY_OTEL_ENABLED=true` (installs the W3C
 TraceContext propagator at bootup so the Context middleware extracts
@@ -319,18 +325,32 @@ inbound `traceparent` get a `traceresponse` on the way out. The
 correlation ID is the value workloads echo back to `/v1/feedback` when
 reporting outcomes for a prior call.
 
+## Examples
+
+CALM ships worked integrations as examples of the HTTP contract, not as
+libraries workloads must depend on. The MCP adapter demonstrates coding-agent
+capture/retrieval. The Python eval harness demonstrates a non-coding-agent
+workflow: LLM eval triage over prompt diffs, run summaries, tool traces, judge
+rationales, and golden investigation queries.
+
+The eval harness reports exact UTF-8 byte counts and intentionally does not
+estimate model tokens. See
+[`examples/eval-harness/README.md`](examples/eval-harness/README.md).
+
 ## Building and testing
 
 Everything reproducible goes through `task`:
 
 ```bash
 task build              # build both binaries (calm + calm-adapter)
-task test               # unit + integration (needs `task dev:up`)
+task test               # Go unit + integration (needs `task dev:up`)
 task test:unit          # fast inner-loop tests, no Postgres needed
-task ci                 # full pre-merge gate: dco:check + gen:check + lint + test + test:cover + build
+task example:eval:check # Python eval-harness tests
+task ci                 # full pre-merge gate: dco + gen + lint + test + examples + coverage + build
 task gen:api            # regenerate handlers/client from openapi.yaml
 task gen:mocks          # regenerate mockery mocks
 task fmt                # gofumpt + goimports
+task example:eval:test  # tests for the Python eval-harness example
 ```
 
 Integration tests run against a real Postgres started by `task dev:up`
@@ -344,6 +364,8 @@ cmd/
   calm/             service entry (thin: config, deps, server.Run)
     config/         operator config templates (example.yaml, dev.yaml)
   calm-adapter/     MCP adapter binary
+examples/
+  eval-harness/     Python stdlib LLM-eval showcase and byte benchmark
 internal/
   adapter/          MCP adapter packages — CALM client port, MCP stdio
                     protocol, local exec, extraction (consumed only by
@@ -362,8 +384,9 @@ internal/
   ingest/           chunking, format detection, intent filtering
   obs/              context-bound logging + field helpers; OTel
                     propagator install (config-gated at bootup)
-  search/           two-layer search (porter → trigram fallback),
-                    pluggable allocator
+  search/           search service: correlation capture + allocator seam
+                    (BM25 ranking + RRF fusion live in the sources DAL;
+                    trigram fallback layer is upcoming)
   secrets/          [scheme:payload] secret-reference resolver
   server/           HTTP lifecycle + middleware chain (recovery, context,
                     logging, workload-request-id, rate-limit, auth,

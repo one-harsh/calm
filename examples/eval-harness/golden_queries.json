@@ -1,0 +1,51 @@
+[
+  {
+    "query": "Where did prompt v17 route exact SKU availability through the wrong inventory tool path?",
+    "search_queries": ["wrong tool", "exact SKU", "prompt v17"],
+    "expected_sources": ["traces/tool-selection-regression.md"],
+    "evidence_terms": ["catalog_search", "inventory_lookup", "wrong tool"],
+    "required": true
+  },
+  {
+    "query": "Show me cases where the model picked update_cart but sent malformed quantity arguments.",
+    "search_queries": ["malformed update_cart arguments", "quantity_delta", "right tool"],
+    "expected_sources": ["traces/malformed-arguments.md"],
+    "evidence_terms": ["update_cart", "malformed arguments", "quantity_delta"],
+    "required": true
+  },
+  {
+    "query": "Did fulfillment timeouts increase because the model retried the same call after the budget was spent?",
+    "search_queries": ["retry budget", "fulfillment_quote", "timeout"],
+    "expected_sources": ["traces/timeout-retry.md"],
+    "evidence_terms": ["timeout", "retry budget", "fulfillment_quote"],
+    "required": true
+  },
+  {
+    "query": "Find examples where the judge says the answer invented delivery details from the tool result.",
+    "search_queries": ["hallucinated", "delivery_estimate", "upstream timeout"],
+    "expected_sources": ["traces/hallucinated-tool-output.md"],
+    "evidence_terms": ["hallucinated tool output", "delivery_estimate", "judge"],
+    "required": true
+  },
+  {
+    "query": "Which failures look like strict JSON schema-following problems rather than tool choice mistakes?",
+    "search_queries": ["schema-following", "additionalProperties", "customer_tier"],
+    "expected_sources": ["traces/schema-following.md"],
+    "evidence_terms": ["schema-following", "json", "additionalProperties"],
+    "required": true
+  },
+  {
+    "query": "What changed between the v16 and v17 prompts around tool choice for inventory requests?",
+    "search_queries": ["tool choice", "catalog_search", "inventory_lookup"],
+    "expected_sources": ["prompt-diff.md"],
+    "evidence_terms": ["tool choice", "v17", "catalog_search"],
+    "required": true
+  },
+  {
+    "query": "Where did overbroad retrieval pull unrelated policy snippets into an availability question?",
+    "search_queries": ["overbroad retrieval", "policy_search", "unrelated"],
+    "expected_sources": ["traces/overbroad-retrieval.md"],
+    "evidence_terms": ["overbroad retrieval", "policy_search", "unrelated"],
+    "required": true
+  }
+]
