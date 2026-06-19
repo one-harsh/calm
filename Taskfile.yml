@@ -169,6 +169,26 @@ tasks:
     generates:
       - "{{.ADAPTER_BIN}}"
 
+  closeout:
+    desc: Refresh bin/calm-adapter and remind the user to reload the MCP host
+    summary: |
+      The MCP host launches the adapter as a stdio child at connect time and
+      does not auto-restart when the binary changes — and the adapter only
+      attempts session creation in initialize, so a stale or
+      degraded-initialize process stays degraded until the host reconnects.
+
+      Run this at task / plan completion: it produces a fresh adapter binary
+      and prints the host-reload incantation. The next agent turn picks up
+      both the new bytes and a fresh initialize.
+    deps: [build:adapter]
+    cmds:
+      - echo ""
+      - echo "bin/calm-adapter is fresh."
+      - echo "Reload your MCP host so the next session picks it up:"
+      - "echo \"  Claude Code:  claude mcp restart calm\""
+      - "echo \"  Other hosts:  see your host's MCP lifecycle docs\""
+      - echo ""
+
   smoke:adapter:
     desc: CLI smoke of the MCP adapter over stdio (no CALM needed — exercises never-worse).
     deps: [build:adapter]

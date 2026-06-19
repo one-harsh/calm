@@ -162,7 +162,7 @@ func (r *sourcesRepo) searchOne(ctx context.Context, namespace string, sessionID
 		fused = fused[:limit]
 	}
 
-	hits := make([]SearchHit, 0, len(fused))
+	hits := make([]SearchHit, 0, limit)
 	for _, c := range fused {
 		hits = append(hits, SearchHit{
 			Title:      c.title,
@@ -170,6 +170,18 @@ func (r *sourcesRepo) searchOne(ctx context.Context, namespace string, sessionID
 			Source:     c.label,
 			MatchLayer: "primary",
 		})
+	}
+
+	if len(hits) < limit {
+		excludeIDs := make([]int64, len(fused))
+		for i, c := range fused {
+			excludeIDs[i] = c.id
+		}
+		trigramHits, err := r.trigramCandidates(ctx, namespace, sessionID, source, q, limit-len(hits), excludeIDs)
+		if err != nil {
+			return nil, err
+		}
+		hits = append(hits, trigramHits...)
 	}
 	return hits, nil
 }

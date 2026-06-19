@@ -47,5 +47,26 @@
     "expected_sources": ["traces/overbroad-retrieval.md"],
     "evidence_terms": ["overbroad retrieval", "policy_search", "unrelated"],
     "required": true
+  },
+  {
+    "query": "Show me traces where the model violated additionalProperties:false by including extra JSON fields.",
+    "search_queries": ["additionalProp", "includeAlternat"],
+    "expected_sources": ["traces/schema-following.md"],
+    "evidence_terms": ["additionalProperties", "includeAlternates", "schema-following"],
+    "required": true
+  },
+  {
+    "query": "Where did the fulfillmentQuote tool retry past its budget under the new v17 wording?",
+    "search_queries": ["fulfillmentQuote", "retryBudget"],
+    "expected_sources": ["traces/timeout-retry.md"],
+    "evidence_terms": ["fulfillment_quote", "retry budget"],
+    "required": true
+  },
+  {
+    "query": "Find cases where the assistant answered confidently after a deliveryEstimate upstream timeout.",
+    "search_queries": ["deliveryEstimate", "upstreamTimeout"],
+    "expected_sources": ["traces/hallucinated-tool-output.md"],
+    "evidence_terms": ["delivery_estimate", "upstream timeout", "hallucinated"],
+    "required": true
   }
 ]

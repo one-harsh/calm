@@ -20,13 +20,13 @@ attribution (a correlation row per value-producing call, updated via
 `/v1/feedback`), and the MCP adapter (capture→retrieve through a coding
 agent) are end-to-end.
 
-Still stubbed (`501`): the `/v1/manage/*` administrative API. Search ranks
-with BM25 per tokenizer class (prose and code), title-weighted, fused via
-reciprocal rank fusion; ingest maintains per-session vocabulary statistics
-and returns the highest-IDF distinctive terms with each response. The trigram
-fallback layer (partial-identifier matching) and compression quality (context
-budgeting) are the active refinement areas, improved in place without changing
-the wire contract.
+Still stubbed (`501`): the `/v1/manage/*` administrative API. Search uses
+BM25 ranking per tokenizer class (prose and code), title-weighted, fused via
+reciprocal rank fusion, with a strict-word-similarity trigram fallback for
+partial identifiers; ingest maintains per-session vocabulary statistics and
+returns the highest-IDF distinctive terms with each response. Context-budgeting
+and response allocation are the active refinement area, improved in place
+without changing the wire contract.
 
 ## What problem this addresses
 
@@ -270,6 +270,9 @@ Any scalar field can also be overridden by an environment variable:
 causes reconnect churn under load), `CALM_STORAGE_CONN_MAX_LIFETIME=30m`
 (recycles connections so credential rotation and LB changes take effect;
 `0` keeps them indefinitely),
+`CALM_STORAGE_TRIGRAM_SIMILARITY_THRESHOLD=0.5`
+(pg_trgm `strict_word_similarity_threshold` for the layer-2 search fallback;
+raise to tighten partial-identifier recall, lower to loosen; bounded `(0, 1]`),
 `CALM_OBSERVABILITY_LOGGING_LEVEL=debug`,
 `CALM_OBSERVABILITY_OTEL_ENABLED=true` (installs the W3C
 TraceContext propagator at bootup so the Context middleware extracts
@@ -385,8 +388,7 @@ internal/
   obs/              context-bound logging + field helpers; OTel
                     propagator install (config-gated at bootup)
   search/           search service: correlation capture + allocator seam
-                    (BM25 ranking + RRF fusion live in the sources DAL;
-                    trigram fallback layer is upcoming)
+                    (BM25 + RRF + trigram fallback live in the sources DAL)
   secrets/          [scheme:payload] secret-reference resolver
   server/           HTTP lifecycle + middleware chain (recovery, context,
                     logging, workload-request-id, rate-limit, auth,

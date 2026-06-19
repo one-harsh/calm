@@ -101,6 +101,7 @@ class RunReport:
     compression_ratio: float | None
     ingest_latency_ms: float
     search_latency_ms: float
+    match_layer_counts: dict[str, int] = field(default_factory=dict)
     feedback_counts: dict[str, int] = field(default_factory=dict)
     ingest_records: tuple[IngestRecord, ...] = ()
     search_records: tuple[SearchRecord, ...] = ()
@@ -435,6 +436,12 @@ def build_report(
     ingest_compact_bytes = sum(record.compact_bytes for record in ingest_records)
     search_compact_bytes = sum(record.compact_bytes for record in search_records)
     compact_context_bytes = search_compact_bytes
+    match_layer_counts: dict[str, int] = {}
+    for record in search_records:
+        for hit in record.hits:
+            layer = str(hit.get("match_layer", ""))
+            if layer:
+                match_layer_counts[layer] = match_layer_counts.get(layer, 0) + 1
     return RunReport(
         mode=mode,
         base_url=base_url,
@@ -449,6 +456,7 @@ def build_report(
         compression_ratio=round(raw_fixture_bytes / compact_context_bytes, 2) if compact_context_bytes else None,
         ingest_latency_ms=round(sum(record.latency_ms for record in ingest_records), 2),
         search_latency_ms=round(sum(record.latency_ms for record in search_records), 2),
+        match_layer_counts=match_layer_counts,
         feedback_counts=feedback_counts,
         ingest_records=ingest_records,
         search_records=search_records,
@@ -568,6 +576,14 @@ def render_markdown(report: RunReport) -> str:
             )
             if snippet:
                 lines.append(f"  `{snippet}`")
+        lines.append("")
+
+    if report.match_layer_counts:
+        lines.extend(["## Match-layer distribution", "", "| Layer | Hits |", "|---|---:|"])
+        for layer in ("primary", "trigram"):
+            count = report.match_layer_counts.get(layer, 0)
+            if count or layer in report.match_layer_counts:
+                lines.append(f"| {layer} | {count} |")
         lines.append("")
 
     if report.feedback_counts:

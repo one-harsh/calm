@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -47,10 +49,21 @@ type OpenConfig struct {
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
+	// Zero leaves the cluster's pg_trgm.strict_word_similarity_threshold default.
+	TrigramSimilarityThreshold float64
 }
 
 func Open(ctx context.Context, cfg OpenConfig, logger *logging.Logger) (*Store, error) {
-	conn, err := sql.Open("pgx", cfg.DSN)
+	dsn := cfg.DSN
+	if cfg.TrigramSimilarityThreshold > 0 {
+		var err error
+		dsn, err = withDSNOption(dsn, "pg_trgm.strict_word_similarity_threshold",
+			strconv.FormatFloat(cfg.TrigramSimilarityThreshold, 'f', -1, 64))
+		if err != nil {
+			return nil, fmt.Errorf("postgres open: %w", err)
+		}
+	}
+	conn, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres open: %w", err)
 	}
@@ -95,6 +108,25 @@ func Open(ctx context.Context, cfg OpenConfig, logger *logging.Logger) (*Store, 
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// withDSNOption appends `-c key=value` to the libpq `options` parameter of a
+// URL-style DSN. Multiple options accumulate space-separated. Postgres
+// applies them at session start, so every pooled connection inherits the
+// setting without per-query SETs.
+func withDSNOption(dsn, key, value string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("parse dsn: %w", err)
+	}
+	q := u.Query()
+	addition := fmt.Sprintf("-c %s=%s", key, value)
+	if existing := q.Get("options"); existing != "" {
+		addition = existing + " " + addition
+	}
+	q.Set("options", addition)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
 
 type HealthChecker interface {
 	Health(ctx context.Context) error

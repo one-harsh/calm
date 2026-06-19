@@ -99,6 +99,11 @@ type StorageConfig struct {
 	MaxOpenConns    int           `mapstructure:"max_open_conns"`
 	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+	// TrigramSimilarityThreshold sets pg_trgm.strict_word_similarity_threshold
+	// per connection (via DSN options). Layer-2 search uses the `<<%` operator,
+	// which honors this GUC; raising it tightens layer-2 recall, lowering it
+	// loosens. Zero leaves the cluster default in place.
+	TrigramSimilarityThreshold float64 `mapstructure:"trigram_similarity_threshold"`
 }
 
 type NamespaceConfig struct {
@@ -175,6 +180,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("storage.max_open_conns", 25)
 	v.SetDefault("storage.max_idle_conns", 25)
 	v.SetDefault("storage.conn_max_lifetime", 30*time.Minute)
+	v.SetDefault("storage.trigram_similarity_threshold", 0.5)
 }
 
 func validate(cfg *Config) error {
@@ -196,6 +202,13 @@ func validate(cfg *Config) error {
 	if cfg.Storage.MaxOpenConns > 0 && cfg.Storage.MaxIdleConns > cfg.Storage.MaxOpenConns {
 		return fmt.Errorf("storage.max_idle_conns (%d) must be <= storage.max_open_conns (%d) — database/sql would silently clamp it",
 			cfg.Storage.MaxIdleConns, cfg.Storage.MaxOpenConns)
+	}
+	// pg_trgm thresholds are bounded [0, 1]; 0 is a footgun ("everything matches") so reject it explicitly.
+	if cfg.Storage.TrigramSimilarityThreshold < 0 || cfg.Storage.TrigramSimilarityThreshold > 1 {
+		return fmt.Errorf("storage.trigram_similarity_threshold must be in (0, 1]; got %g", cfg.Storage.TrigramSimilarityThreshold)
+	}
+	if cfg.Storage.TrigramSimilarityThreshold == 0 {
+		return errors.New("storage.trigram_similarity_threshold must be > 0 (set the explicit default 0.5 to match the Postgres pg_trgm default)")
 	}
 	if err := validateRate("server.rate_limit_per_second", cfg.Server.RateLimitPerSecond); err != nil {
 		return err

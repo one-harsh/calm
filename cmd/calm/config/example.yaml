@@ -46,6 +46,7 @@ storage:
   max_open_conns: 25                # 0 = driver default (unlimited)
   max_idle_conns: 25                # keep equal to max_open_conns so bursts reuse warm connections; must be <= max_open_conns
   conn_max_lifetime: 30m            # 0 = connections never recycled
+  trigram_similarity_threshold: 0.5 # pg_trgm.strict_word_similarity_threshold for layer-2 search; raise to tighten recall, lower to loosen
 
 # Identity. Each namespace owns its own sessions, clients, and rate budget.
 # api_key is a bracketed secret reference resolved at startup:

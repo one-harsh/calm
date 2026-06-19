@@ -107,6 +107,36 @@ namespaces:
 	if cfg.Storage.ConnMaxLifetime != 30*time.Minute {
 		t.Errorf("storage.conn_max_lifetime default: want 30m, got %v", cfg.Storage.ConnMaxLifetime)
 	}
+	if cfg.Storage.TrigramSimilarityThreshold != 0.5 {
+		t.Errorf("storage.trigram_similarity_threshold default: want 0.5, got %g", cfg.Storage.TrigramSimilarityThreshold)
+	}
+}
+
+func TestLoad_StorageTrigramThresholdRejectsOutOfRange(t *testing.T) {
+	cases := []struct{ name, value string }{
+		{"zero", "0"},
+		{"above-one", "1.5"},
+		{"negative", "-0.1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+  trigram_similarity_threshold: `+tc.value+`
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+			_, err := Load(path)
+			if err == nil {
+				t.Fatal("Load with invalid trigram_similarity_threshold: want error, got nil")
+			}
+			if !strings.Contains(err.Error(), "trigram_similarity_threshold") {
+				t.Errorf("error should mention trigram_similarity_threshold; got %v", err)
+			}
+		})
+	}
 }
 
 func TestLoad_StorageIdleAboveOpenRejected(t *testing.T) {
