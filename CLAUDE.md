@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CALM (Context Abstraction Layer for Models) is an HTTP service that reduces LLM token waste by filtering and compressing tool output before it enters the context window. It sits beside (never between) the workload and the LLM — a sidecar, not a proxy.
 
-The full design is in `docs/HLD.md`. **The HLD is canonical.** Code follows the HLD; this file is the development directive that translates the HLD's intent into day-to-day rules.
+The full design is in `docs/HLD.md`. **The HLD is canonical.** Code follows the HLD; this file is the development directive that translates the HLD's intent into day-to-day rules. The user-facing landing page is `README.md` (status, quickstart, deployment, ops surface); this file is for engineering contributors and AI coding assistants.
 
 ## HLD is the design directive
 
@@ -73,7 +73,7 @@ Single statically-linked binary, REST API with JSON payloads, all state behind a
 - **Six design invariants** — named above; see HLD's design-invariants section.
 - **Storage**: Postgres in production, BM25 via `pg_search` or `pg_textsearch`, trigram via `pg_trgm` — see DL11. The DAL (`internal/db`) is a mockery port for testability, **not** a portability layer; there is only one backend.
 - **Layering**: `cmd/<bin>/main.go` stays thin (~30–60 lines: config load, logger init, dependency wiring, hand off to the run loop); domain logic lives in `internal/{ingest,search,events,snapshot,session}`, behind thin handlers.
-- **The adapter lives under `internal/adapter`** because only `cmd/calm-adapter` consumes it — CALM's public surface is the OpenAPI spec, not a client SDK (DL09). A boundary test pins its server-package imports to the extraction-portable set (`internal/api/genapi`, `internal/secrets`) so a future carve-out is a lift, not a refactor. `internal/adapter/extract/LABELING.md` is the canonical idempotent-indexing labeling/event contract.
+- **The adapter lives under `internal/adapter`** because only `cmd/calm-adapter` consumes it — CALM's public surface is the OpenAPI spec, not a client SDK (DL09). A boundary test pins its server-package imports to the extraction-portable set (`internal/api/genapi`, `internal/secrets`) so a future carve-out is a lift, not a refactor. `internal/adapter/docs/DESIGN.md` is the MCP adapter design contract; `internal/adapter/docs/LABELING.md` is the canonical idempotent-indexing labeling/event contract.
 
 ## Isolation is two boundaries, not one — namespace is security, session is content
 
@@ -108,7 +108,8 @@ The other two invariants that generate code-level discipline: **`never-worse`** 
 - `task test` runs unit then integration. Inner-loop dev: `task test:unit` for fast feedback; `go test ./<pkg>` and `go vet ./...` are fine. Anything whose result must match across machines (CI, builds, lint, format) goes through `task`.
 - Never edit `go.mod` by hand for routine adds — `task tidy` is the entry.
 - `task ci` is the gate: lint + test + build, all green.
-- **Dogfood the adapter when it's registered.** If the `calm` MCP server is connected, route shell commands through `calm_run_command` (not the native shell) and retrieve prior output via `calm_search source=<label>` instead of re-running. Native shell is the fallback when CALM is unreachable (`never-worse`).
+- **Dogfood the adapter when it's registered.** If the `calm` MCP server is connected, route shell commands through `calm_run_command` (not the native shell) and retrieve prior output via `calm_search source=<label>` instead of re-running. Pure-inspection file reads (`cat`, `sed`, `head`, line-numbered slices for verification) also go through `calm_run_command` rather than the native `Read` tool — `Read` dumps content straight into context with no indexing. Reserve `Read` for cases where it's a hard precondition (e.g., `Edit` requires a prior `Read` of the target file in the same conversation). Native shell is the fallback when CALM is unreachable (`never-worse`). The conversation's MCP tool surface is sticky to the adapter PID it bound to at session start — if that PID had a failed `initialize`, or dies mid-conversation, the host doesn't auto-rebind. Detect via the absence of `Captured N/M sections under "<label>"` on `calm_run_command` output, or `CALM not connected` from `calm_search`; when detected, ask the user to restart the conversation (`/resume` in Claude Code) so a new session binds to a fresh adapter.
+- **Run `task closeout` at task / plan completion.** Rebuilds `bin/calm-adapter` and prints the host-reload command. The MCP host launches the adapter at connect time and never picks up new bytes until the user reloads the host's MCP config, so closeout is what makes a fresh adapter binary available to the next conversation.
 
 ## HTTP server boundaries (canonical — do not drift)
 

@@ -10,6 +10,9 @@ command into CALM source labels and events. It is the first worked example of a
 CALM workload constructing labels, so its conventions are de-facto practice for
 future integrations.
 
+The broader MCP adapter contract lives in [`DESIGN.md`](DESIGN.md). This document
+owns only the source-label grammar, capture policy, and event-extraction rules.
+
 ## 1. Why this exists — the idempotent-indexing footgun
 
 CALM's `idempotent-indexing` invariant makes a **source label both the identity
@@ -33,7 +36,7 @@ both. **Events** hold execution chronology and cross-link the snapshots.
 ## 2. The structured label grammar
 
 ```
-calm:v1:<domain>:<verb>:<context…>:<identity>[#<seq>]
+calm:v1:<domain>:<verb>:<context…>:<identity>[#<seq>][@<token>]
 ```
 
 - `calm:v1` — product + grammar version. Bump the version when normalization
@@ -47,17 +50,48 @@ calm:v1:<domain>:<verb>:<context…>:<identity>[#<seq>]
   invocation start). Present only on history/coexist sources. It is deliberately
   **not** the event ordinal: a failed or deduped event write would make that link
   inaccurate.
+- `@<token>` — the **per-call staleness suffix** (6 characters of lowercase
+  base32 per RFC 4648, alphabet `[a-z2-7]`, e.g. `a3f2k6`). Session-scoped
+  local-validation marker; the adapter validates it without a CALM round-trip.
+  The adapter always emits the fused form in recall hints; the suffix is
+  optional on input — base-only labels remain valid references without
+  staleness checking (shell-substrate references and programmatic clients still
+  work).
 
-The **base** label (without `#<seq>`) is the latest/semantic source; `base#<seq>`
-is the per-invocation history source.
+The **base** label (without `#<seq>` and `@<token>`) is the latest/semantic source;
+`base#<seq>` is the per-invocation history source; `@<token>` appears alongside
+either form on adapter-emitted labels.
 
-Reserved characters within a segment (`:`, `#`, space, `%`) and control bytes are
-percent-encoded; multibyte UTF-8 is left intact. Over-length identities collapse
+Reserved characters within a segment (`:`, `#`, `@`, space, `%`) and control bytes
+are percent-encoded; multibyte UTF-8 is left intact. Over-length identities collapse
 to a trailing content hash so labels stay bounded.
+
+### Token validation rules
+
+The adapter maintains a session-scoped registry mapping each emitted source
+identity to the token currently canonical for it. Validation cases:
+
+- **Latest source** (`<base>@<token>`): only the **current** token for `<base>`
+  in this session validates. A prior token whose content has been replaced
+  returns a `session_lost` degradation signal — the agent's reference is to a
+  capture moment that no longer represents `<base>`.
+- **History source** (`<base>#<seq>@<token>`): the token recorded at the
+  invocation that created `<base>#<seq>` validates. History content is immutable
+  per invocation, so the token remains stable for the session lifetime.
+- **Cross-session**: any token from a different session epoch (after session
+  replacement per `DESIGN.md` AD03) rejects with `session_lost`.
+- **Token absent**: base-only labels forward to CALM without staleness checking.
+
+Token collisions (two distinct identities sharing the same token) are tolerated:
+validation lookup is keyed by `(base, seq if any)` first, then matched against
+the token, so cross-identity collisions never alias references.
 
 ### Labeling & mode table
 
-| Command | Mode | Latest source | History source |
+Examples elide the `@<token>` suffix for readability; adapter-emitted labels
+always carry it (e.g., `calm:v1:file:read:foo.py@a3f2k6`).
+
+| Tool invocation | Mode | Latest source | History source |
 |---|---|---|---|
 | `cat ./foo.py` | replace | `calm:v1:file:read:foo.py` | — |
 | `ls src` | replace | `calm:v1:file:list:src` | — |
@@ -65,18 +99,29 @@ to a trailing content hash so labels stay bounded.
 | `git status` | dual | `calm:v1:vcs:git:status` | `…:status#<seq>` |
 | `git show HEAD:file` | dual | `calm:v1:vcs:git:show:HEAD%3Afile` | `…:show:HEAD%3Afile#<seq>` |
 | `grep TODO src` | replace | `calm:v1:search:grep:TODO:src` | — |
+| `calm_edit_file(foo.py)` | dual | `calm:v1:file:read:foo.py` | `…:edit:foo.py#<seq>` |
+| `calm_write_file(foo.py)` | dual | `calm:v1:file:read:foo.py` | `…:edit:foo.py#<seq>` |
 | `go test ./...` / `pytest` / `make` (runners) | coexist | — | `calm:v1:shell:<program>#<seq>` |
 | unknown / pipeline | coexist | — | `calm:v1:shell:<program>#<seq>` (`sh` for pipelines) |
 
+The structured tools above (`calm_edit_file`, `calm_write_file`, and the structured-inspection set referenced by their `cat` / `ls` / `git` / `grep` equivalents) are defined in [`DESIGN.md`](DESIGN.md)'s Tool Surface; this document owns how their captures are labeled and what events they emit.
+
+Both `calm_edit_file` and `calm_write_file` use the same history verb (`file:edit:#<seq>`). The history source represents "post-modification snapshot of this file"; the operation type (edit / write / create) is carried in the accompanying `file_touched` event payload, not in the label.
+
 The `WorkspaceID` context segment is omitted in the common one-workspace-per-session
-case shown above.
+case shown above. When a session binds multiple workspaces, the segment is
+implementer-chosen at workspace registration (basename of root, operator-configured
+name, or short hash of the root path) and stays stable for the workspace's lifetime
+within the session. Collision-free identifiers across the registered set are
+required; the adapter MUST refuse to bind two workspaces with conflicting IDs at
+startup.
 
 ## 3. Capture policy — three modes
 
 | Mode | Writes | Default for |
 |---|---|---|
 | `replace` | latest source only | file reads, directory listings, search |
-| `dual` | latest source **and** an invocation-history source | all git (refs are mutable, so output isn't replace-safe) |
+| `dual` | latest source **and** an invocation-history source | all git (refs are mutable, so output isn't replace-safe); structured edit/write tools (each invocation produces semantically distinct file content) |
 | `coexist` | invocation-history source only | build/test runners, arbitrary / unrecognized commands, pipelines, escaping paths, output-affecting flags |
 
 `replace` is for stable identities whose newest output is the only one worth
@@ -128,20 +173,22 @@ normalization happens *before* the grammar is built:
 
 Events are built from the same single parse as the labels, then finalized once the
 ingest write outcomes are known. The shell substrate exposes only what a command
-exit reveals, so the adapter emits this subset of the HLD's example taxonomy:
+exit reveals; structured edit/write tools surface their own intent directly. The
+adapter emits this subset of the HLD's example taxonomy:
 
 | Event | Priority | When | Data |
 |---|---|---|---|
 | `tool_invocation` | 3 | always | `tool_name`, `command`, `exit_code`, `invocation_id`, `latest_source?`, `history_source?` |
 | `error_observed` | 2 | non-zero exit / timeout | `message`, `source`, `exit_code`, `trace_snippet`, `invocation_id` |
 | `git_operation` | 2 | git command | `command`, `subcommand`, `invocation_id` |
+| `file_touched` | 1 | edit/write via `calm_edit_file` or `calm_write_file` | `path` (workspace-relative), `operation` (`edit` / `write` / `create`), `diff` (unified diff, sanitized, length-capped), `invocation_id`, `latest_source?`, `history_source?` |
 
 `latest_source` / `history_source` cross-links are populated **only** for sources
 that actually persisted, so an event never points at a write that failed.
 
-`file_touched`, `task_in_progress`, and `delegated_work` from the HLD taxonomy are
-**deferred** — they need host-native-tool visibility, which a shell exit does not
-provide.
+`task_in_progress` and `delegated_work` from the HLD taxonomy are **deferred** —
+they need host-native-tool visibility (subagent invocations, structured task lists)
+that the current adapter surface does not expose.
 
 ## 6. Failure isolation
 
@@ -174,6 +221,12 @@ treated distinctly:
   carrying a secret is never stored. `trace_snippet` is the stderr tail,
   length-capped, stripped of control bytes / invalid UTF-8, and redacted of known
   secret-bearing forms (`--password=…`, `--token …`, `Authorization: Bearer …`).
+  `file_touched.diff` follows the same treatment — length-capped (truncate over
+  budget, set `diff_truncated: true`), control-byte / invalid-UTF-8 stripped,
+  secret-form redacted. The post-modification file content captured under
+  `file:read:` and `file:edit:#<seq>` remains raw per the captured-output stance
+  below; consumers needing the unredacted change retrieve it via source-scoped
+  `calm_search`.
 - **Captured tool output** — stored raw by design (`content-fidelity`). It can
   contain secrets, but that is the workload intentionally capturing tool output,
   which is CALM's purpose. Scrubbing it is out of scope.
@@ -205,6 +258,11 @@ derivation additively.
 ## 9. Advertising to the LLM
 
 The `calm_run_command` tool description tells the model how to retrieve captured
-output: the **base** label is the latest output for an identity, `base#<n>` is a
-specific past invocation, and `source=<base>` scopes a search to one semantic
-identity.
+output: the recall hint emits a fused source label (`<base>[#<seq>]@<token>`),
+which the model passes back as `source=<fused-label>` to scope a search. The
+suffix gives the adapter per-call staleness validation; a stale reference returns
+a clear degradation signal rather than empty results from the current session.
+
+Base-only references (without `@<token>`) remain valid as inputs and forward to
+CALM without staleness checking — useful for shell-substrate references and
+programmatic clients that don't track per-call tokens.

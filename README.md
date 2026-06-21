@@ -10,7 +10,9 @@ load-bearing, both instrumented. CALM sits *beside* the workload and
 the LLM (a sidecar, not a proxy).
 
 The canonical design lives in [`docs/HLD.md`](docs/HLD.md). This README
-is the operator-facing landing page.
+is the operator-facing landing page. [`CLAUDE.md`](CLAUDE.md) is the
+engineering directive — code-side conventions and dev workflow, for
+contributors and AI coding assistants.
 
 ## Status
 
@@ -121,6 +123,11 @@ Claude Desktop, … — can use it. Build it first:
 ```bash
 task build:adapter        # produces bin/calm-adapter
 ```
+
+The adapter-specific design contract lives in
+[`internal/adapter/docs/DESIGN.md`](internal/adapter/docs/DESIGN.md); its source-label and
+event-extraction grammar lives in
+[`internal/adapter/docs/LABELING.md`](internal/adapter/docs/LABELING.md).
 
 The commands below wire against the **local dev** CALM from the Quickstart
 (`http://localhost:8080`, the `.calm/calm_api.key` file). For a **deployed CALM**, point
