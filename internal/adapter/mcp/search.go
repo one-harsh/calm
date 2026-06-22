@@ -50,6 +50,10 @@ func (s *Server) newSearchTool() Tool {
 	}
 }
 
+// TODO: support queries-empty + source-scope shape per DESIGN.md AD01
+// (sequential reread of captured content in document order). Currently
+// requires non-empty queries and forwards ranked-retrieval semantics only.
+// Blocks on the CALM-side /v1/search document-order extension.
 func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, error) {
 	var a searchArgs
 	if err := json.Unmarshal(args, &a); err != nil {

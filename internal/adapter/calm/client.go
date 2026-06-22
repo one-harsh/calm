@@ -12,6 +12,9 @@ import "context"
 
 // Client is the adapter's port onto CALM. Methods are stateless — the session
 // token is supplied per call by the caller (the MCP server owns session state).
+//
+// TODO: add Feedback method (POST /v1/feedback) — required by
+// calm_report_outcome tool.
 type Client interface {
 	RegisterClient(ctx context.Context, name string) (created bool, err error)
 	CreateSession(ctx context.Context, client string, ttlMinutes int) (sessionToken string, err error)

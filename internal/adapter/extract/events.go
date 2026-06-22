@@ -16,6 +16,14 @@ const (
 	EventToolInvocation = "tool_invocation"
 	EventErrorObserved  = "error_observed"
 	EventGitOperation   = "git_operation"
+	// TODO: add file_touched event type + payload (path, operation
+	// edit/write/create, unified diff sanitized per LABELING.md §7
+	// event-metadata discipline, invocation_id, optional latest_source /
+	// history_source cross-links) per LABELING.md §5. Emitted by
+	// calm_edit_file / calm_write_file when those structured editing tools
+	// land per DESIGN.md AD04. Today there are no edit/write tools in the
+	// surface, so the event has nothing to observe — but the deferred-by-tool
+	// gap is the design's own framing, not an open question.
 )
 
 // Event types and priorities mirror the HLD's example taxonomy — changing them is

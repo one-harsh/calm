@@ -132,6 +132,14 @@ func DerivePlan(inv Invocation, r ExecResult) (Plan, error) {
 
 // Cross-links are set only for outcomes that persisted, so an event never points at a
 // source that was never written.
+//
+// TODO: emit file_touched events when the invocation came from a structured
+// editing tool (calm_edit_file / calm_write_file) per DESIGN.md AD04 +
+// LABELING.md §5. The Plan currently has no notion of "this came from an edit
+// tool" — Invocation needs to carry the operation kind (edit / write / create)
+// and the diff payload, and this function needs a branch for the
+// file_touched event alongside tool_invocation. Today no edit/write tools
+// exist in the surface, so the branch has nothing to fire on.
 func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 	persisted := make(map[string]bool, len(outcomes))
 	for _, o := range outcomes {

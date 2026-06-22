@@ -48,6 +48,12 @@ type runCommandArgs struct {
 }
 
 func (s *Server) newRunCommandTool() Tool {
+	// TODO: tool description should affirmatively state "Tool runs from the
+	// workspace root by default; do not `cd` in your command. Use the `cwd`
+	// parameter to run from a different directory." The cwd default is buried
+	// in the parameter doc; the main description is silent on it. Observed
+	// agents prefix commands with `cd <root> &&` despite the default, leaking
+	// host paths into captured output and wasting tokens.
 	return Tool{
 		Name:        toolNameRunCommand,
 		Description: runCommandDescription,
@@ -178,6 +184,13 @@ const (
 	maxCompactLen      = 4096
 )
 
+// DESIGN-DEVIATION: DESIGN.md §4 Presentation — always summary mode. Inline
+// mode for small outputs (where summary chrome would exceed raw content and
+// thus violate the Net context savings invariant) is not implemented.
+// Two-mode presentation needs a threshold-based decision: below the threshold
+// return raw bytes with minimal framing; at or above, summary + fused source
+// label. The mode distribution feeds the adapter.presentation.mode OTel
+// metric once OTel emission is wired.
 func formatCompact(sum calm.IngestSummary, r exec.Result) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Captured %d/%d sections under %q.\n", sum.SectionsIndexed, sum.SectionsTotal, sum.Source)

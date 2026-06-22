@@ -44,13 +44,25 @@ type Server struct {
 	version       string
 	defaultClient string
 	ttlMinutes    int
+	// DESIGN-DEVIATION: DESIGN.md §5 Workspace Binding — single-workspace only;
+	// multi-workspace WorkspaceID exists in the extract grammar and is tested,
+	// but no caller populates it from runtime, so cross-workspace
+	// same-relative-path captures collide. Multi-workspace binding (explicit
+	// roots or host-config discovery + collision-free WorkspaceID derivation +
+	// startup conflict refusal) is needed to lift this.
 	workspaceRoot string
 	seq           atomic.Int64
 
 	wmu sync.Mutex // serializes writes to the protocol channel
 	out io.Writer
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// DESIGN-DEVIATION: AD03 — session lost mid-conversation has no recovery
+	// path. 404 on session-touching calls isn't detected; no POST /v1/sessions
+	// retry; no session_lost degradation surfaced in visible text. The recovery
+	// loop should wrap CALM calls, attempt POST /v1/sessions on 404 (which
+	// doubles as credential validation), and distinguish session_lost from
+	// auth_failed when the create-also-fails.
 	session string // empty when CALM is unavailable (never-worse: degraded mode)
 }
 
@@ -78,6 +90,13 @@ func (s *Server) addTool(t Tool) {
 }
 
 func (s *Server) registerBuiltins() {
+	// TODO: register the structured-inspection, structured-editing, and
+	// context-health tools per DESIGN.md §3. Only calm_run_command and
+	// calm_search ship today. Missing: calm_read_file, calm_list_dir,
+	// calm_grep, calm_git_status, calm_git_diff (structured inspection,
+	// read-only by contract); calm_edit_file, calm_write_file (structured
+	// editing, dual-mode capture + file_touched event per AD04);
+	// calm_report_outcome (context health, calls /v1/feedback).
 	s.addToolIfAbsent(s.newRunCommandTool())
 	s.addToolIfAbsent(s.newSearchTool())
 }

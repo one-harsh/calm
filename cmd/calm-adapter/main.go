@@ -65,6 +65,13 @@ func run() error {
 	logger = logger.WithCallerSkip(1)
 	defer func() { _ = logger.Sync() }()
 
+	// TODO: wire an OTel MeterProvider (Prometheus exporter, matching CALM's
+	// own OTel surface) and thread a Meter through the MCP layer. The metrics
+	// that make the Net context savings invariant operationally checkable
+	// (adapter.response.visible_bytes, adapter.response.raw_bytes,
+	// adapter.call.duration_ms, adapter.presentation.mode per DESIGN.md §7)
+	// cannot fire until then.
+
 	idempotencyKey, err := newIdempotencyKey()
 	if err != nil {
 		return fmt.Errorf("generate idempotency key: %w", err)
