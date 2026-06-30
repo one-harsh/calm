@@ -5,6 +5,7 @@ package mcp_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,10 +15,12 @@ import (
 	"time"
 
 	logging "github.com/one-harsh/context-logging"
+	"github.com/one-harsh/context-logging/loggingtest"
 	"github.com/stretchr/testify/mock"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/mcp"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
 type rpcResp struct {
@@ -51,9 +54,16 @@ func discardLogger(t *testing.T) *logging.Logger {
 
 func newHarness(t *testing.T, client calm.Client, tools ...mcp.Tool) *harness {
 	t.Helper()
+	return newHarnessWithLogger(t, discardLogger(t), client, tools...)
+}
+
+// newHarnessWithLogger wires a harness against a caller-supplied logger so
+// tests asserting on log output can inspect emissions.
+func newHarnessWithLogger(t *testing.T, log *logging.Logger, client calm.Client, tools ...mcp.Tool) *harness {
+	t.Helper()
 	srv := mcp.NewServer(mcp.Config{
 		Calm:              client,
-		Logger:            discardLogger(t),
+		Logger:            log,
 		ServerName:        "calm-adapter",
 		ServerVersion:     "test",
 		DefaultClient:     "calm-adapter",
@@ -72,6 +82,16 @@ func newHarness(t *testing.T, client calm.Client, tools ...mcp.Tool) *harness {
 		h.wait()
 	})
 	return h
+}
+
+func captureLogger(t *testing.T) (*logging.Logger, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	l, err := logging.New(logging.Config{Level: "info", Format: "json", Output: &buf, Service: "test"})
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	return l, &buf
 }
 
 func (h *harness) send(v any) {
@@ -309,6 +329,82 @@ func TestNullIDIsRequestNotNotification(t *testing.T) {
 	if r.Error != nil {
 		t.Fatalf("ping with id:null errored: %+v", r.Error)
 	}
+}
+
+// The per-call summary log fires once at the end of invokeTool with the
+// canonical field set per DESIGN.md §7: identity (tool, workload_request_id),
+// trace_id (auto from OTel SpanContext), categorical status defaulted by
+// invokeTool and overridable by the handler via BindSummary, measurement
+// fields computed at drain, and presentation.mode hardcoded "summary" until
+// AI-04.
+func TestInvokeTool_SummaryLogShape(t *testing.T) {
+	summaryTool := mcp.Tool{
+		Name:        "summary_probe",
+		InputSchema: json.RawMessage(`{}`),
+		Handler: func(ctx context.Context, _ json.RawMessage) (mcp.ToolResult, error) {
+			_ = logging.BindSummary(
+				ctx,
+				logging.BoolField(obs.KeyCaptured, true),
+				obs.SourceLabel("calm:v1:test:probe"),
+				obs.ResponseRawBytes(42),
+			)
+			return mcp.TextResult("ok", false), nil
+		},
+	}
+	log, buf := captureLogger(t)
+	h := newHarnessWithLogger(t, log, calm.NewMockClient(t), summaryTool)
+
+	h.send(req(1, "tools/call", map[string]any{"name": "summary_probe", "arguments": map[string]any{}}))
+	if r := h.recv(); r.Error != nil {
+		t.Fatalf("tool/call protocol error: %+v", r.Error)
+	}
+	// Cancel the harness so the deferred summary log fully drains before we read the buffer.
+	h.cancel()
+	_ = h.inW.Close()
+	h.wait()
+
+	entries := loggingtest.EntriesFromBytes(t, buf.Bytes())
+	var summary map[string]any
+	for _, e := range entries {
+		if e["msg"] == "tool call completed" {
+			summary = e
+			break
+		}
+	}
+	if summary == nil {
+		t.Fatalf("no 'tool call completed' log entry found; entries=%v", entries)
+	}
+	requiredKeys := []string{
+		"tool", "workload_request_id", "trace_id",
+		"captured", "degraded",
+		obs.KeySourceLabel,
+		obs.KeyResponseVisibleBytes, obs.KeyResponseRawBytes, obs.KeyCallDurationMs, obs.KeyPresentationMode,
+	}
+	for _, k := range requiredKeys {
+		if _, ok := summary[k]; !ok {
+			t.Errorf("summary log missing %q; got fields=%v", k, fieldKeys(summary))
+		}
+	}
+	if got := summary["tool"]; got != "summary_probe" {
+		t.Errorf("tool field = %v; want summary_probe", got)
+	}
+	if got := summary["captured"]; got != true {
+		t.Errorf("captured = %v; want true (overridden by handler)", got)
+	}
+	if got := summary["degraded"]; got != false {
+		t.Errorf("degraded = %v; want false (default; handler didn't override)", got)
+	}
+	if got := summary[obs.KeyPresentationMode]; got != obs.PresentationModeSummary {
+		t.Errorf("presentation.mode = %v; want %q", got, obs.PresentationModeSummary)
+	}
+}
+
+func fieldKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func TestEOFExitsCleanly(t *testing.T) {

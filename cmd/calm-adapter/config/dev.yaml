@@ -7,7 +7,7 @@ calm:
   url: http://localhost:8080
   api_key: "[env:CALM_DEFAULT_KEY]"
   client: calm-adapter
-  session_ttl_minutes: 120
+  session_ttl_minutes: 4320 # 3 days
 log:
   level: info
   format: json

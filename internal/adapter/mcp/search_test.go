@@ -13,6 +13,7 @@ import (
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/mcp"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
 func callSearch(t *testing.T, h *harness, id int, args map[string]any) mcp.ToolResult {
@@ -136,7 +137,7 @@ func TestSearch_EmptyResultsIsNotError(t *testing.T) {
 	}
 }
 
-func TestSearch_CalmDownIsError(t *testing.T) {
+func TestSearch_CalmDown_UnreachablePhrasing(t *testing.T) {
 	// No initialize → no session token. Zero mock expectations, so any Search call fails.
 	m := calm.NewMockClient(t)
 	h := newHarness(t, m)
@@ -145,12 +146,13 @@ func TestSearch_CalmDownIsError(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("CALM-down must be an error result: %+v", res)
 	}
-	if got := resultText(t, res); !strings.Contains(got, "search unavailable") {
-		t.Errorf("text = %q; want 'search unavailable'", got)
+	want := obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable)
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want canonical calm_unreachable phrasing: %q", got, want)
 	}
 }
 
-func TestSearch_SearchErrorIsError(t *testing.T) {
+func TestSearch_SearchError_UnreachablePhrasingThenStderr(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
@@ -165,21 +167,59 @@ func TestSearch_SearchErrorIsError(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("search error must be an error result: %+v", res)
 	}
-	if got := resultText(t, res); !strings.Contains(got, "search unavailable") {
-		t.Errorf("text = %q; want 'search unavailable'", got)
+	want := obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable) + "\n\n[stderr]\nboom"
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want canonical phrasing then [stderr] block: %q", got, want)
 	}
 }
 
-func TestSearch_BlankQueriesIsError(t *testing.T) {
+func TestSearch_EmptyQueriesArrayIsArgError(t *testing.T) {
+	m := calm.NewMockClient(t)
+	h := newHarness(t, m)
+
+	res := callSearch(t, h, 1, map[string]any{"queries": []string{}})
+	if !res.IsError {
+		t.Fatalf("empty queries array must be an error result: %+v", res)
+	}
+	if got := resultText(t, res); !strings.Contains(got, "queries is required") {
+		t.Errorf("text = %q; want 'queries is required'", got)
+	}
+}
+
+// A whitespace-only query violates CALM's SearchRequest schema (minLength 1
+// per query) — reject locally as an arg error rather than forwarding and
+// having CALM 400 come back as calm_unreachable.
+func TestSearch_BlankQueryIsArgError(t *testing.T) {
 	m := calm.NewMockClient(t)
 	h := newHarness(t, m)
 
 	res := callSearch(t, h, 1, map[string]any{"queries": []string{"  "}})
 	if !res.IsError {
-		t.Fatalf("blank queries must be an error result: %+v", res)
+		t.Fatalf("blank query must be an error result: %+v", res)
 	}
-	if got := resultText(t, res); !strings.Contains(got, "queries is required") {
-		t.Errorf("text = %q; want 'queries is required'", got)
+	got := resultText(t, res)
+	if !strings.Contains(got, "invalid arguments") || !strings.Contains(got, "queries[0] is blank") {
+		t.Errorf("text = %q; want invalid-arguments error mentioning the blank query index", got)
+	}
+}
+
+// Mixed array (some non-blank, some blank) must also fail locally — the
+// previous "any non-blank" check would have passed this to CALM, where the
+// 400 would surface as calm_unreachable.
+func TestSearch_MixedBlankQueriesIsArgError(t *testing.T) {
+	m := calm.NewMockClient(t)
+	h := newHarness(t, m)
+
+	res := callSearch(t, h, 1, map[string]any{"queries": []string{"real query", ""}})
+	if !res.IsError {
+		t.Fatalf("mixed blank queries must be an error result: %+v", res)
+	}
+	got := resultText(t, res)
+	if !strings.Contains(got, "invalid arguments") || !strings.Contains(got, "queries[1] is blank") {
+		t.Errorf("text = %q; want invalid-arguments error pinpointing the blank index", got)
+	}
+	if strings.Contains(got, "calm_unreachable") {
+		t.Errorf("text incorrectly classified as calm_unreachable: %q", got)
 	}
 }
 
@@ -199,6 +239,48 @@ func TestSearch_InvalidArgumentsIsError(t *testing.T) {
 	}
 	if !res.IsError || !strings.Contains(resultText(t, res), "invalid arguments") {
 		t.Fatalf("want invalid-arguments error result; got %+v", res)
+	}
+}
+
+// Adapter-side bounds match CALM's SearchRequest schema (maxItems 10) — too
+// many queries surface as an argument error, NOT as calm_unreachable. The
+// agent gave bad input; CALM was never involved.
+func TestSearch_TooManyQueriesIsArgError(t *testing.T) {
+	m := calm.NewMockClient(t)
+	h := newHarness(t, m)
+
+	queries := make([]string, 11)
+	for i := range queries {
+		queries[i] = "q"
+	}
+	res := callSearch(t, h, 1, map[string]any{"queries": queries})
+	if !res.IsError {
+		t.Fatalf("too many queries must be an error result: %+v", res)
+	}
+	got := resultText(t, res)
+	if !strings.Contains(got, "invalid arguments") || !strings.Contains(got, "too many queries") {
+		t.Errorf("text = %q; want invalid-arguments error mentioning too many queries", got)
+	}
+	if strings.Contains(got, "calm_unreachable") {
+		t.Errorf("text incorrectly classified as calm_unreachable: %q", got)
+	}
+}
+
+// Out-of-range limit (above CALM's max of 50) surfaces as an argument error.
+func TestSearch_LimitOutOfRangeIsArgError(t *testing.T) {
+	m := calm.NewMockClient(t)
+	h := newHarness(t, m)
+
+	res := callSearch(t, h, 1, map[string]any{"queries": []string{"x"}, "limit": 999})
+	if !res.IsError {
+		t.Fatalf("out-of-range limit must be an error result: %+v", res)
+	}
+	got := resultText(t, res)
+	if !strings.Contains(got, "invalid arguments") || !strings.Contains(got, "limit out of range") {
+		t.Errorf("text = %q; want invalid-arguments error mentioning limit out of range", got)
+	}
+	if strings.Contains(got, "calm_unreachable") {
+		t.Errorf("text incorrectly classified as calm_unreachable: %q", got)
 	}
 }
 

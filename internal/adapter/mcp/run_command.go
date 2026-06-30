@@ -15,6 +15,7 @@ import (
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/exec"
 	"github.com/one-harsh/calm/internal/adapter/extract"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
 const toolNameRunCommand = "calm_run_command"
@@ -65,10 +66,10 @@ func (s *Server) newRunCommandTool() Tool {
 func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res ToolResult, err error) {
 	var a runCommandArgs
 	if uerr := json.Unmarshal(args, &a); uerr != nil {
-		return TextResult("invalid arguments: "+uerr.Error(), true), nil
+		return ToolResult{}, &ArgError{Detail: uerr.Error()}
 	}
 	if strings.TrimSpace(a.Command) == "" {
-		return TextResult("command is required", true), nil
+		return ToolResult{}, &ArgError{Detail: "command is required"}
 	}
 
 	dir := a.Cwd
@@ -83,20 +84,22 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 		return TextResult("failed to run command: "+runErr.Error(), true), nil
 	}
 
-	raw := r.Stdout
+	raw := commandPayload(r)
 	res = TextResult(raw, false) // default; the recover keeps whatever res holds at panic time
+	ctx = logging.BindSummary(ctx, obs.ResponseRawBytes(len(raw)))
 	defer func() {
 		if p := recover(); p != nil {
 			s.log.WithContext(ctx).Warn("run_command panicked; returning best-available output",
-				logging.AnyField("panic", p))
-			err = nil
+				obs.DegradedReasonFieldCaptureFailed, logging.AnyField("panic", p))
+			err = &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
 		}
 	}()
 
 	token := s.sessionToken()
 	if token == "" {
-		s.log.WithContext(ctx).Warn("CALM unavailable; returning raw output")
-		return
+		s.log.WithContext(ctx).Warn("CALM unavailable; returning raw output",
+			obs.DegradedReasonFieldCalmUnreachable)
+		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable}
 	}
 
 	inv := extract.Invocation{Seq: s.seq.Add(1), Command: a.Command, Cwd: dir, WorkspaceRoot: s.workspaceRoot}
@@ -107,16 +110,31 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 		TimedOut: r.TimedOut,
 	})
 	if derr != nil {
-		s.log.WithContext(ctx).Warn("derive plan failed; returning raw output", logging.ErrorField(derr))
-		return
+		s.log.WithContext(ctx).Warn("derive plan failed; returning raw output",
+			obs.DegradedReasonFieldCaptureFailed, logging.ErrorField(derr))
+		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
 	}
 
-	// Preservation-first: history before latest, so a partial failure still leaves the
-	// output recoverable. latest's summary is the preferred rep when it persists.
+	outcomes, rep := s.dualWriteIngest(ctx, token, plan, raw)
+	res, err = s.formatCaptureOutcome(ctx, outcomes, rep, raw, r)
+
+	// Fire-and-forget: events are pure observability and must never delay the response
+	// (never-worse) — a stalled /v1/events can't hold the tool call hostage.
+	if ev := extract.FinalizeEvents(plan, outcomes); len(ev) > 0 {
+		s.emitEvents(ctx, token, ev)
+	}
+
+	return
+}
+
+// dualWriteIngest runs the preservation-first dual-write per LABELING.md
+// (history first, then latest), recording per-source persisted outcomes and
+// returning the preferred summary (latest wins when both succeed).
+func (s *Server) dualWriteIngest(ctx context.Context, token string, plan extract.Plan, raw string) ([]extract.WriteOutcome, *calm.IngestSummary) {
 	var outcomes []extract.WriteOutcome
 	var rep *calm.IngestSummary
 	if plan.HistorySource != "" {
-		sum, e := s.ingest(ctx, token, plan.HistorySource, r.Stdout, plan)
+		sum, e := s.ingest(ctx, token, plan.HistorySource, raw, plan)
 		outcomes = append(outcomes, extract.WriteOutcome{Source: plan.HistorySource, Persisted: e == nil})
 		if e == nil {
 			rep = &sum
@@ -126,7 +144,7 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 		}
 	}
 	if plan.LatestSource != "" {
-		sum, e := s.ingest(ctx, token, plan.LatestSource, r.Stdout, plan)
+		sum, e := s.ingest(ctx, token, plan.LatestSource, raw, plan)
 		outcomes = append(outcomes, extract.WriteOutcome{Source: plan.LatestSource, Persisted: e == nil})
 		if e == nil {
 			rep = &sum
@@ -135,21 +153,43 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 				logging.StringField("source", plan.LatestSource), logging.ErrorField(e))
 		}
 	}
+	return outcomes, rep
+}
 
-	// Finalize the response before emitting events
-	if rep != nil {
-		res = TextResult(formatCompact(*rep, r), false)
-	} else {
-		s.log.WithContext(ctx).Warn("all ingests failed; returning raw output")
+// formatCaptureOutcome classifies the dual-write outcome into one of three
+// states (capture_failed / capture_partial / happy). It binds captured/source
+// fields onto the summary for the partial+happy paths, returns the
+// visible-text content, and signals degradation via DegradedSignal for the
+// partial+failed paths — invokeTool layers the canonical phrasing prefix +
+// degraded summary fields on top.
+func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.WriteOutcome, rep *calm.IngestSummary, raw string, r exec.Result) (ToolResult, error) {
+	anyFailed := false
+	for _, o := range outcomes {
+		if !o.Persisted {
+			anyFailed = true
+			break
+		}
 	}
-
-	// Fire-and-forget: events are pure observability and must never delay the response
-	// (never-worse) — a stalled /v1/events can't hold the tool call hostage.
-	if ev := extract.FinalizeEvents(plan, outcomes); len(ev) > 0 {
-		s.emitEvents(ctx, token, ev)
+	switch {
+	case rep == nil:
+		s.log.WithContext(ctx).Warn("all ingests failed; returning raw output",
+			obs.DegradedReasonFieldCaptureFailed)
+		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
+	case anyFailed:
+		logging.BindSummary(
+			ctx,
+			logging.BoolField(obs.KeyCaptured, true),
+			obs.SourceLabel(rep.Source),
+		)
+		return TextResult(formatCompact(*rep, r), false), &DegradedSignal{Reason: obs.DegradedReasonCapturePartial}
+	default:
+		logging.BindSummary(
+			ctx,
+			logging.BoolField(obs.KeyCaptured, true),
+			obs.SourceLabel(rep.Source),
+		)
+		return TextResult(formatCompact(*rep, r), false), nil
 	}
-
-	return
 }
 
 func (s *Server) emitEvents(ctx context.Context, token string, ev []calm.EventInput) {
@@ -177,6 +217,28 @@ func (s *Server) ingest(ctx context.Context, token, source, content string, plan
 		ContentType: plan.ContentType,
 		Format:      plan.Format,
 	})
+}
+
+// commandPayload merges captured stdout and stderr into a single visible /
+// indexed payload. If a process wrote stderr (more than whitespace), it's
+// part of the local result — no command-specific allowlist, no dropping
+// diagnostics. Stream markers distinguish the sources when both are present
+// so the LLM and source-scoped search can tell them apart.
+func commandPayload(r exec.Result) string {
+	hasStdout := r.Stdout != ""
+	hasStderr := strings.TrimSpace(r.Stderr) != ""
+	switch {
+	case hasStdout && hasStderr:
+		sep := "\n"
+		if !strings.HasSuffix(r.Stdout, "\n") {
+			sep = "\n\n"
+		}
+		return "[stdout]\n" + r.Stdout + sep + "[stderr]\n" + r.Stderr
+	case hasStderr:
+		return "[stderr]\n" + r.Stderr
+	default:
+		return r.Stdout
+	}
 }
 
 const (

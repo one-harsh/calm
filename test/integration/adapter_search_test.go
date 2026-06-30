@@ -10,6 +10,7 @@ import (
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/mcp"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
 func (d *mcpDriver) search(queries []string, source string) mcp.ToolResult {
@@ -78,9 +79,11 @@ func TestAdapterSearch_SessionWideFindsCapturedOutput(t *testing.T) {
 	}
 }
 
-// TestAdapterSearch_CalmDownIsError proves search reports unavailability (not empty results)
-// when CALM is unreachable — search is the operation, so there is no raw fallback.
-func TestAdapterSearch_CalmDownIsError(t *testing.T) {
+// TestAdapterSearch_CalmDown_UnreachablePhrasing proves search reports the
+// canonical calm_unreachable degradation phrasing (not empty results, not a
+// bare error string) when CALM is unreachable — search is the operation, so
+// there is no raw fallback.
+func TestAdapterSearch_CalmDown_UnreachablePhrasing(t *testing.T) {
 	inner, err := calm.NewGenapiClient("http://127.0.0.1:1", "", "wi39-down", nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
@@ -94,7 +97,8 @@ func TestAdapterSearch_CalmDownIsError(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("CALM-down search must be an error result: %+v", res)
 	}
-	if !strings.Contains(res.Content[0].Text, "search unavailable") {
-		t.Errorf("want 'search unavailable'; got %q", res.Content[0].Text)
+	want := obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable)
+	if res.Content[0].Text != want {
+		t.Errorf("text = %q; want canonical phrasing %q", res.Content[0].Text, want)
 	}
 }

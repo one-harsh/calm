@@ -300,23 +300,84 @@ func (s *Server) handleToolCall(ctx context.Context, params json.RawMessage) (an
 
 // invokeTool runs a tool handler with panic isolation (R7 / never-worse): a
 // translation-layer fault is downgraded to an isError result, never a crash.
+// Also emits the per-call summary log per DESIGN.md §7. Handler errors are
+// translated by type: *DegradedSignal triggers canonical degradation
+// signaling (summary fields + phrasing prefix + optional [stderr] block);
+// *ArgError surfaces as a tool-level "invalid arguments" result; any other
+// error is treated as capture_failed degradation.
 func (s *Server) invokeTool(ctx context.Context, tool Tool, args json.RawMessage) (res ToolResult) {
+	start := time.Now()
 	ctx, reqID := obs.WithCallContext(ctx)
-	ctx = logging.Bind(ctx, logging.StringField("workload_request_id", reqID), logging.StringField("tool", tool.Name))
+	ctx = logging.Bind(
+		ctx,
+		logging.StringField("workload_request_id", reqID),
+		logging.StringField("tool", tool.Name),
+		logging.BoolField(obs.KeyCaptured, false),
+		logging.BoolField(obs.KeyDegraded, false),
+	)
+	ctx = logging.BindSummary(ctx, obs.PresentationModeFieldSummary)
 	defer func() {
 		if r := recover(); r != nil {
+			ctx = logging.Bind(
+				ctx,
+				logging.BoolField(obs.KeyDegraded, true),
+				obs.DegradedReasonFieldCaptureFailed,
+			)
 			s.log.WithContext(ctx).Warn("tool handler panicked",
 				logging.StringField("tool", tool.Name), logging.AnyField("panic", r))
 			res = TextResult("tool failed", true)
 		}
+		visibleBytes := 0
+		if len(res.Content) > 0 {
+			visibleBytes = len(res.Content[0].Text)
+		}
+		s.log.SummaryWithContext(ctx).Info(
+			"tool call completed",
+			obs.ResponseVisibleBytes(visibleBytes),
+			obs.CallDurationMs(time.Since(start).Milliseconds()),
+		)
 	}()
 	out, err := tool.Handler(ctx, args)
-	if err != nil {
+	if err == nil {
+		return out
+	}
+	var deg *DegradedSignal
+	var arg *ArgError
+	switch {
+	case errors.As(err, &deg):
+		return s.translateDegraded(ctx, out, deg)
+	case errors.As(err, &arg):
+		return TextResult(arg.Error(), true)
+	default:
+		ctx = logging.Bind(
+			ctx,
+			logging.BoolField(obs.KeyDegraded, true),
+			obs.DegradedReasonFieldCaptureFailed,
+		)
 		s.log.WithContext(ctx).Warn("tool handler error",
 			logging.StringField("tool", tool.Name), logging.ErrorField(err))
 		return TextResult(err.Error(), true)
 	}
-	return out
+}
+
+// translateDegraded binds degraded summary fields, prepends the canonical
+// phrasing to handler-supplied content, appends an optional [stderr] block,
+// and preserves the handler's IsError flag (action tools: false; retrieval
+// tools: true).
+func (s *Server) translateDegraded(ctx context.Context, out ToolResult, deg *DegradedSignal) ToolResult {
+	logging.BindSummary(
+		ctx,
+		logging.BoolField(obs.KeyDegraded, true),
+		degradedReasonField(deg.Reason),
+	)
+	text := obs.DegradedPhrase(deg.Reason)
+	if len(out.Content) > 0 && out.Content[0].Text != "" {
+		text += "\n\n" + out.Content[0].Text
+	}
+	if deg.Detail != "" {
+		text += "\n\n[stderr]\n" + deg.Detail
+	}
+	return ToolResult{Content: []Content{{Type: "text", Text: text}}, IsError: out.IsError}
 }
 
 func (s *Server) shutdown() {

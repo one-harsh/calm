@@ -13,11 +13,18 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
 const toolNameSearch = "calm_search"
 
 const searchTimeout = 10 * time.Second
+
+// CALM's /v1/search bounds per openapi.yaml SearchRequest.
+const (
+	maxSearchQueries = 10
+	maxSearchLimit   = 50
+)
 
 const searchDescription = "Retrieve tool output already captured into CALM this session as ranked, " +
 	"verbatim snippets. Prefer this over re-running a command to see its output again. Pass one or more " +
@@ -57,39 +64,48 @@ func (s *Server) newSearchTool() Tool {
 func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, error) {
 	var a searchArgs
 	if err := json.Unmarshal(args, &a); err != nil {
-		return TextResult("invalid arguments: "+err.Error(), true), nil
+		return ToolResult{}, &ArgError{Detail: err.Error()}
 	}
-	if !hasNonBlank(a.Queries) {
-		return TextResult("queries is required", true), nil
+	if len(a.Queries) == 0 {
+		return ToolResult{}, &ArgError{Detail: "queries is required"}
+	}
+	if len(a.Queries) > maxSearchQueries {
+		return ToolResult{}, &ArgError{Detail: fmt.Sprintf("too many queries (max %d, got %d)", maxSearchQueries, len(a.Queries))}
+	}
+	for i, q := range a.Queries {
+		if strings.TrimSpace(q) == "" {
+			return ToolResult{}, &ArgError{Detail: fmt.Sprintf("queries[%d] is blank (all queries must be non-empty per CALM's SearchRequest schema)", i)}
+		}
+	}
+	if a.Limit < 0 || a.Limit > maxSearchLimit {
+		return ToolResult{}, &ArgError{Detail: fmt.Sprintf("limit out of range (allowed 0..%d, got %d)", maxSearchLimit, a.Limit)}
 	}
 
 	token := s.sessionToken()
 	if token == "" {
-		s.log.WithContext(ctx).Warn("search unavailable; CALM not connected")
-		return TextResult("search unavailable: CALM not connected", true), nil
+		s.log.WithContext(ctx).Warn(
+			"search unavailable; CALM not connected",
+			obs.DegradedReasonFieldCalmUnreachable,
+		)
+		return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable}
 	}
 
 	sctx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
 	res, err := s.calm.Search(sctx, token, calm.SearchInput{Queries: a.Queries, Source: a.Source, Limit: a.Limit})
 	if err != nil {
-		s.log.WithContext(ctx).Warn("search failed", logging.ErrorField(err))
-		return TextResult("search unavailable: "+err.Error(), true), nil
+		s.log.WithContext(ctx).Warn(
+			"search failed",
+			obs.DegradedReasonFieldCalmUnreachable,
+			logging.ErrorField(err),
+		)
+		return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable, Detail: err.Error()}
 	}
 
 	if totalHits(res) == 0 {
 		return TextResult("no matches"+sourceNote(a.Source), false), nil
 	}
 	return TextResult(formatSearchResults(res), false), nil
-}
-
-func hasNonBlank(queries []string) bool {
-	for _, q := range queries {
-		if strings.TrimSpace(q) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func totalHits(res calm.SearchResults) int {

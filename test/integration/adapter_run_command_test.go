@@ -22,6 +22,7 @@ import (
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/mcp"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
 
@@ -235,8 +236,10 @@ func TestAdapterRunCommand_CaptureIngestSearchLoop(t *testing.T) {
 	}
 }
 
-// never-worse: with CALM unreachable the adapter still returns raw output, not an error.
-func TestAdapterRunCommand_CalmDownReturnsRawOutput(t *testing.T) {
+// never-worse: with CALM unreachable the adapter still returns the local
+// output, prefixed with the canonical calm_unreachable degradation phrasing so
+// the agent can branch on the reason.
+func TestAdapterRunCommand_CalmDown_UnreachablePhrasingThenRaw(t *testing.T) {
 	// Port 1 refuses connections, so session-create fails and the adapter degrades.
 	inner, err := calm.NewGenapiClient("http://127.0.0.1:1", "", "wi38-down", nil)
 	if err != nil {
@@ -252,8 +255,9 @@ func TestAdapterRunCommand_CalmDownReturnsRawOutput(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("CALM-down must not be an error result: %+v", res)
 	}
-	if got := res.Content[0].Text; got != "rawfallback\n" {
-		t.Errorf("fallback text = %q; want raw %q", got, "rawfallback\n")
+	want := obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable) + "\n\nrawfallback\n"
+	if got := res.Content[0].Text; got != want {
+		t.Errorf("text = %q; want canonical phrasing then raw: %q", got, want)
 	}
 }
 

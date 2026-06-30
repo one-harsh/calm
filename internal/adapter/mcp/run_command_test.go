@@ -16,6 +16,7 @@ import (
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/mcp"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
 // writeEventsSignal sets a WriteEvents expectation that closes the returned channel
@@ -136,7 +137,7 @@ func TestRunCommand_DualWritesHistoryThenLatest(t *testing.T) {
 	awaitSignal(t, eventsDone)
 }
 
-func TestRunCommand_IngestFailureFallsBackToRaw(t *testing.T) {
+func TestRunCommand_IngestFailure_CapturePhrasingThenRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
@@ -153,13 +154,132 @@ func TestRunCommand_IngestFailureFallsBackToRaw(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("ingest failure must not be an error result: %+v", res)
 	}
-	if got := resultText(t, res); got != "hello\n" {
-		t.Errorf("fallback text = %q; want raw %q", got, "hello\n")
+	want := obs.DegradedPhrase(obs.DegradedReasonCaptureFailed) + "\n\nhello\n"
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want capture_failed phrasing prefix then raw: %q", got, want)
 	}
 	awaitSignal(t, eventsDone)
 }
 
-func TestRunCommand_CalmDownReturnsRaw(t *testing.T) {
+// Dual-mode with both ingests failing — the canonical capture_failed phrasing
+// prepends the raw output and IsError stays false (never-worse: local action
+// succeeded, only capture is degraded).
+func TestRunCommand_DualMode_BothFail_CapturePhrasing(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.IngestSummary{}, errors.New("boom")).Times(2)
+	eventsDone := writeEventsSignal(m, nil)
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "git status"})
+	if res.IsError {
+		t.Fatalf("dual-mode both-fail must not be an error result: %+v", res)
+	}
+	got := resultText(t, res)
+	if !strings.HasPrefix(got, obs.DegradedPhrase(obs.DegradedReasonCaptureFailed)) {
+		t.Errorf("text = %q; want prefix %q", got, obs.DegradedPhrase(obs.DegradedReasonCaptureFailed))
+	}
+	awaitSignal(t, eventsDone)
+}
+
+// Dual-mode with one ingest succeeding and one failing — canonical
+// capture_partial phrasing prepends the compact rep of the persisted source.
+func TestRunCommand_DualMode_PartialFail_CapturePartialPhrasing(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	// History (first per dual ordering) succeeds; latest (second) fails.
+	var calls int
+	var mu sync.Mutex
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).RunAndReturn(
+		func(_ context.Context, _ string, in calm.IngestInput) (calm.IngestSummary, error) {
+			mu.Lock()
+			calls++
+			n := calls
+			mu.Unlock()
+			if n == 1 {
+				return calm.IngestSummary{Source: in.Source, SectionsIndexed: 1, SectionsTotal: 1}, nil
+			}
+			return calm.IngestSummary{}, errors.New("boom")
+		},
+	).Times(2)
+	eventsDone := writeEventsSignal(m, nil)
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "git status"})
+	if res.IsError {
+		t.Fatalf("dual-mode partial-fail must not be an error result: %+v", res)
+	}
+	got := resultText(t, res)
+	if !strings.HasPrefix(got, obs.DegradedPhrase(obs.DegradedReasonCapturePartial)) {
+		t.Errorf("text = %q; want prefix %q", got, obs.DegradedPhrase(obs.DegradedReasonCapturePartial))
+	}
+	// The compact rep of the persisted (history) source follows the phrasing.
+	if !strings.Contains(got, "Captured 1/1 sections under") {
+		t.Errorf("text missing compact rep of persisted source; got %q", got)
+	}
+	awaitSignal(t, eventsDone)
+}
+
+// A command writing to both stdout and stderr ingests both into CALM, with
+// stream markers distinguishing them. No allowlist — any process that wrote
+// stderr has its diagnostics preserved through to later scoped-search.
+func TestRunCommand_StderrPresent_IngestedAlongsideStdout(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+
+	var ingested string
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
+		ingested = in.Content
+		return true
+	})).Return(calm.IngestSummary{Source: "calm:v1:shell:sh#1", SectionsIndexed: 1, SectionsTotal: 1}, nil).Once()
+	eventsDone := writeEventsSignal(m, nil)
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "sh -c 'echo stdoutline; echo stderrline >&2'"})
+	if res.IsError {
+		t.Fatalf("unexpected isError: %+v", res)
+	}
+	for _, want := range []string{"[stdout]", "stdoutline", "[stderr]", "stderrline"} {
+		if !strings.Contains(ingested, want) {
+			t.Errorf("ingested content missing %q; got:\n%s", want, ingested)
+		}
+	}
+	awaitSignal(t, eventsDone)
+}
+
+// On the never-worse raw-fallback path, the visible result must carry both
+// stdout and stderr from the captured command — losing stderr here would
+// mean the agent has no diagnostic from a failing build/test/compile.
+func TestRunCommand_StderrPresent_CalmDownVisibleIncludesBoth(t *testing.T) {
+	m := calm.NewMockClient(t)
+	h := newHarness(t, m)
+
+	res := callRunCommand(t, h, 1, map[string]any{"command": "sh -c 'echo stdoutline; echo stderrline >&2'"})
+	if res.IsError {
+		t.Fatalf("CALM-down must not be an error result: %+v", res)
+	}
+	text := resultText(t, res)
+	for _, want := range []string{"[stdout]", "stdoutline", "[stderr]", "stderrline"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("visible text missing %q; got:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunCommand_CalmDown_UnreachablePhrasingThenRaw(t *testing.T) {
 	// No initialize → no session token → degraded mode. Zero mock expectations,
 	// so any CALM call would fail the test.
 	m := calm.NewMockClient(t)
@@ -169,8 +289,9 @@ func TestRunCommand_CalmDownReturnsRaw(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("CALM-down must not be an error result: %+v", res)
 	}
-	if got := resultText(t, res); got != "hello\n" {
-		t.Errorf("fallback text = %q; want raw %q", got, "hello\n")
+	want := obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable) + "\n\nhello\n"
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want calm_unreachable phrasing prefix then raw: %q", got, want)
 	}
 }
 
@@ -298,7 +419,10 @@ func TestRunCommand_BlockedEventWriteDoesNotHoldResponse(t *testing.T) {
 }
 
 // never-worse: a mid-ingest panic still returns the raw output via the handler recover.
-func TestRunCommand_IngestPanicFallsBackToRaw(t *testing.T) {
+// A panic mid-handler is recovered and surfaced as canonical capture_failed
+// degradation — never-worse: raw output is preserved, prefixed with the
+// phrasing so the LLM can branch on the reason.
+func TestRunCommand_IngestPanic_CapturePhrasingThenRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
@@ -315,15 +439,17 @@ func TestRunCommand_IngestPanicFallsBackToRaw(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("panic must fall back to a non-error raw result: %+v", res)
 	}
-	if got := resultText(t, res); got != "hello\n" {
-		t.Errorf("fallback text = %q; want raw %q", got, "hello\n")
+	want := obs.DegradedPhrase(obs.DegradedReasonCaptureFailed) + "\n\nhello\n"
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want capture_failed phrasing then raw: %q", got, want)
 	}
 }
 
 // Guards the default-raw mechanism the recover relies on: a panic after a partial
-// ingest (rep set) but before the response is finalized must still yield raw, not an
-// empty/error result. Drop the `res = TextResult(raw, false)` default and this fails.
-func TestRunCommand_PanicBeforeSummaryBuiltReturnsRaw(t *testing.T) {
+// ingest (rep set) but before the response is finalized must still yield raw,
+// prefixed with capture_failed phrasing — not the compact rep that was about to
+// be built. Drop the `res = TextResult(raw, false)` default and this fails.
+func TestRunCommand_PanicBeforeSummaryBuilt_CapturePhrasingThenRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
@@ -344,9 +470,13 @@ func TestRunCommand_PanicBeforeSummaryBuiltReturnsRaw(t *testing.T) {
 
 	res := callRunCommand(t, h, 2, map[string]any{"command": "git status"})
 	if res.IsError {
-		t.Fatalf("a pre-summary panic must fall back to raw, not an error: %+v", res)
+		t.Fatalf("a pre-summary panic must fall back to phrased raw, not an error: %+v", res)
 	}
-	if strings.Contains(resultText(t, res), "calm_search source=") {
-		t.Errorf("expected raw output (default survives the panic), got a compact rep:\n%s", resultText(t, res))
+	got := resultText(t, res)
+	if !strings.HasPrefix(got, obs.DegradedPhrase(obs.DegradedReasonCaptureFailed)) {
+		t.Errorf("text missing capture_failed phrasing prefix; got:\n%s", got)
+	}
+	if strings.Contains(got, "calm_search source=") {
+		t.Errorf("expected raw fallback (compact rep was never built), got rep:\n%s", got)
 	}
 }
