@@ -64,6 +64,12 @@ type Server struct {
 	// doubles as credential validation), and distinguish session_lost from
 	// auth_failed when the create-also-fails.
 	session string // empty when CALM is unavailable (never-worse: degraded mode)
+
+	// registry tracks per-invocation staleness tokens for source labels per
+	// LABELING.md §2. Its own internal mutex covers reads/writes; there's no
+	// coupling with s.mu (which protects the session token above). AI-03's
+	// session replacement invokes registry.Reset to invalidate all prior tokens.
+	registry *tokenRegistry
 }
 
 func NewServer(cfg Config) *Server {
@@ -76,6 +82,7 @@ func NewServer(cfg Config) *Server {
 		defaultClient: cfg.DefaultClient,
 		ttlMinutes:    cfg.SessionTTLMinutes,
 		workspaceRoot: cfg.WorkspaceRoot,
+		registry:      newTokenRegistry(),
 	}
 	for _, t := range cfg.Tools {
 		s.addTool(t)

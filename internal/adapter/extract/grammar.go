@@ -95,14 +95,14 @@ func seqSuffix(seq int64) string {
 	return "#" + strconv.FormatInt(seq, 10)
 }
 
-// enc percent-encodes the grammar's reserved characters (':' '#' space '%') and
-// control bytes per segment, leaving multibyte UTF-8 untouched. Byte-wise so it
-// never panics on arbitrary input.
+// enc percent-encodes the grammar's reserved characters (':' '#' '@' space '%')
+// and control bytes per segment, leaving multibyte UTF-8 untouched. Byte-wise
+// so it never panics on arbitrary input.
 func enc(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c == ':' || c == '#' || c == ' ' || c == '%' || c < 0x20 || c == 0x7f {
+		if c == ':' || c == '#' || c == '@' || c == ' ' || c == '%' || c < 0x20 || c == 0x7f {
 			b.WriteByte('%')
 			b.WriteByte(hexDigit(c >> 4))
 			b.WriteByte(hexDigit(c & 0x0f))

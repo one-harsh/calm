@@ -162,9 +162,21 @@ func newAdapterLoop(t *testing.T, workspace string) (calm.Client, string, *mcpDr
 	return inner, token, d
 }
 
-// parseSearchSource extracts the source label the compact rep advertises, so the
-// retrieval assertion uses the exact handle the agent would be given.
+// parseSearchSource extracts the source label the compact rep advertises,
+// stripping the fused `@<token>` staleness suffix (per LABELING.md §2) so
+// callers that hit CALM directly — e.g., hitCount — see the CALM-facing base.
+// parseSearchSourceFused returns the raw suffix-bearing form for tests that
+// exercise the fused round-trip through the adapter's calm_search.
 func parseSearchSource(t *testing.T, text string) string {
+	t.Helper()
+	fused := parseSearchSourceFused(t, text)
+	if at := strings.LastIndex(fused, "@"); at >= 0 {
+		return fused[:at]
+	}
+	return fused
+}
+
+func parseSearchSourceFused(t *testing.T, text string) string {
 	t.Helper()
 	const key = "source="
 	idx := strings.Index(text, key)
@@ -229,7 +241,16 @@ func TestAdapterRunCommand_CaptureIngestSearchLoop(t *testing.T) {
 	}
 	source := parseSearchSource(t, res.Content[0].Text)
 	if source != "calm:v1:file:read:note.txt" {
-		t.Fatalf("advertised source = %q; want calm:v1:file:read:note.txt", source)
+		t.Fatalf("advertised source (base) = %q; want calm:v1:file:read:note.txt", source)
+	}
+	// The LLM-facing recall hint carries the fused staleness suffix per
+	// LABELING.md §2 — a 6-char base32 token appended after `@`.
+	fused := parseSearchSourceFused(t, res.Content[0].Text)
+	if !strings.HasPrefix(fused, source+"@") {
+		t.Fatalf("advertised source (fused) = %q; want prefix %q@", fused, source)
+	}
+	if tail := fused[len(source)+1:]; len(tail) != 6 {
+		t.Errorf("fused suffix = %q; want a 6-char token", tail)
 	}
 	if n := hitCount(t, inner, token, source, marker); n == 0 {
 		t.Fatalf("captured output not retrievable via advertised source %q", source)

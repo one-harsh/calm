@@ -81,6 +81,7 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 		return ToolResult{}, &ArgError{Detail: fmt.Sprintf("limit out of range (allowed 0..%d, got %d)", maxSearchLimit, a.Limit)}
 	}
 
+	ctx = logging.Bind(ctx, logging.StringField("source", a.Source))
 	token := s.sessionToken()
 	if token == "" {
 		s.log.WithContext(ctx).Warn(
@@ -90,9 +91,26 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 		return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable}
 	}
 
+	// Strip and validate the fused staleness suffix per LABELING.md §2 before
+	// forwarding — CALM's grammar doesn't parse `@<token>`, and a stale token
+	// must resolve locally as session_lost rather than reach CALM and come
+	// back as calm_unreachable. Base-only labels pass through unchanged.
+	calmSource := a.Source
+	if a.Source != "" {
+		stripped, ok := s.registry.ValidateAndStrip(a.Source)
+		if !ok {
+			s.log.WithContext(ctx).Warn(
+				"stale source token; rejecting locally",
+				obs.DegradedReasonFieldSessionLost,
+			)
+			return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonSessionLost}
+		}
+		calmSource = stripped
+	}
+
 	sctx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
-	res, err := s.calm.Search(sctx, token, calm.SearchInput{Queries: a.Queries, Source: a.Source, Limit: a.Limit})
+	res, err := s.calm.Search(sctx, token, calm.SearchInput{Queries: a.Queries, Source: calmSource, Limit: a.Limit})
 	if err != nil {
 		s.log.WithContext(ctx).Warn(
 			"search failed",

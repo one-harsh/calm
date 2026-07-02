@@ -29,9 +29,10 @@ const (
 const runCommandDescription = "Run a shell command locally, capturing its output into CALM instead of " +
 	"returning it raw. Prefer this over the native shell/Bash tool for every shell command: it keeps " +
 	"large/raw output out of the context window and indexes it for on-demand retrieval. Returns a compact " +
-	"summary plus a source label; fetch the full captured output later with calm_search source=<label> " +
-	"rather than re-running. The base label is the latest output for that identity; <label>#<n> is one " +
-	"specific past run."
+	"summary plus a source label ending in @<token>; fetch the full captured output later with " +
+	"calm_search source=<label exactly as returned> rather than re-running. The label refers to the " +
+	"latest output for that identity; for one specific past run, drop the @<token> suffix and use " +
+	"<base>#<n>. Never append #<n> after the @<token>."
 
 const runCommandSchema = `{
   "type": "object",
@@ -114,9 +115,11 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 			obs.DegradedReasonFieldCaptureFailed, logging.ErrorField(derr))
 		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
 	}
+	plan.Token = extract.MintToken()
 
 	outcomes, rep := s.dualWriteIngest(ctx, token, plan, raw)
-	res, err = s.formatCaptureOutcome(ctx, outcomes, rep, raw, r)
+	s.recordPersistedTokens(plan, outcomes)
+	res, err = s.formatCaptureOutcome(ctx, outcomes, rep, raw, r, plan.Token)
 
 	// Fire-and-forget: events are pure observability and must never delay the response
 	// (never-worse) — a stalled /v1/events can't hold the tool call hostage.
@@ -161,8 +164,9 @@ func (s *Server) dualWriteIngest(ctx context.Context, token string, plan extract
 // fields onto the summary for the partial+happy paths, returns the
 // visible-text content, and signals degradation via DegradedSignal for the
 // partial+failed paths — invokeTool layers the canonical phrasing prefix +
-// degraded summary fields on top.
-func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.WriteOutcome, rep *calm.IngestSummary, raw string, r exec.Result) (ToolResult, error) {
+// degraded summary fields on top. `token` is the per-call staleness suffix
+// fused into the recall-hint label.
+func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.WriteOutcome, rep *calm.IngestSummary, raw string, r exec.Result, token string) (ToolResult, error) {
 	anyFailed := false
 	for _, o := range outcomes {
 		if !o.Persisted {
@@ -181,14 +185,32 @@ func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.Wr
 			logging.BoolField(obs.KeyCaptured, true),
 			obs.SourceLabel(rep.Source),
 		)
-		return TextResult(formatCompact(*rep, r), false), &DegradedSignal{Reason: obs.DegradedReasonCapturePartial}
+		return TextResult(formatCompact(*rep, r, token), false), &DegradedSignal{Reason: obs.DegradedReasonCapturePartial}
 	default:
 		logging.BindSummary(
 			ctx,
 			logging.BoolField(obs.KeyCaptured, true),
 			obs.SourceLabel(rep.Source),
 		)
-		return TextResult(formatCompact(*rep, r), false), nil
+		return TextResult(formatCompact(*rep, r, token), false), nil
+	}
+}
+
+// recordPersistedTokens registers `plan.Token` against each source that
+// actually persisted, so later `calm_search source=<fused>` calls validate.
+// A source that failed to persist isn't recorded — its fused label would
+// resolve to nothing on the CALM side anyway, so admitting the token would
+// only surface a misleading empty result instead of the honest
+// session_lost signal (or plain failure).
+func (s *Server) recordPersistedTokens(plan extract.Plan, outcomes []extract.WriteOutcome) {
+	for _, o := range outcomes {
+		if !o.Persisted {
+			continue
+		}
+		switch o.Source {
+		case plan.LatestSource, plan.HistorySource:
+			s.registry.Record(o.Source, plan.Token)
+		}
 	}
 }
 
@@ -253,10 +275,14 @@ const (
 // return raw bytes with minimal framing; at or above, summary + fused source
 // label. The mode distribution feeds the adapter.presentation.mode OTel
 // metric once OTel emission is wired.
-func formatCompact(sum calm.IngestSummary, r exec.Result) string {
+func formatCompact(sum calm.IngestSummary, r exec.Result, token string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Captured %d/%d sections under %q.\n", sum.SectionsIndexed, sum.SectionsTotal, sum.Source)
-	fmt.Fprintf(&b, "Retrieve full output: calm_search source=%s\n", sum.Source)
+	fusedSource := sum.Source
+	if token != "" {
+		fusedSource = sum.Source + "@" + token
+	}
+	fmt.Fprintf(&b, "Captured %d/%d sections under %q.\n", sum.SectionsIndexed, sum.SectionsTotal, fusedSource)
+	fmt.Fprintf(&b, "Retrieve full output: calm_search source=%s\n", fusedSource)
 
 	shown := sum.Sections
 	if len(shown) > maxCompactSections {

@@ -56,11 +56,16 @@ type ExecResult struct {
 // labels and events come from one parse and cannot diverge.
 type Plan struct {
 	Mode          CaptureMode
-	LatestSource  string // "" in coexist mode
-	HistorySource string // "" in replace mode
-	ContentType   string
-	Format        calm.Format
-	base          eventFacts
+	LatestSource  string // "" in coexist mode; base label without @<token>
+	HistorySource string // "" in replace mode; base#seq without @<token>
+	// Token is the per-call staleness suffix (6-char base32) fused with
+	// Latest/HistorySource for LLM-facing emission per LABELING.md §2. Set by
+	// the handler via extract.MintToken() after DerivePlan; unset by
+	// DerivePlan itself so extract stays grammar-pure.
+	Token       string
+	ContentType string
+	Format      calm.Format
+	base        eventFacts
 }
 
 // WriteOutcome gates FinalizeEvents cross-links to sources that actually persisted.
