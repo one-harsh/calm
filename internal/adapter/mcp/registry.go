@@ -19,9 +19,8 @@ import (
 // (`calm:v1:vcs:git:diff:HEAD#7`), so later invocations record distinct keys
 // rather than invalidating earlier history references.
 //
-// AI-03's session replacement invokes Reset to invalidate all prior tokens
-// wholesale (implicit session-epoch); today only Reset's presence matters,
-// not a call site.
+// Session replacement invokes Reset to invalidate all prior tokens
+// wholesale — the implicit session-epoch.
 type tokenRegistry struct {
 	mu     sync.Mutex
 	tokens map[string]string // CALM-facing label (no @token) → current token
@@ -78,9 +77,9 @@ func (r *tokenRegistry) ValidateAndStrip(label string) (calmLabel string, ok boo
 	return key, true
 }
 
-// Reset clears all recorded tokens. AI-03's session replacement invokes this
-// after minting a new CALM session — every reference to a token from the
-// prior session is henceforth stale by construction.
+// Reset clears all recorded tokens. Session replacement invokes this after
+// minting a new CALM session — every reference to a token from the prior
+// session is henceforth stale by construction.
 func (r *tokenRegistry) Reset() {
 	r.mu.Lock()
 	r.tokens = make(map[string]string)

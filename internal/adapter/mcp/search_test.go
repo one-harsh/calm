@@ -59,7 +59,7 @@ func oneHit(query string) calm.SearchResults {
 func TestSearch_ReturnsRankedSnippets(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
 		return len(in.Queries) == 1 && in.Queries[0] == "zphlox" && in.Source == "" && in.Limit == 0
@@ -84,7 +84,7 @@ func TestSearch_ScopesToSource(t *testing.T) {
 	const src = "calm:v1:file:read:note.txt"
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
 		return in.Source == src
@@ -101,7 +101,7 @@ func TestSearch_ScopesToSource(t *testing.T) {
 func TestSearch_PassesLimit(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
 		return in.Limit == 5
@@ -118,7 +118,7 @@ func TestSearch_PassesLimit(t *testing.T) {
 func TestSearch_GroupsMultipleQueries(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).Return(calm.SearchResults{Queries: []calm.QueryResult{
 		{Query: "alpha", Hits: []calm.Hit{{Title: "a", Snippet: "a snip", Source: "sa", MatchLayer: "primary"}}},
@@ -137,7 +137,7 @@ func TestSearch_GroupsMultipleQueries(t *testing.T) {
 func TestSearch_EmptyResultsIsNotError(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).Return(calm.SearchResults{}, nil).Once()
 
@@ -171,7 +171,7 @@ func TestSearch_CalmDown_UnreachablePhrasing(t *testing.T) {
 func TestSearch_SearchError_UnreachablePhrasingThenStderr(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.SearchResults{}, errors.New("boom")).Once()
@@ -249,7 +249,7 @@ func TestSearch_MixedBlankQueriesIsArgError(t *testing.T) {
 func TestSearch_FusedValidTokenStripsBeforeForward(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.IngestSummary{Source: "calm:v1:file:read:foo.txt", SectionsIndexed: 1, SectionsTotal: 1}, nil).Once()
@@ -280,7 +280,7 @@ func TestSearch_FusedValidTokenStripsBeforeForward(t *testing.T) {
 func TestSearch_StaleFusedTokenIsSessionLost(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	// Two captures under the same source — the second's token replaces the
 	// first's. calm.Search must NOT be called; local validation rejects.
@@ -382,7 +382,7 @@ func TestSearch_NoMatchesNotesSourceScope(t *testing.T) {
 	const src = "calm:v1:file:read:note.txt"
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).Return(calm.SearchResults{}, nil).Once()
 
@@ -395,5 +395,81 @@ func TestSearch_NoMatchesNotesSourceScope(t *testing.T) {
 	}
 	if got := resultText(t, res); !strings.Contains(got, "no matches under source="+src) {
 		t.Errorf("text = %q; want the source scope noted", got)
+	}
+}
+
+// A 404 from CALM's search triggers AD03 recovery: replacement created, but
+// the original retrieval call still fails with the session_lost phrasing
+// (retrieval has no raw fallback); the follow-up search runs against the
+// replacement session.
+func TestSearch_SessionLost_RecoversAndSignals(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+
+	var mu sync.Mutex
+	var creates int
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).RunAndReturn(
+		func(context.Context, string, int, string) (string, error) {
+			mu.Lock()
+			creates++
+			n := creates
+			mu.Unlock()
+			if n == 1 {
+				return "tok-1", nil
+			}
+			return "tok-2", nil
+		},
+	).Times(2)
+	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.SearchResults{}, &calm.StatusError{Op: "search", Code: 404, Status: "404 Not Found"}).Once()
+	m.EXPECT().Search(mock.Anything, "tok-2", mock.Anything).Return(calm.SearchResults{}, nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-2").Return(nil).Once()
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callSearch(t, h, 2, map[string]any{"queries": []string{"zphlox"}})
+	if !res.IsError {
+		t.Fatalf("session-lost search must be an error result: %+v", res)
+	}
+	if got := resultText(t, res); got != obs.DegradedPhrase(obs.DegradedReasonSessionLost) {
+		t.Errorf("text = %q; want session_lost phrasing", got)
+	}
+
+	res = callSearch(t, h, 3, map[string]any{"queries": []string{"zphlox"}})
+	if res.IsError {
+		t.Fatalf("post-recovery search errored: %+v", res)
+	}
+	if got := resultText(t, res); !strings.Contains(got, "no matches") {
+		t.Errorf("post-recovery search = %q; want it to reach CALM (tok-2) and report no matches", got)
+	}
+}
+
+// A direct 401 on search is auth_failed without a recovery attempt — CALM
+// rejects credentials before session resolution, so a recreate would prove
+// nothing. Strict mocks: only the initialize CreateSession is expected.
+func TestSearch_Direct401_AuthFailed(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().Search(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.SearchResults{}, &calm.StatusError{Op: "search", Code: 401, Status: "401 Unauthorized"}).Once()
+	// No DeleteSession: the latch clears the session, so shutdown has nothing to delete.
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callSearch(t, h, 2, map[string]any{"queries": []string{"zphlox"}})
+	if !res.IsError {
+		t.Fatalf("auth-failed search must be an error result: %+v", res)
+	}
+	if got := resultText(t, res); got != obs.DegradedPhrase(obs.DegradedReasonAuthFailed) {
+		t.Errorf("text = %q; want auth_failed phrasing", got)
+	}
+
+	// Sticky: the second search short-circuits with zero CALM traffic.
+	res = callSearch(t, h, 3, map[string]any{"queries": []string{"zphlox"}})
+	if got := resultText(t, res); got != obs.DegradedPhrase(obs.DegradedReasonAuthFailed) {
+		t.Errorf("second search text = %q; want short-circuited auth_failed", got)
 	}
 }

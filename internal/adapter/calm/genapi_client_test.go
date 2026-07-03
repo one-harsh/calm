@@ -5,6 +5,8 @@ package calm_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,7 +18,7 @@ func fakeCALM(t *testing.T, h http.HandlerFunc) calm.Client {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	c, err := calm.NewGenapiClient(srv.URL, "test-key", "idem-key", nil)
+	c, err := calm.NewGenapiClient(srv.URL, "test-key", nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}
@@ -40,7 +42,7 @@ func TestGenapiCreateSession_SendsKeysAndReturnsToken(t *testing.T) {
 		jsonResp(w, http.StatusCreated, `{"session_token":"tok-1","client":"calm-adapter","namespace":"ns","ttl_minutes":60,"created_at":"2026-01-01T00:00:00Z"}`)
 	})
 
-	tok, err := c.CreateSession(context.Background(), "calm-adapter", 60)
+	tok, err := c.CreateSession(context.Background(), "calm-adapter", 60, "idem-key")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -59,7 +61,7 @@ func TestGenapiCreateSession_ErrorStatus(t *testing.T) {
 	c := fakeCALM(t, func(w http.ResponseWriter, _ *http.Request) {
 		jsonResp(w, http.StatusInternalServerError, `{"error":"boom"}`)
 	})
-	if _, err := c.CreateSession(context.Background(), "", 60); err == nil {
+	if _, err := c.CreateSession(context.Background(), "", 60, ""); err == nil {
 		t.Fatal("CreateSession: want error on 500, got nil")
 	}
 }
@@ -142,5 +144,77 @@ func TestGenapiWriteEvents(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("WriteEvents: %v", err)
+	}
+}
+
+// Non-2xx statuses classify through the sentinel scheme: 404 is
+// ErrSessionNotFound (the AD03 recovery trigger), 401/403 is ErrAuthRejected,
+// and anything else is a bare *StatusError matching neither sentinel.
+func TestGenapiStatusErrors_SentinelClassification(t *testing.T) {
+	ops := map[string]func(calm.Client) error{
+		"ingest": func(c calm.Client) error {
+			_, err := c.Ingest(context.Background(), "tok", calm.IngestInput{Source: "s", Content: "c"})
+			return err
+		},
+		"search": func(c calm.Client) error {
+			_, err := c.Search(context.Background(), "tok", calm.SearchInput{Queries: []string{"q"}})
+			return err
+		},
+		"write events": func(c calm.Client) error {
+			return c.WriteEvents(context.Background(), "tok", []calm.EventInput{{Type: "t", Priority: 1}})
+		},
+		"create session": func(c calm.Client) error {
+			_, err := c.CreateSession(context.Background(), "", 60, "")
+			return err
+		},
+	}
+	statuses := []struct {
+		code            int
+		wantSessionLost bool
+		wantAuth        bool
+	}{
+		{404, true, false},
+		{401, false, true},
+		{403, false, true},
+		{500, false, false},
+	}
+	for name, op := range ops {
+		for _, st := range statuses {
+			t.Run(fmt.Sprintf("%s_%d", name, st.code), func(t *testing.T) {
+				c := fakeCALM(t, func(w http.ResponseWriter, _ *http.Request) {
+					jsonResp(w, st.code, `{"error":"x"}`)
+				})
+				err := op(c)
+				if err == nil {
+					t.Fatalf("want error on %d, got nil", st.code)
+				}
+				if got := errors.Is(err, calm.ErrSessionNotFound); got != st.wantSessionLost {
+					t.Errorf("errors.Is(ErrSessionNotFound) = %v; want %v (err=%v)", got, st.wantSessionLost, err)
+				}
+				if got := errors.Is(err, calm.ErrAuthRejected); got != st.wantAuth {
+					t.Errorf("errors.Is(ErrAuthRejected) = %v; want %v (err=%v)", got, st.wantAuth, err)
+				}
+				var se *calm.StatusError
+				if !errors.As(err, &se) || se.Code != st.code {
+					t.Errorf("errors.As(*StatusError) code = %+v; want Code %d", se, st.code)
+				}
+			})
+		}
+	}
+}
+
+// An empty per-call idempotency key sends no Idempotency-Key header — the
+// caller controls retry-dedup per create, not the client construction.
+func TestGenapiCreateSession_EmptyKeyOmitsHeader(t *testing.T) {
+	var sawHeader bool
+	c := fakeCALM(t, func(w http.ResponseWriter, r *http.Request) {
+		_, sawHeader = r.Header[http.CanonicalHeaderKey("Idempotency-Key")]
+		jsonResp(w, http.StatusCreated, `{"session_token":"tok-1","client":"calm-adapter","namespace":"ns","ttl_minutes":60,"created_at":"2026-01-01T00:00:00Z"}`)
+	})
+	if _, err := c.CreateSession(context.Background(), "", 60, ""); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if sawHeader {
+		t.Error("Idempotency-Key header sent despite empty key")
 	}
 }

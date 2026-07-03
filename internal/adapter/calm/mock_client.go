@@ -24,9 +24,9 @@ func (_m *MockClient) EXPECT() *MockClient_Expecter {
 	return &MockClient_Expecter{mock: &_m.Mock}
 }
 
-// CreateSession provides a mock function with given fields: ctx, client, ttlMinutes
-func (_m *MockClient) CreateSession(ctx context.Context, client string, ttlMinutes int) (string, error) {
-	ret := _m.Called(ctx, client, ttlMinutes)
+// CreateSession provides a mock function with given fields: ctx, client, ttlMinutes, idempotencyKey
+func (_m *MockClient) CreateSession(ctx context.Context, client string, ttlMinutes int, idempotencyKey string) (string, error) {
+	ret := _m.Called(ctx, client, ttlMinutes, idempotencyKey)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateSession")
@@ -34,17 +34,17 @@ func (_m *MockClient) CreateSession(ctx context.Context, client string, ttlMinut
 
 	var r0 string
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, int) (string, error)); ok {
-		return rf(ctx, client, ttlMinutes)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, string) (string, error)); ok {
+		return rf(ctx, client, ttlMinutes, idempotencyKey)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, int) string); ok {
-		r0 = rf(ctx, client, ttlMinutes)
+	if rf, ok := ret.Get(0).(func(context.Context, string, int, string) string); ok {
+		r0 = rf(ctx, client, ttlMinutes, idempotencyKey)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, int) error); ok {
-		r1 = rf(ctx, client, ttlMinutes)
+	if rf, ok := ret.Get(1).(func(context.Context, string, int, string) error); ok {
+		r1 = rf(ctx, client, ttlMinutes, idempotencyKey)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -61,13 +61,14 @@ type MockClient_CreateSession_Call struct {
 //   - ctx context.Context
 //   - client string
 //   - ttlMinutes int
-func (_e *MockClient_Expecter) CreateSession(ctx interface{}, client interface{}, ttlMinutes interface{}) *MockClient_CreateSession_Call {
-	return &MockClient_CreateSession_Call{Call: _e.mock.On("CreateSession", ctx, client, ttlMinutes)}
+//   - idempotencyKey string
+func (_e *MockClient_Expecter) CreateSession(ctx interface{}, client interface{}, ttlMinutes interface{}, idempotencyKey interface{}) *MockClient_CreateSession_Call {
+	return &MockClient_CreateSession_Call{Call: _e.mock.On("CreateSession", ctx, client, ttlMinutes, idempotencyKey)}
 }
 
-func (_c *MockClient_CreateSession_Call) Run(run func(ctx context.Context, client string, ttlMinutes int)) *MockClient_CreateSession_Call {
+func (_c *MockClient_CreateSession_Call) Run(run func(ctx context.Context, client string, ttlMinutes int, idempotencyKey string)) *MockClient_CreateSession_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(int))
+		run(args[0].(context.Context), args[1].(string), args[2].(int), args[3].(string))
 	})
 	return _c
 }
@@ -77,7 +78,7 @@ func (_c *MockClient_CreateSession_Call) Return(sessionToken string, err error) 
 	return _c
 }
 
-func (_c *MockClient_CreateSession_Call) RunAndReturn(run func(context.Context, string, int) (string, error)) *MockClient_CreateSession_Call {
+func (_c *MockClient_CreateSession_Call) RunAndReturn(run func(context.Context, string, int, string) (string, error)) *MockClient_CreateSession_Call {
 	_c.Call.Return(run)
 	return _c
 }

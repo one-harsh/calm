@@ -15,12 +15,9 @@ import (
 
 type genapiClient struct {
 	api *genapi.ClientWithResponses
-	// Stable per process: makes CreateSession idempotent, so a retried create (e.g. a
-	// lost response after the server committed) returns the same session, not an orphan.
-	idempotencyKey string
 }
 
-func NewGenapiClient(baseURL, apiKey, idempotencyKey string, log *logging.Logger) (Client, error) {
+func NewGenapiClient(baseURL, apiKey string, log *logging.Logger) (Client, error) {
 	if log == nil {
 		log = logging.Nop()
 	}
@@ -38,7 +35,7 @@ func NewGenapiClient(baseURL, apiKey, idempotencyKey string, log *logging.Logger
 	if err != nil {
 		return nil, fmt.Errorf("init calm client: %w", err)
 	}
-	return &genapiClient{api: api, idempotencyKey: idempotencyKey}, nil
+	return &genapiClient{api: api}, nil
 }
 
 func (c *genapiClient) RegisterClient(ctx context.Context, name string) (bool, error) {
@@ -53,14 +50,14 @@ func (c *genapiClient) RegisterClient(ctx context.Context, name string) (bool, e
 		// Already registered — success.
 		return false, nil
 	default:
-		return false, fmt.Errorf("register client: %s", resp.Status())
+		return false, statusErr("register client", resp.StatusCode(), resp.Status())
 	}
 }
 
-func (c *genapiClient) CreateSession(ctx context.Context, client string, ttlMinutes int) (string, error) {
+func (c *genapiClient) CreateSession(ctx context.Context, client string, ttlMinutes int, idempotencyKey string) (string, error) {
 	params := &genapi.CreateSessionParams{}
-	if c.idempotencyKey != "" {
-		params.IdempotencyKey = &c.idempotencyKey
+	if idempotencyKey != "" {
+		params.IdempotencyKey = &idempotencyKey
 	}
 	body := genapi.CreateSessionJSONRequestBody{TtlMinutes: &ttlMinutes}
 	if client != "" {
@@ -71,7 +68,7 @@ func (c *genapiClient) CreateSession(ctx context.Context, client string, ttlMinu
 		return "", err
 	}
 	if resp.JSON201 == nil {
-		return "", fmt.Errorf("create session: %s", resp.Status())
+		return "", statusErr("create session", resp.StatusCode(), resp.Status())
 	}
 	return resp.JSON201.SessionToken, nil
 }
@@ -82,7 +79,7 @@ func (c *genapiClient) DeleteSession(ctx context.Context, token string) error {
 		return err
 	}
 	if code := resp.StatusCode(); code < 200 || code >= 300 {
-		return fmt.Errorf("delete session: %s", resp.Status())
+		return statusErr("delete session", code, resp.Status())
 	}
 	return nil
 }
@@ -101,7 +98,7 @@ func (c *genapiClient) Ingest(ctx context.Context, token string, in IngestInput)
 		return IngestSummary{}, err
 	}
 	if resp.JSON200 == nil {
-		return IngestSummary{}, fmt.Errorf("ingest: %s", resp.Status())
+		return IngestSummary{}, statusErr("ingest", resp.StatusCode(), resp.Status())
 	}
 	r := resp.JSON200
 	out := IngestSummary{
@@ -134,7 +131,7 @@ func (c *genapiClient) Search(ctx context.Context, token string, in SearchInput)
 		return SearchResults{}, err
 	}
 	if resp.JSON200 == nil {
-		return SearchResults{}, fmt.Errorf("search: %s", resp.Status())
+		return SearchResults{}, statusErr("search", resp.StatusCode(), resp.Status())
 	}
 	var out SearchResults
 	for _, q := range resp.JSON200.Results {
@@ -166,7 +163,7 @@ func (c *genapiClient) WriteEvents(ctx context.Context, token string, events []E
 		return err
 	}
 	if resp.JSON202 == nil {
-		return fmt.Errorf("write events: %s", resp.Status())
+		return statusErr("write events", resp.StatusCode(), resp.Status())
 	}
 	return nil
 }

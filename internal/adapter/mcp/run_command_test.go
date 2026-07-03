@@ -73,7 +73,7 @@ func resultText(t *testing.T, res mcp.ToolResult) string {
 func TestRunCommand_IngestsAndReturnsCompactRep(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
 		return in.Source == "calm:v1:shell:echo#1" && in.Content == "hello\n"
@@ -105,7 +105,7 @@ func TestRunCommand_IngestsAndReturnsCompactRep(t *testing.T) {
 func TestRunCommand_DualWritesHistoryThenLatest(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	eventsDone := writeEventsSignal(m, nil)
 
@@ -140,7 +140,7 @@ func TestRunCommand_DualWritesHistoryThenLatest(t *testing.T) {
 func TestRunCommand_IngestFailure_CapturePhrasingThenRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.IngestSummary{}, errors.New("boom")).Once()
@@ -167,7 +167,7 @@ func TestRunCommand_IngestFailure_CapturePhrasingThenRaw(t *testing.T) {
 func TestRunCommand_DualMode_BothFail_CapturePhrasing(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.IngestSummary{}, errors.New("boom")).Times(2)
@@ -192,7 +192,7 @@ func TestRunCommand_DualMode_BothFail_CapturePhrasing(t *testing.T) {
 func TestRunCommand_DualMode_PartialFail_CapturePartialPhrasing(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	// History (first per dual ordering) succeeds; latest (second) fails.
 	var calls int
@@ -235,7 +235,7 @@ func TestRunCommand_DualMode_PartialFail_CapturePartialPhrasing(t *testing.T) {
 func TestRunCommand_StderrPresent_IngestedAlongsideStdout(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 
 	var ingested string
@@ -311,7 +311,7 @@ func TestRunCommand_BlankCommandIsError(t *testing.T) {
 func TestRunCommand_EventFailureStillReturnsCompactRep(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).Return(calm.IngestSummary{
 		Source:          "calm:v1:shell:echo#1",
@@ -357,7 +357,7 @@ func TestRunCommand_InvalidArgumentsIsError(t *testing.T) {
 func TestRunCommand_BlockedEventWriteDoesNotHoldResponse(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).Return(calm.IngestSummary{
 		Source: "calm:v1:shell:echo#1", SectionsIndexed: 1, SectionsTotal: 1,
@@ -425,7 +425,7 @@ func TestRunCommand_BlockedEventWriteDoesNotHoldResponse(t *testing.T) {
 func TestRunCommand_IngestPanic_CapturePhrasingThenRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		RunAndReturn(func(context.Context, string, calm.IngestInput) (calm.IngestSummary, error) {
@@ -452,7 +452,7 @@ func TestRunCommand_IngestPanic_CapturePhrasingThenRaw(t *testing.T) {
 func TestRunCommand_PanicBeforeSummaryBuilt_CapturePhrasingThenRaw(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	// Dual mode: history ingest succeeds (sets rep), then latest ingest panics —
 	// before formatCompact runs, so the default raw must survive the recover.
@@ -478,5 +478,267 @@ func TestRunCommand_PanicBeforeSummaryBuilt_CapturePhrasingThenRaw(t *testing.T)
 	}
 	if strings.Contains(got, "calm_search source=") {
 		t.Errorf("expected raw fallback (compact rep was never built), got rep:\n%s", got)
+	}
+}
+
+// A 404 on ingest triggers AD03 recovery: one replacement create with a fresh
+// idempotency key, registry epoch reset, and the ORIGINAL call surfaces the
+// session_lost phrasing with raw output (never-worse) — no transparent retry.
+// The dead token's remaining writes and event emission are skipped; the next
+// call captures cleanly under the replacement session.
+func TestRunCommand_SessionLost_RecreatesAndSignalsSessionLost(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+
+	var mu sync.Mutex
+	var keys []string
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).RunAndReturn(
+		func(_ context.Context, _ string, _ int, key string) (string, error) {
+			mu.Lock()
+			keys = append(keys, key)
+			n := len(keys)
+			mu.Unlock()
+			if n == 1 {
+				return "tok-1", nil
+			}
+			return "tok-2", nil
+		},
+	).Times(2)
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.IngestSummary{}, &calm.StatusError{Op: "ingest", Code: 404, Status: "404 Not Found"}).Once()
+	m.EXPECT().Ingest(mock.Anything, "tok-2", mock.Anything).RunAndReturn(
+		func(_ context.Context, _ string, in calm.IngestInput) (calm.IngestSummary, error) {
+			return calm.IngestSummary{Source: in.Source, SectionsIndexed: 1, SectionsTotal: 1}, nil
+		},
+	).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-2").Return(nil).Once()
+	eventsDone := writeEventsSignal(m, nil) // second command only; the dead-token call skips events
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	if res.IsError {
+		t.Fatalf("session loss on an action tool must not be an error result: %+v", res)
+	}
+	want := obs.DegradedPhrase(obs.DegradedReasonSessionLost) + "\n\nhello\n"
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want session_lost phrasing then raw: %q", got, want)
+	}
+
+	res = callRunCommand(t, h, 3, map[string]any{"command": "echo hello"})
+	if res.IsError {
+		t.Fatalf("post-recovery capture errored: %+v", res)
+	}
+	if got := resultText(t, res); !strings.Contains(got, "calm_search source=") {
+		t.Errorf("post-recovery call did not capture cleanly; got:\n%s", got)
+	}
+	awaitSignal(t, eventsDone)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if keys[0] != "idem-base" {
+		t.Errorf("initialize key = %q; want the base key verbatim", keys[0])
+	}
+	if keys[1] == keys[0] {
+		t.Errorf("recovery reused the initialize idempotency key %q — CALM's dedup window would replay the dead session", keys[1])
+	}
+}
+
+// Recovery resets the token registry: a fused label minted before the loss
+// rejects locally as session_lost — it never reaches CALM to resolve against
+// the replacement session's content.
+func TestRunCommand_SessionLost_RegistryReset(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).RunAndReturn(
+		func(_ context.Context, _ string, in calm.IngestInput) (calm.IngestSummary, error) {
+			return calm.IngestSummary{Source: in.Source, SectionsIndexed: 1, SectionsTotal: 1}, nil
+		},
+	).Once()
+	eventsDone := writeEventsSignal(m, nil)
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	fused := extractRecallLabel(t, resultText(t, res))
+	awaitSignal(t, eventsDone)
+
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.IngestSummary{}, &calm.StatusError{Op: "ingest", Code: 404, Status: "404 Not Found"}).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-2", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-2").Return(nil).Once()
+	if res = callRunCommand(t, h, 3, map[string]any{"command": "echo hello"}); res.IsError {
+		t.Fatalf("session-loss call must not be an error result: %+v", res)
+	}
+
+	// No Search expectation: the stale fused label must resolve locally.
+	res = callSearch(t, h, 4, map[string]any{"queries": []string{"hello"}, "source": fused})
+	if !res.IsError {
+		t.Fatalf("pre-loss fused label must reject after recovery: %+v", res)
+	}
+	if got := resultText(t, res); got != obs.DegradedPhrase(obs.DegradedReasonSessionLost) {
+		t.Errorf("text = %q; want session_lost phrasing", got)
+	}
+}
+
+// A recovery create rejected with 4xx latches auth_failed for the process:
+// the original call phrases auth_failed over raw output, and every subsequent
+// call — action or retrieval — short-circuits without CALM traffic.
+func TestRunCommand_SessionLost_CreateRejected_AuthFailedSticky(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+
+	var mu sync.Mutex
+	var creates int
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).RunAndReturn(
+		func(context.Context, string, int, string) (string, error) {
+			mu.Lock()
+			creates++
+			n := creates
+			mu.Unlock()
+			if n == 1 {
+				return "tok-1", nil
+			}
+			return "", &calm.StatusError{Op: "create session", Code: 401, Status: "401 Unauthorized"}
+		},
+	).Times(2)
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.IngestSummary{}, &calm.StatusError{Op: "ingest", Code: 404, Status: "404 Not Found"}).Once()
+	// No DeleteSession: the latch clears the session, so shutdown has nothing to delete.
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	if res.IsError {
+		t.Fatalf("auth failure on an action tool must not be an error result: %+v", res)
+	}
+	want := obs.DegradedPhrase(obs.DegradedReasonAuthFailed) + "\n\nhello\n"
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want auth_failed phrasing then raw: %q", got, want)
+	}
+
+	// Sticky: zero further mock expectations — any CALM traffic fails the test.
+	res = callRunCommand(t, h, 3, map[string]any{"command": "echo hello"})
+	if got := resultText(t, res); got != want {
+		t.Errorf("second call text = %q; want short-circuited auth_failed: %q", got, want)
+	}
+	res = callSearch(t, h, 4, map[string]any{"queries": []string{"hello"}})
+	if !res.IsError {
+		t.Fatalf("auth-failed search must be an error result: %+v", res)
+	}
+	if got := resultText(t, res); got != obs.DegradedPhrase(obs.DegradedReasonAuthFailed) {
+		t.Errorf("search text = %q; want auth_failed phrasing", got)
+	}
+}
+
+// A transient recovery-create failure (network error) is calm_unreachable, not
+// auth_failed: no latch, the session stays dead, and the next 404 re-attempts
+// recovery — which then succeeds.
+func TestRunCommand_SessionLost_CreateTransient_CalmUnreachableThenRetries(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+
+	var mu sync.Mutex
+	var creates int
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).RunAndReturn(
+		func(context.Context, string, int, string) (string, error) {
+			mu.Lock()
+			creates++
+			n := creates
+			mu.Unlock()
+			switch n {
+			case 1:
+				return "tok-1", nil
+			case 2:
+				return "", errors.New("dial tcp: connection refused")
+			default:
+				return "tok-2", nil
+			}
+		},
+	).Times(3)
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.IngestSummary{}, &calm.StatusError{Op: "ingest", Code: 404, Status: "404 Not Found"}).Times(2)
+	m.EXPECT().DeleteSession(mock.Anything, "tok-2").Return(nil).Once()
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	got := resultText(t, res)
+	if !strings.HasPrefix(got, obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable)) {
+		t.Errorf("text = %q; want calm_unreachable phrasing prefix", got)
+	}
+	if !strings.Contains(got, "[stderr]\ndial tcp: connection refused") {
+		t.Errorf("text = %q; want the transient create error as [stderr] detail", got)
+	}
+
+	res = callRunCommand(t, h, 3, map[string]any{"command": "echo hello"})
+	want := obs.DegradedPhrase(obs.DegradedReasonSessionLost) + "\n\nhello\n"
+	if got := resultText(t, res); got != want {
+		t.Errorf("retry text = %q; want session_lost after successful re-recovery: %q", got, want)
+	}
+}
+
+// A 5xx on ingest is NOT a session-loss trigger: classification stays
+// capture_failed and no replacement create happens (the single CreateSession
+// expectation is the initialize one; strict mocks fail on any second create).
+func TestRunCommand_Ingest5xx_NoReplacement(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.IngestSummary{}, &calm.StatusError{Op: "ingest", Code: 500, Status: "500 Internal Server Error"}).Once()
+	eventsDone := writeEventsSignal(m, nil)
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	if res.IsError {
+		t.Fatalf("5xx capture failure must not be an error result: %+v", res)
+	}
+	want := obs.DegradedPhrase(obs.DegradedReasonCaptureFailed) + "\n\nhello\n"
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want capture_failed (not session_lost): %q", got, want)
+	}
+	awaitSignal(t, eventsDone)
+}
+
+// A 401 on the initialize-time create latches auth_failed from the first tool
+// call: the identical root cause (rejected credentials) phrases the same
+// whether detected at initialize or mid-conversation, and no call ever
+// misreports it as transient calm_unreachable. Only 401/403 latches — a 400
+// at initialize is a config problem, not credentials, and keeps the generic
+// degraded path.
+func TestInitialize_CreateRejected_AuthFailedFromFirstCall(t *testing.T) {
+	m := calm.NewMockClient(t)
+	authErr := &calm.StatusError{Op: "create session", Code: 401, Status: "401 Unauthorized"}
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(false, authErr).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("", authErr).Once()
+	// Nothing else: no session to delete, and the latch blocks all CALM traffic.
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	if res.IsError {
+		t.Fatalf("auth failure on an action tool must not be an error result: %+v", res)
+	}
+	want := obs.DegradedPhrase(obs.DegradedReasonAuthFailed) + "\n\nhello\n"
+	if got := resultText(t, res); got != want {
+		t.Errorf("text = %q; want auth_failed phrasing then raw: %q", got, want)
+	}
+
+	res = callSearch(t, h, 3, map[string]any{"queries": []string{"hello"}})
+	if !res.IsError {
+		t.Fatalf("auth-failed search must be an error result: %+v", res)
+	}
+	if got := resultText(t, res); got != obs.DegradedPhrase(obs.DegradedReasonAuthFailed) {
+		t.Errorf("search text = %q; want auth_failed phrasing", got)
 	}
 }

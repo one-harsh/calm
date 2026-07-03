@@ -33,6 +33,10 @@ type Config struct {
 	DefaultClient     string
 	SessionTTLMinutes int
 	WorkspaceRoot     string
+	// SessionIdempotencyKey makes the initialize-time session create
+	// retry-safe. Recovery creates derive per-attempt keys from it so
+	// CALM's dedup window can never replay a dead session.
+	SessionIdempotencyKey string
 }
 
 type Server struct {
@@ -44,6 +48,7 @@ type Server struct {
 	version       string
 	defaultClient string
 	ttlMinutes    int
+	idemKey       string
 	// DESIGN-DEVIATION: DESIGN.md §5 Workspace Binding — single-workspace only;
 	// multi-workspace WorkspaceID exists in the extract grammar and is tested,
 	// but no caller populates it from runtime, so cross-workspace
@@ -57,18 +62,23 @@ type Server struct {
 	out io.Writer
 
 	mu sync.Mutex
-	// DESIGN-DEVIATION: AD03 — session lost mid-conversation has no recovery
-	// path. 404 on session-touching calls isn't detected; no POST /v1/sessions
-	// retry; no session_lost degradation surfaced in visible text. The recovery
-	// loop should wrap CALM calls, attempt POST /v1/sessions on 404 (which
-	// doubles as credential validation), and distinguish session_lost from
-	// auth_failed when the create-also-fails.
-	session string // empty when CALM is unavailable (never-worse: degraded mode)
+	// session is empty when CALM is unavailable (never-worse: degraded mode).
+	// AD03: replaced in-process by recoverSession on session loss.
+	session string
+	// sessionClient is the client name the session was minted under; recovery
+	// creates reuse it so the replacement session keeps the same attribution.
+	sessionClient string
+	// authFailed latches when CALM affirmatively rejects credentials (direct
+	// 401/403, or a recovery create rejected with 4xx). Sticky for the process:
+	// the API key is fixed at startup, so retrying is a doomed round-trip per
+	// call. Un-stick = adapter restart.
+	authFailed  bool
+	recoverySeq int
 
 	// registry tracks per-invocation staleness tokens for source labels per
 	// LABELING.md §2. Its own internal mutex covers reads/writes; there's no
-	// coupling with s.mu (which protects the session token above). AI-03's
-	// session replacement invokes registry.Reset to invalidate all prior tokens.
+	// coupling with s.mu (which protects the session token above). recoverSession
+	// invokes registry.Reset so every prior fused label rejects as stale.
 	registry *tokenRegistry
 }
 
@@ -81,6 +91,7 @@ func NewServer(cfg Config) *Server {
 		version:       cfg.ServerVersion,
 		defaultClient: cfg.DefaultClient,
 		ttlMinutes:    cfg.SessionTTLMinutes,
+		idemKey:       cfg.SessionIdempotencyKey,
 		workspaceRoot: cfg.WorkspaceRoot,
 		registry:      newTokenRegistry(),
 	}
@@ -115,10 +126,13 @@ func (s *Server) addToolIfAbsent(t Tool) {
 	s.addTool(t)
 }
 
-func (s *Server) sessionToken() string {
+// sessionState returns the current session token plus the auth latch —
+// handlers short-circuit to auth_failed before any CALM traffic when the
+// latch is set.
+func (s *Server) sessionState() (token string, authFailed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.session
+	return s.session, s.authFailed
 }
 
 // stdin reads block and can't be interrupted by ctx, so reading runs in a
@@ -248,14 +262,23 @@ func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (
 
 		// never-worse: session-create failure must not break the handshake (degraded → raw fallback).
 		sctx, cancel := context.WithTimeout(ctx, sessionOpTimeout)
-		token, err := s.calm.CreateSession(sctx, client, s.ttlMinutes)
+		token, err := s.calm.CreateSession(sctx, client, s.ttlMinutes, s.idemKey)
 		cancel()
 		if err != nil {
-			s.log.WithContext(ctx).Warn("create session failed; continuing without CALM",
-				logging.StringField("client", client), logging.ErrorField(err))
+			if errors.Is(err, calm.ErrAuthRejected) {
+				s.mu.Lock()
+				s.authFailed = true
+				s.mu.Unlock()
+				s.log.WithContext(ctx).Warn("CALM rejected credentials; CALM disabled for this conversation",
+					obs.DegradedReasonFieldAuthFailed, logging.StringField("client", client), logging.ErrorField(err))
+			} else {
+				s.log.WithContext(ctx).Warn("create session failed; continuing without CALM",
+					logging.StringField("client", client), logging.ErrorField(err))
+			}
 		} else {
 			s.mu.Lock()
 			s.session = token
+			s.sessionClient = client
 			s.mu.Unlock()
 			s.log.WithContext(ctx).Info("session created", logging.StringField("client", client))
 		}

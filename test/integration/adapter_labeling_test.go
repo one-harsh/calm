@@ -16,13 +16,13 @@ import (
 func adapterSession(t *testing.T) (calm.Client, string) {
 	t.Helper()
 	idem := fmt.Sprintf("wi37b-%s-%d", t.Name(), time.Now().UnixNano())
-	c, err := calm.NewGenapiClient(env.serverURL, testMasterKey, idem, nil)
+	c, err := calm.NewGenapiClient(env.serverURL, testMasterKey, nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}
 	// Empty client → server applies its default; the labeling contract is
 	// independent of client identity, so this stays decoupled from client seeding.
-	token, err := c.CreateSession(context.Background(), "", testDefaultTTLMinutes)
+	token, err := c.CreateSession(context.Background(), "", testDefaultTTLMinutes, idem)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

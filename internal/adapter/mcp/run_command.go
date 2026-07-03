@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -96,7 +97,10 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 		}
 	}()
 
-	token := s.sessionToken()
+	token, authFailed := s.sessionState()
+	if authFailed {
+		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonAuthFailed}
+	}
 	if token == "" {
 		s.log.WithContext(ctx).Warn("CALM unavailable; returning raw output",
 			obs.DegradedReasonFieldCalmUnreachable)
@@ -117,7 +121,10 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 	}
 	plan.Token = extract.MintToken()
 
-	outcomes, rep := s.dualWriteIngest(ctx, token, plan, raw)
+	outcomes, rep, sessErr := s.dualWriteIngest(ctx, token, plan, raw)
+	if sessErr != nil {
+		return TextResult(raw, false), s.sessionFailureSignal(ctx, token, sessErr)
+	}
 	s.recordPersistedTokens(plan, outcomes)
 	res, err = s.formatCaptureOutcome(ctx, outcomes, rep, raw, r, plan.Token)
 
@@ -132,16 +139,21 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 
 // dualWriteIngest runs the preservation-first dual-write per LABELING.md
 // (history first, then latest), recording per-source persisted outcomes and
-// returning the preferred summary (latest wins when both succeed).
-func (s *Server) dualWriteIngest(ctx context.Context, token string, plan extract.Plan, raw string) ([]extract.WriteOutcome, *calm.IngestSummary) {
+// returning the preferred summary (latest wins when both succeed). The error
+// is non-nil only for session-level failures; the first one short-circuits
+// the remaining write — it would fail identically against the same dead token.
+func (s *Server) dualWriteIngest(ctx context.Context, token string, plan extract.Plan, raw string) ([]extract.WriteOutcome, *calm.IngestSummary, error) {
 	var outcomes []extract.WriteOutcome
 	var rep *calm.IngestSummary
 	if plan.HistorySource != "" {
 		sum, e := s.ingest(ctx, token, plan.HistorySource, raw, plan)
 		outcomes = append(outcomes, extract.WriteOutcome{Source: plan.HistorySource, Persisted: e == nil})
-		if e == nil {
+		switch {
+		case e == nil:
 			rep = &sum
-		} else {
+		case isSessionLevel(e):
+			return outcomes, nil, e
+		default:
 			s.log.WithContext(ctx).Warn("history ingest failed",
 				logging.StringField("source", plan.HistorySource), logging.ErrorField(e))
 		}
@@ -149,14 +161,21 @@ func (s *Server) dualWriteIngest(ctx context.Context, token string, plan extract
 	if plan.LatestSource != "" {
 		sum, e := s.ingest(ctx, token, plan.LatestSource, raw, plan)
 		outcomes = append(outcomes, extract.WriteOutcome{Source: plan.LatestSource, Persisted: e == nil})
-		if e == nil {
+		switch {
+		case e == nil:
 			rep = &sum
-		} else {
+		case isSessionLevel(e):
+			return outcomes, nil, e
+		default:
 			s.log.WithContext(ctx).Warn("latest ingest failed",
 				logging.StringField("source", plan.LatestSource), logging.ErrorField(e))
 		}
 	}
-	return outcomes, rep
+	return outcomes, rep, nil
+}
+
+func isSessionLevel(err error) bool {
+	return errors.Is(err, calm.ErrSessionNotFound) || errors.Is(err, calm.ErrAuthRejected)
 }
 
 // formatCaptureOutcome classifies the dual-write outcome into one of three
@@ -224,6 +243,10 @@ func (s *Server) emitEvents(ctx context.Context, token string, ev []calm.EventIn
 		}()
 		wctx, cancel := context.WithTimeout(ectx, eventTimeout)
 		defer cancel()
+		// AD03: no recovery trigger here — every event write follows an ingest
+		// on the same token, so either that ingest already recovered or the
+		// next tool call will; recovering from this goroutine would add
+		// concurrency surface for no visible benefit.
 		if err := s.calm.WriteEvents(wctx, token, ev); err != nil {
 			s.log.WithContext(wctx).Warn("write events failed", logging.ErrorField(err))
 		}

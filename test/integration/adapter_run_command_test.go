@@ -26,16 +26,17 @@ import (
 	"github.com/one-harsh/calm/internal/api/genapi"
 )
 
-// recordingClient captures the token the adapter mints, so a test can search that
-// same session (the adapter owns the token internally; calm_search isn't wired yet).
+// recordingClient captures the token the adapter mints (re-recording on every
+// create, so session replacement is observable) so a test can search the
+// adapter's session.
 type recordingClient struct {
 	calm.Client
 	mu    sync.Mutex
 	token string
 }
 
-func (r *recordingClient) CreateSession(ctx context.Context, client string, ttlMinutes int) (string, error) {
-	tok, err := r.Client.CreateSession(ctx, client, ttlMinutes)
+func (r *recordingClient) CreateSession(ctx context.Context, client string, ttlMinutes int, idempotencyKey string) (string, error) {
+	tok, err := r.Client.CreateSession(ctx, client, ttlMinutes, idempotencyKey)
 	if err == nil {
 		r.mu.Lock()
 		r.token = tok
@@ -76,6 +77,9 @@ func newMCPDriver(t *testing.T, client calm.Client, workspaceRoot string) *mcpDr
 		ServerVersion:     "test",
 		SessionTTLMinutes: testDefaultTTLMinutes,
 		WorkspaceRoot:     workspaceRoot,
+		// Per-test unique: the suite shares one CALM, so a repeated key would
+		// hit the create-dedup window and hand two tests the same session.
+		SessionIdempotencyKey: fmt.Sprintf("adapter-%s-%d", t.Name(), time.Now().UnixNano()),
 	})
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
@@ -140,11 +144,11 @@ func (d *mcpDriver) runCommand(command string) mcp.ToolResult {
 }
 
 // newAdapterLoop wires a driver to a real CALM client and initializes a session,
-// returning the client (for search/read assertions) and the token the adapter minted.
-func newAdapterLoop(t *testing.T, workspace string) (calm.Client, string, *mcpDriver) {
+// returning the recording client (for search/read assertions and replacement
+// observation) and the token the adapter minted.
+func newAdapterLoop(t *testing.T, workspace string) (*recordingClient, string, *mcpDriver) {
 	t.Helper()
-	idem := fmt.Sprintf("wi38-%s-%d", t.Name(), time.Now().UnixNano())
-	inner, err := calm.NewGenapiClient(env.serverURL, testMasterKey, idem, nil)
+	inner, err := calm.NewGenapiClient(env.serverURL, testMasterKey, nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}
@@ -159,7 +163,7 @@ func newAdapterLoop(t *testing.T, workspace string) (calm.Client, string, *mcpDr
 	if token == "" {
 		t.Fatal("adapter did not create a session on initialize")
 	}
-	return inner, token, d
+	return rc, token, d
 }
 
 // parseSearchSource extracts the source label the compact rep advertises,
@@ -262,7 +266,7 @@ func TestAdapterRunCommand_CaptureIngestSearchLoop(t *testing.T) {
 // the agent can branch on the reason.
 func TestAdapterRunCommand_CalmDown_UnreachablePhrasingThenRaw(t *testing.T) {
 	// Port 1 refuses connections, so session-create fails and the adapter degrades.
-	inner, err := calm.NewGenapiClient("http://127.0.0.1:1", "", "wi38-down", nil)
+	inner, err := calm.NewGenapiClient("http://127.0.0.1:1", "", nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}

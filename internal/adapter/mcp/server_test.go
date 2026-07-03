@@ -62,13 +62,14 @@ func newHarness(t *testing.T, client calm.Client, tools ...mcp.Tool) *harness {
 func newHarnessWithLogger(t *testing.T, log *logging.Logger, client calm.Client, tools ...mcp.Tool) *harness {
 	t.Helper()
 	srv := mcp.NewServer(mcp.Config{
-		Calm:              client,
-		Logger:            log,
-		ServerName:        "calm-adapter",
-		ServerVersion:     "test",
-		DefaultClient:     "calm-adapter",
-		SessionTTLMinutes: 60,
-		Tools:             tools,
+		Calm:                  client,
+		Logger:                log,
+		ServerName:            "calm-adapter",
+		ServerVersion:         "test",
+		DefaultClient:         "calm-adapter",
+		SessionTTLMinutes:     60,
+		Tools:                 tools,
+		SessionIdempotencyKey: "idem-base",
 	})
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
@@ -158,7 +159,7 @@ func stubTool(name string) mcp.Tool {
 func TestInitialize_CreatesSessionAndReturnsServerInfo(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok-1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	h := newHarness(t, m)
 
@@ -293,7 +294,7 @@ func TestNotificationProducesNoResponse(t *testing.T) {
 func TestDuplicateInitializeReusesSession(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
-	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60).Return("tok1", nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok1").Return(nil).Once()
 	h := newHarness(t, m)
 

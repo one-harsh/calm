@@ -100,19 +100,20 @@ func run() error {
 		apiKey = secrets.New(logger).ReadSecret(ctx, cfg.Calm.APIKey)
 	}
 
-	client, err := calm.NewGenapiClient(cfg.Calm.URL, apiKey, idempotencyKey, logger)
+	client, err := calm.NewGenapiClient(cfg.Calm.URL, apiKey, logger)
 	if err != nil {
 		return err
 	}
 
 	srv := mcp.NewServer(mcp.Config{
-		Calm:              client,
-		Logger:            logger,
-		ServerName:        serverName,
-		ServerVersion:     serverVersion,
-		DefaultClient:     cfg.Calm.Client,
-		SessionTTLMinutes: cfg.Calm.SessionTTLMinutes,
-		WorkspaceRoot:     workspaceRoot,
+		Calm:                  client,
+		Logger:                logger,
+		ServerName:            serverName,
+		ServerVersion:         serverVersion,
+		DefaultClient:         cfg.Calm.Client,
+		SessionTTLMinutes:     cfg.Calm.SessionTTLMinutes,
+		WorkspaceRoot:         workspaceRoot,
+		SessionIdempotencyKey: idempotencyKey,
 	})
 
 	logger.WithContext(ctx).Info("adapter starting")

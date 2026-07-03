@@ -82,7 +82,10 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 	}
 
 	ctx = logging.Bind(ctx, logging.StringField("source", a.Source))
-	token := s.sessionToken()
+	token, authFailed := s.sessionState()
+	if authFailed {
+		return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonAuthFailed}
+	}
 	if token == "" {
 		s.log.WithContext(ctx).Warn(
 			"search unavailable; CALM not connected",
@@ -112,6 +115,9 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 	defer cancel()
 	res, err := s.calm.Search(sctx, token, calm.SearchInput{Queries: a.Queries, Source: calmSource, Limit: a.Limit})
 	if err != nil {
+		if sig := s.sessionFailureSignal(ctx, token, err); sig != nil {
+			return ToolResult{IsError: true}, sig
+		}
 		s.log.WithContext(ctx).Warn(
 			"search failed",
 			obs.DegradedReasonFieldCalmUnreachable,

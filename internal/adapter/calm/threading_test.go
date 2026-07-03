@@ -37,7 +37,7 @@ func TestThreading_InjectsHeadersAndLogsCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger: %v", err)
 	}
-	c, err := calm.NewGenapiClient(srv.URL, "k", "idem", logger)
+	c, err := calm.NewGenapiClient(srv.URL, "k", logger)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestThreading_LogsFailedCall(t *testing.T) {
 		t.Fatalf("logger: %v", err)
 	}
 	// Port 1 refuses connections → transport error path.
-	c, err := calm.NewGenapiClient("http://127.0.0.1:1", "k", "idem", logger)
+	c, err := calm.NewGenapiClient("http://127.0.0.1:1", "k", logger)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestThreading_NoCallContextSendsNoWorkloadHeaders(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c, err := calm.NewGenapiClient(srv.URL, "k", "idem", nil)
+	c, err := calm.NewGenapiClient(srv.URL, "k", nil)
 	if err != nil {
 		t.Fatalf("NewGenapiClient: %v", err)
 	}
