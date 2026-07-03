@@ -201,6 +201,11 @@ func writeWorkspaceFile(t *testing.T, dir, name, content string) {
 	}
 }
 
+// inlinePad pushes a capture past the adapter's inline threshold so the
+// response presents in summary mode and advertises a recall label — for tests
+// whose subject is labeling, not presentation.
+var inlinePad = strings.Repeat("pad ", 160)
+
 // eventData reads back the first persisted event of eventType through CALM,
 // returning its priority and Data. Emission is fire-and-forget, so it polls until
 // the event lands (or the deadline) rather than reading once.
@@ -235,7 +240,7 @@ func eventData(t *testing.T, token, eventType string) (int, map[string]any) {
 func TestAdapterRunCommand_CaptureIngestSearchLoop(t *testing.T) {
 	workspace := t.TempDir()
 	const marker = "zphloxmarker"
-	writeWorkspaceFile(t, workspace, "note.txt", marker+" lives in this file\n")
+	writeWorkspaceFile(t, workspace, "note.txt", marker+" lives in this file\n"+inlinePad)
 
 	inner, token, d := newAdapterLoop(t, workspace)
 
@@ -258,6 +263,35 @@ func TestAdapterRunCommand_CaptureIngestSearchLoop(t *testing.T) {
 	}
 	if n := hitCount(t, inner, token, source, marker); n == 0 {
 		t.Fatalf("captured output not retrievable via advertised source %q", source)
+	}
+}
+
+// Inline mode (DESIGN.md §4): a small output comes back as the raw bytes
+// verbatim with no recall label in visible text — while still being captured
+// into CALM and retrievable via session-wide search.
+func TestAdapterRunCommand_SmallOutputInline_StillSearchable(t *testing.T) {
+	workspace := t.TempDir()
+	const marker = "zphloxinline"
+	content := marker + " fits inline\n"
+	writeWorkspaceFile(t, workspace, "note.txt", content)
+
+	_, _, d := newAdapterLoop(t, workspace)
+
+	res := d.runCommand("cat note.txt")
+	if res.IsError {
+		t.Fatalf("run_command errored: %+v", res)
+	}
+	if got := res.Content[0].Text; got != content {
+		t.Fatalf("inline text = %q; want raw output verbatim %q", got, content)
+	}
+
+	// Capture is presentation-independent: session-wide search still finds it.
+	sr := d.search([]string{marker}, "")
+	if sr.IsError {
+		t.Fatalf("session-wide search errored: %+v", sr)
+	}
+	if !strings.Contains(sr.Content[0].Text, marker) {
+		t.Fatalf("inline-mode capture not retrievable via session-wide search; got:\n%s", sr.Content[0].Text)
 	}
 }
 
@@ -290,8 +324,8 @@ func TestAdapterRunCommand_CalmDown_UnreachablePhrasingThenRaw(t *testing.T) {
 func TestAdapterRunCommand_CoexistPreservesEachInvocation(t *testing.T) {
 	inner, token, d := newAdapterLoop(t, t.TempDir())
 
-	first := parseSearchSource(t, d.runCommand("echo zphloxalpha").Content[0].Text)
-	second := parseSearchSource(t, d.runCommand("echo zphloxbeta").Content[0].Text)
+	first := parseSearchSource(t, d.runCommand("echo zphloxalpha " + inlinePad).Content[0].Text)
+	second := parseSearchSource(t, d.runCommand("echo zphloxbeta " + inlinePad).Content[0].Text)
 	if first == second {
 		t.Fatalf("coexist invocations collided on one source: %q", first)
 	}
@@ -310,12 +344,12 @@ func TestAdapterRunCommand_CoexistPreservesEachInvocation(t *testing.T) {
 // idempotent-indexing: re-reading a changed file replaces the prior snapshot under one label.
 func TestAdapterRunCommand_ReplaceDedupsOnRerun(t *testing.T) {
 	workspace := t.TempDir()
-	writeWorkspaceFile(t, workspace, "note.txt", "zphloxfirst here\n")
+	writeWorkspaceFile(t, workspace, "note.txt", "zphloxfirst here\n"+inlinePad)
 
 	inner, token, d := newAdapterLoop(t, workspace)
 
 	first := parseSearchSource(t, d.runCommand("cat note.txt").Content[0].Text)
-	writeWorkspaceFile(t, workspace, "note.txt", "zphloxsecond here\n")
+	writeWorkspaceFile(t, workspace, "note.txt", "zphloxsecond here\n"+inlinePad)
 	second := parseSearchSource(t, d.runCommand("cat note.txt").Content[0].Text)
 
 	if first != second {
@@ -333,6 +367,11 @@ func TestAdapterRunCommand_ReplaceDedupsOnRerun(t *testing.T) {
 // and the event cross-links exactly the sources that persisted.
 func TestAdapterRunCommand_DualPersistsHistoryAndFreshLatest(t *testing.T) {
 	dir := gitRepo(t)
+	// Extra untracked files push `git status` output past the inline
+	// threshold so the recall label is advertised.
+	for i := range 8 {
+		writeWorkspaceFile(t, dir, fmt.Sprintf("pad-%02d-%s.txt", i, strings.Repeat("p", 60)), "pad\n")
+	}
 	inner, token, d := newAdapterLoop(t, dir)
 
 	res := d.runCommand("git status")

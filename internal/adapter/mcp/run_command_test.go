@@ -7,12 +7,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/mock"
+
+	"github.com/one-harsh/context-logging/loggingtest"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/mcp"
@@ -37,6 +41,24 @@ func awaitSignal(t *testing.T, done <-chan struct{}) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("WriteEvents was not invoked")
+	}
+}
+
+// bigEcho returns an echo command whose raw payload exceeds the inline
+// threshold, forcing summary-mode presentation; payload is the exact raw
+// output the adapter sees.
+func bigEcho(prefix string) (cmd, payload string) {
+	arg := prefix + strings.Repeat("x", 600)
+	return "echo " + arg, arg + "\n"
+}
+
+// writeFixture writes a workspace file whose content exceeds the inline
+// threshold, so captures of it present in summary mode.
+func writeFixture(t *testing.T, dir, name, marker string) {
+	t.Helper()
+	content := marker + strings.Repeat("y", 600) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatalf("write fixture %s: %v", name, err)
 	}
 }
 
@@ -75,8 +97,9 @@ func TestRunCommand_IngestsAndReturnsCompactRep(t *testing.T) {
 	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	cmd, payload := bigEcho("hello")
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
-		return in.Source == "calm:v1:shell:echo#1" && in.Content == "hello\n"
+		return in.Source == "calm:v1:shell:echo#1" && in.Content == payload
 	})).Return(calm.IngestSummary{
 		Source:          "calm:v1:shell:echo#1",
 		SectionsIndexed: 1,
@@ -88,7 +111,7 @@ func TestRunCommand_IngestsAndReturnsCompactRep(t *testing.T) {
 	h := newHarness(t, m)
 	initSession(t, h, "claude-code")
 
-	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	res := callRunCommand(t, h, 2, map[string]any{"command": cmd})
 	if res.IsError {
 		t.Fatalf("unexpected isError: %+v", res)
 	}
@@ -222,10 +245,6 @@ func TestRunCommand_DualMode_PartialFail_CapturePartialPhrasing(t *testing.T) {
 	if !strings.HasPrefix(got, obs.DegradedPhrase(obs.DegradedReasonCapturePartial)) {
 		t.Errorf("text = %q; want prefix %q", got, obs.DegradedPhrase(obs.DegradedReasonCapturePartial))
 	}
-	// The compact rep of the persisted (history) source follows the phrasing.
-	if !strings.Contains(got, "Captured 1/1 sections under") {
-		t.Errorf("text missing compact rep of persisted source; got %q", got)
-	}
 	awaitSignal(t, eventsDone)
 }
 
@@ -323,7 +342,8 @@ func TestRunCommand_EventFailureStillReturnsCompactRep(t *testing.T) {
 	h := newHarness(t, m)
 	initSession(t, h, "claude-code")
 
-	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	cmd, _ := bigEcho("hello")
+	res := callRunCommand(t, h, 2, map[string]any{"command": cmd})
 	if res.IsError {
 		t.Fatalf("event failure must not break the response: %+v", res)
 	}
@@ -379,8 +399,9 @@ func TestRunCommand_BlockedEventWriteDoesNotHoldResponse(t *testing.T) {
 	t.Cleanup(func() { close(release) }) // unblock the goroutine before teardown
 	initSession(t, h, "claude-code")
 
+	blockedCmd, _ := bigEcho("hello")
 	h.send(req(2, "tools/call", map[string]any{
-		"name": "calm_run_command", "arguments": map[string]any{"command": "echo hello"},
+		"name": "calm_run_command", "arguments": map[string]any{"command": blockedCmd},
 	}))
 
 	// Read the response off the wire on a deadline. If emission were synchronous, the
@@ -526,7 +547,8 @@ func TestRunCommand_SessionLost_RecreatesAndSignalsSessionLost(t *testing.T) {
 		t.Errorf("text = %q; want session_lost phrasing then raw: %q", got, want)
 	}
 
-	res = callRunCommand(t, h, 3, map[string]any{"command": "echo hello"})
+	postCmd, _ := bigEcho("hello")
+	res = callRunCommand(t, h, 3, map[string]any{"command": postCmd})
 	if res.IsError {
 		t.Fatalf("post-recovery capture errored: %+v", res)
 	}
@@ -562,7 +584,8 @@ func TestRunCommand_SessionLost_RegistryReset(t *testing.T) {
 	h := newHarness(t, m)
 	initSession(t, h, "claude-code")
 
-	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	firstCmd, _ := bigEcho("hello")
+	res := callRunCommand(t, h, 2, map[string]any{"command": firstCmd})
 	fused := extractRecallLabel(t, resultText(t, res))
 	awaitSignal(t, eventsDone)
 
@@ -741,4 +764,106 @@ func TestInitialize_CreateRejected_AuthFailedFromFirstCall(t *testing.T) {
 	if got := resultText(t, res); got != obs.DegradedPhrase(obs.DegradedReasonAuthFailed) {
 		t.Errorf("search text = %q; want auth_failed phrasing", got)
 	}
+}
+
+// DESIGN.md §4 inline mode: a small output comes back as the raw bytes
+// verbatim — no Captured header, no recall hint — while capture proceeds
+// identically (strict mocks prove ingest + events still fire).
+func TestRunCommand_SmallOutputInline(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).Return(calm.IngestSummary{
+		Source: "calm:v1:shell:echo#1", SectionsIndexed: 1, SectionsTotal: 1,
+	}, nil).Once()
+	eventsDone := writeEventsSignal(m, nil)
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	if res.IsError {
+		t.Fatalf("unexpected isError: %+v", res)
+	}
+	if got := resultText(t, res); got != "hello\n" {
+		t.Errorf("inline text = %q; want raw output verbatim %q", got, "hello\n")
+	}
+	awaitSignal(t, eventsDone)
+}
+
+// The per-call summary log reports the presentation decision: an inline-mode
+// capture carries mode=inline with captured=true and the source label — the
+// label leaves visible text but stays on the operator surface.
+func TestRunCommand_InlineMode_SummaryLogFields(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).Return(calm.IngestSummary{
+		Source: "calm:v1:shell:echo#1", SectionsIndexed: 1, SectionsTotal: 1,
+	}, nil).Once()
+	eventsDone := writeEventsSignal(m, nil)
+
+	log, buf := captureLogger(t)
+	h := newHarnessWithLogger(t, log, m)
+	initSession(t, h, "claude-code")
+	_ = callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	awaitSignal(t, eventsDone)
+	h.cancel()
+	_ = h.inW.Close()
+	h.wait()
+
+	summary := summaryEntry(t, buf.Bytes())
+	if got := summary[obs.KeyPresentationMode]; got != obs.PresentationModeInline {
+		t.Errorf("presentation.mode = %v; want %q", got, obs.PresentationModeInline)
+	}
+	if got := summary["captured"]; got != true {
+		t.Errorf("captured = %v; want true", got)
+	}
+	if _, ok := summary[obs.KeySourceLabel]; !ok {
+		t.Errorf("summary log missing %q — the label must stay on the operator surface in inline mode", obs.KeySourceLabel)
+	}
+}
+
+// Degraded raw fallbacks report mode=inline: the metric describes the visible
+// shape; operators separate healthy-inline from degraded-inline via degraded.
+func TestRunCommand_DegradedFallback_ModeInlineInLog(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.IngestSummary{}, errors.New("boom")).Once()
+	eventsDone := writeEventsSignal(m, nil)
+
+	log, buf := captureLogger(t)
+	h := newHarnessWithLogger(t, log, m)
+	initSession(t, h, "claude-code")
+	_ = callRunCommand(t, h, 2, map[string]any{"command": "echo hello"})
+	awaitSignal(t, eventsDone)
+	h.cancel()
+	_ = h.inW.Close()
+	h.wait()
+
+	summary := summaryEntry(t, buf.Bytes())
+	if got := summary[obs.KeyPresentationMode]; got != obs.PresentationModeInline {
+		t.Errorf("presentation.mode = %v; want %q", got, obs.PresentationModeInline)
+	}
+	if got := summary["degraded"]; got != true {
+		t.Errorf("degraded = %v; want true", got)
+	}
+}
+
+// summaryEntry drains the captured log buffer and returns the per-call
+// summary line's fields.
+func summaryEntry(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	for _, e := range loggingtest.EntriesFromBytes(t, raw) {
+		if e["msg"] == "tool call completed" {
+			return e
+		}
+	}
+	t.Fatal("no 'tool call completed' log entry found")
+	return nil
 }

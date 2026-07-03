@@ -40,7 +40,7 @@ func (d *mcpDriver) search(queries []string, source string) mcp.ToolResult {
 func TestAdapterSearch_RunCommandThenSearchLoop(t *testing.T) {
 	workspace := t.TempDir()
 	const marker = "zphloxmarker"
-	writeWorkspaceFile(t, workspace, "note.txt", marker+" lives in this file\n")
+	writeWorkspaceFile(t, workspace, "note.txt", marker+" lives in this file\n"+inlinePad)
 
 	_, _, d := newAdapterLoop(t, workspace)
 
@@ -78,7 +78,7 @@ func TestAdapterSearch_RunCommandThenSearchLoop(t *testing.T) {
 // rather than empty search results from the current session.
 func TestAdapterSearch_StaleFusedLabel_SessionLost(t *testing.T) {
 	workspace := t.TempDir()
-	writeWorkspaceFile(t, workspace, "note.txt", "first capture\n")
+	writeWorkspaceFile(t, workspace, "note.txt", "first capture\n"+inlinePad)
 
 	_, _, d := newAdapterLoop(t, workspace)
 

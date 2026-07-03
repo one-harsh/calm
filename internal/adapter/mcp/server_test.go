@@ -54,12 +54,24 @@ func discardLogger(t *testing.T) *logging.Logger {
 
 func newHarness(t *testing.T, client calm.Client, tools ...mcp.Tool) *harness {
 	t.Helper()
-	return newHarnessWithLogger(t, discardLogger(t), client, tools...)
+	return newHarnessCore(t, discardLogger(t), client, "", tools...)
 }
 
 // newHarnessWithLogger wires a harness against a caller-supplied logger so
 // tests asserting on log output can inspect emissions.
 func newHarnessWithLogger(t *testing.T, log *logging.Logger, client calm.Client, tools ...mcp.Tool) *harness {
+	t.Helper()
+	return newHarnessCore(t, log, client, "", tools...)
+}
+
+// newWorkspaceHarness anchors the adapter in a real workspace root so shell
+// commands resolve fixture files and path-based source labels derive normally.
+func newWorkspaceHarness(t *testing.T, client calm.Client, workspaceRoot string) *harness {
+	t.Helper()
+	return newHarnessCore(t, discardLogger(t), client, workspaceRoot)
+}
+
+func newHarnessCore(t *testing.T, log *logging.Logger, client calm.Client, workspaceRoot string, tools ...mcp.Tool) *harness {
 	t.Helper()
 	srv := mcp.NewServer(mcp.Config{
 		Calm:                  client,
@@ -69,6 +81,7 @@ func newHarnessWithLogger(t *testing.T, log *logging.Logger, client calm.Client,
 		DefaultClient:         "calm-adapter",
 		SessionTTLMinutes:     60,
 		Tools:                 tools,
+		WorkspaceRoot:         workspaceRoot,
 		SessionIdempotencyKey: "idem-base",
 	})
 	inR, inW := io.Pipe()
@@ -336,8 +349,9 @@ func TestNullIDIsRequestNotNotification(t *testing.T) {
 // canonical field set per DESIGN.md §7: identity (tool, workload_request_id),
 // trace_id (auto from OTel SpanContext), categorical status defaulted by
 // invokeTool and overridable by the handler via BindSummary, measurement
-// fields computed at drain, and presentation.mode hardcoded "summary" until
-// AI-04.
+// fields computed at drain, and presentation.mode defaulting to "summary"
+// when the handler makes no presentation decision (capture handlers re-bind
+// per DESIGN.md §4).
 func TestInvokeTool_SummaryLogShape(t *testing.T) {
 	summaryTool := mcp.Tool{
 		Name:        "summary_probe",

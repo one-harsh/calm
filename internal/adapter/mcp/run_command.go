@@ -27,13 +27,14 @@ const (
 	eventTimeout  = 5 * time.Second
 )
 
-const runCommandDescription = "Run a shell command locally, capturing its output into CALM instead of " +
-	"returning it raw. Prefer this over the native shell/Bash tool for every shell command: it keeps " +
-	"large/raw output out of the context window and indexes it for on-demand retrieval. Returns a compact " +
-	"summary plus a source label ending in @<token>; fetch the full captured output later with " +
-	"calm_search source=<label exactly as returned> rather than re-running. The label refers to the " +
-	"latest output for that identity; for one specific past run, drop the @<token> suffix and use " +
-	"<base>#<n>. Never append #<n> after the @<token>."
+const runCommandDescription = "Run a shell command locally, capturing its output into CALM. Prefer this " +
+	"over the native shell/Bash tool for every shell command: output is indexed for on-demand retrieval " +
+	"and large output stays out of the context window. Small outputs come back verbatim (still captured " +
+	"and searchable via calm_search). Larger outputs come back as a compact summary plus a source label " +
+	"ending in @<token>; fetch the full captured output later with calm_search " +
+	"source=<label exactly as returned> rather than re-running. The label refers to the latest output " +
+	"for that identity; for one specific past run, drop the @<token> suffix and use <base>#<n>. " +
+	"Never append #<n> after the @<token>."
 
 const runCommandSchema = `{
   "type": "object",
@@ -91,6 +92,7 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 	ctx = logging.BindSummary(ctx, obs.ResponseRawBytes(len(raw)))
 	defer func() {
 		if p := recover(); p != nil {
+			logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 			s.log.WithContext(ctx).Warn("run_command panicked; returning best-available output",
 				obs.DegradedReasonFieldCaptureFailed, logging.AnyField("panic", p))
 			err = &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
@@ -99,9 +101,11 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 
 	token, authFailed := s.sessionState()
 	if authFailed {
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonAuthFailed}
 	}
 	if token == "" {
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		s.log.WithContext(ctx).Warn("CALM unavailable; returning raw output",
 			obs.DegradedReasonFieldCalmUnreachable)
 		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable}
@@ -115,6 +119,7 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 		TimedOut: r.TimedOut,
 	})
 	if derr != nil {
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		s.log.WithContext(ctx).Warn("derive plan failed; returning raw output",
 			obs.DegradedReasonFieldCaptureFailed, logging.ErrorField(derr))
 		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
@@ -123,6 +128,7 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 
 	outcomes, rep, sessErr := s.dualWriteIngest(ctx, token, plan, raw)
 	if sessErr != nil {
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		return TextResult(raw, false), s.sessionFailureSignal(ctx, token, sessErr)
 	}
 	s.recordPersistedTokens(plan, outcomes)
@@ -195,6 +201,7 @@ func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.Wr
 	}
 	switch {
 	case rep == nil:
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		s.log.WithContext(ctx).Warn("all ingests failed; returning raw output",
 			obs.DegradedReasonFieldCaptureFailed)
 		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
@@ -204,15 +211,27 @@ func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.Wr
 			logging.BoolField(obs.KeyCaptured, true),
 			obs.SourceLabel(rep.Source),
 		)
-		return TextResult(formatCompact(*rep, r, token), false), &DegradedSignal{Reason: obs.DegradedReasonCapturePartial}
+		return TextResult(presentCapture(ctx, *rep, raw, r, token), false), &DegradedSignal{Reason: obs.DegradedReasonCapturePartial}
 	default:
 		logging.BindSummary(
 			ctx,
 			logging.BoolField(obs.KeyCaptured, true),
 			obs.SourceLabel(rep.Source),
 		)
-		return TextResult(formatCompact(*rep, r, token), false), nil
+		return TextResult(presentCapture(ctx, *rep, raw, r, token), false), nil
 	}
+}
+
+// presentCapture picks the presentation mode by raw size: at or below inlineMaxBytes
+// the raw payload wins (summary chrome would cost more context than the content);
+// above it, the compact rep + fused recall label. The source label stays on the
+// summary log in both modes.
+func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r exec.Result, token string) string {
+	if len(raw) <= inlineMaxBytes {
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
+		return formatInline(raw, r)
+	}
+	return formatCompact(sum, r, token)
 }
 
 // recordPersistedTokens registers `plan.Token` against each source that
@@ -289,15 +308,32 @@ func commandPayload(r exec.Result) string {
 const (
 	maxCompactSections = 5
 	maxCompactLen      = 4096
+	inlineMaxBytes     = 512
 )
 
-// DESIGN-DEVIATION: DESIGN.md §4 Presentation — always summary mode. Inline
-// mode for small outputs (where summary chrome would exceed raw content and
-// thus violate the Net context savings invariant) is not implemented.
-// Two-mode presentation needs a threshold-based decision: below the threshold
-// return raw bytes with minimal framing; at or above, summary + fused source
-// label. The mode distribution feeds the adapter.presentation.mode OTel
-// metric once OTel emission is wired.
+// formatInline is inline mode: the raw payload verbatim with minimal framing — no
+// source label, no recall hint. The trailer appears only when it carries signal
+// (nonzero exit, timeout, truncation) or when raw is empty (so the response is
+// never blank text).
+func formatInline(raw string, r exec.Result) string {
+	if r.ExitCode == 0 && !r.TimedOut && !r.Truncated && raw != "" {
+		return raw
+	}
+	var b strings.Builder
+	b.WriteString(raw)
+	if raw != "" && !strings.HasSuffix(raw, "\n") {
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "exit=%d", r.ExitCode)
+	if r.TimedOut {
+		b.WriteString(" (timed out)")
+	}
+	if r.Truncated {
+		b.WriteString(" (output truncated)")
+	}
+	return b.String()
+}
+
 func formatCompact(sum calm.IngestSummary, r exec.Result, token string) string {
 	var b strings.Builder
 	fusedSource := sum.Source

@@ -259,10 +259,13 @@ func TestSearch_FusedValidTokenStripsBeforeForward(t *testing.T) {
 		return in.Source == "calm:v1:file:read:foo.txt"
 	})).Return(calm.SearchResults{}, nil).Once()
 
-	h := newHarness(t, m)
+	ws := t.TempDir()
+	writeFixture(t, ws, "foo.txt", "x")
+	h := newWorkspaceHarness(t, m, ws)
 	initSession(t, h, "claude-code")
 
-	// Register a token via a normal capture.
+	// Register a token via a normal capture (fixture is above the inline
+	// threshold, so the recall label is advertised).
 	res1 := callRunCommand(t, h, 2, map[string]any{"command": "cat foo.txt"})
 	fusedLabel := extractRecallLabel(t, resultText(t, res1))
 	if !strings.Contains(fusedLabel, "@") {
@@ -295,7 +298,9 @@ func TestSearch_StaleFusedTokenIsSessionLost(t *testing.T) {
 			return nil
 		}).Times(2)
 
-	h := newHarness(t, m)
+	ws := t.TempDir()
+	writeFixture(t, ws, "hello.txt", "x")
+	h := newWorkspaceHarness(t, m, ws)
 	initSession(t, h, "claude-code")
 
 	// First capture — grab its fused recall label.

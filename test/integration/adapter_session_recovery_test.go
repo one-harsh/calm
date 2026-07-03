@@ -99,7 +99,7 @@ func newFaultLoop(t *testing.T, workspace string) (*faultClient, string, *mcpDri
 func TestAdapterSessionRecovery_DeletedSession_RecoversAndInvalidatesLabels(t *testing.T) {
 	workspace := t.TempDir()
 	const marker = "zphloxrecover"
-	writeWorkspaceFile(t, workspace, "note.txt", marker+" pre-loss content\n")
+	writeWorkspaceFile(t, workspace, "note.txt", marker+" pre-loss content\n"+inlinePad)
 
 	rc, t1, d := newAdapterLoop(t, workspace)
 
@@ -199,7 +199,7 @@ func TestAdapterSessionRecovery_CreateRejected_AuthFailedSticky(t *testing.T) {
 func TestAdapterSessionRecovery_5xxDoesNotReplace(t *testing.T) {
 	workspace := t.TempDir()
 	const marker = "zphloxfivehundred"
-	writeWorkspaceFile(t, workspace, "note.txt", marker+" content\n")
+	writeWorkspaceFile(t, workspace, "note.txt", marker+" content\n"+inlinePad)
 
 	fc, t1, d := newFaultLoop(t, workspace)
 	fc.set(func(f *faultClient) {
