@@ -49,7 +49,7 @@ Workspace-read-only by contract. These tools use local subprocesses internally, 
 
 | Tool | Purpose | Capture shape |
 |---|---|---|
-| `calm_read_file` | Read file content by path and optional range. | Stable latest source for the path; history only when policy requires it. |
+| `calm_read_file` | Read file content by path and optional range. The range shapes presentation only; capture is always the full file. | Stable latest source for the path; history only when policy requires it. |
 | `calm_list_dir` | List directory entries. | Stable latest source for the directory. |
 | `calm_grep` | Search local files and capture matching lines. | Stable latest source for pattern and path scope when the identity is safe. |
 | `calm_git_status` | Inspect working tree and index state. | Latest plus history — status changes over time and snapshots matter. |

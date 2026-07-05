@@ -75,6 +75,7 @@ type WriteOutcome struct {
 }
 
 type eventFacts struct {
+	toolName       string
 	commandSummary string
 	subcommand     string
 	exitCode       int
@@ -95,6 +96,7 @@ func DerivePlan(inv Invocation, r ExecResult) (Plan, error) {
 	}
 
 	facts := eventFacts{
+		toolName:       toolName,
 		commandSummary: commandSummary(c),
 		subcommand:     c.subcommand,
 		exitCode:       r.ExitCode,
@@ -102,24 +104,25 @@ func DerivePlan(inv Invocation, r ExecResult) (Plan, error) {
 		isGit:          c.program == "git",
 		invocationID:   inv.Seq,
 	}
-	if r.ExitCode != 0 || r.TimedOut {
-		facts.errMessage = errorMessage(r)
-		facts.traceSnippet = traceSnippet(r.Stderr)
-	}
-
-	suffix := seqSuffix(inv.Seq)
+	fillErrorFacts(&facts, r)
 
 	cl, matched := classify(c, inv)
 	if !matched {
-		base := buildBase(coexistID(c), inv, maxSeqSuffix)
-		return Plan{
-			Mode:          Coexist,
-			HistorySource: base + suffix,
-			ContentType:   contentTypeProse,
-			base:          facts,
-		}, nil
+		return coexistPlan(coexistID(c), inv, facts), nil
 	}
+	return assemble(cl, inv, facts), nil
+}
 
+func fillErrorFacts(f *eventFacts, r ExecResult) {
+	if r.ExitCode != 0 || r.TimedOut {
+		f.errMessage = errorMessage(r)
+		f.traceSnippet = traceSnippet(r.Stderr)
+	}
+}
+
+// assemble turns a classification into a Plan — the one place the capture
+// mode's source-field shape is decided, shared by the shell and typed routes.
+func assemble(cl classification, inv Invocation, facts eventFacts) Plan {
 	plan := Plan{Mode: cl.mode, ContentType: cl.content, Format: cl.format, base: facts}
 	switch cl.mode {
 	case Replace:
@@ -127,12 +130,22 @@ func DerivePlan(inv Invocation, r ExecResult) (Plan, error) {
 	case Dual:
 		base := buildBase(cl.id, inv, maxSeqSuffix)
 		plan.LatestSource = base
-		plan.HistorySource = base + suffix
+		plan.HistorySource = base + seqSuffix(inv.Seq)
 	case Coexist:
 		base := buildBase(cl.id, inv, maxSeqSuffix)
-		plan.HistorySource = base + suffix
+		plan.HistorySource = base + seqSuffix(inv.Seq)
 	}
-	return plan, nil
+	return plan
+}
+
+func coexistPlan(id labelID, inv Invocation, facts eventFacts) Plan {
+	base := buildBase(id, inv, maxSeqSuffix)
+	return Plan{
+		Mode:          Coexist,
+		HistorySource: base + seqSuffix(inv.Seq),
+		ContentType:   contentTypeProse,
+		base:          facts,
+	}
 }
 
 // Cross-links are set only for outcomes that persisted, so an event never points at a
@@ -156,7 +169,7 @@ func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 	events := make([]calm.EventInput, 0, 3)
 
 	inv := map[string]any{
-		keyToolName:     toolName,
+		keyToolName:     f.toolName,
 		keyCommand:      f.commandSummary,
 		keyExitCode:     f.exitCode,
 		keyInvocationID: f.invocationID,
@@ -176,7 +189,7 @@ func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 	if f.exitCode != 0 || f.timedOut {
 		ed := map[string]any{
 			keyMessage:      f.errMessage,
-			keySource:       toolName,
+			keySource:       f.toolName,
 			keyExitCode:     f.exitCode,
 			keyInvocationID: f.invocationID,
 		}

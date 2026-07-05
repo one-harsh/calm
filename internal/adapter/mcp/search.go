@@ -54,6 +54,7 @@ func (s *Server) newSearchTool() Tool {
 		Description: searchDescription,
 		InputSchema: json.RawMessage(searchSchema),
 		Handler:     s.search,
+		Annotations: readOnlyAnnotations,
 	}
 }
 

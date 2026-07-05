@@ -88,59 +88,20 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 	}
 
 	raw := commandPayload(r)
-	res = TextResult(raw, false) // default; the recover keeps whatever res holds at panic time
-	ctx = logging.BindSummary(ctx, obs.ResponseRawBytes(len(raw)))
-	defer func() {
-		if p := recover(); p != nil {
-			logging.BindSummary(ctx, obs.PresentationModeFieldInline)
-			s.log.WithContext(ctx).Warn("run_command panicked; returning best-available output",
-				obs.DegradedReasonFieldCaptureFailed, logging.AnyField("panic", p))
-			err = &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
-		}
-	}()
-
-	token, authFailed := s.sessionState()
-	if authFailed {
-		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
-		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonAuthFailed}
-	}
-	if token == "" {
-		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
-		s.log.WithContext(ctx).Warn("CALM unavailable; returning raw output",
-			obs.DegradedReasonFieldCalmUnreachable)
-		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable}
-	}
-
-	inv := extract.Invocation{Seq: s.seq.Add(1), Command: a.Command, Cwd: dir, WorkspaceRoot: s.workspaceRoot}
-	plan, derr := extract.DerivePlan(inv, extract.ExecResult{
-		Stdout:   r.Stdout,
-		Stderr:   r.Stderr,
-		ExitCode: r.ExitCode,
-		TimedOut: r.TimedOut,
+	return s.capturePipeline(ctx, captureSpec{
+		ingest:  raw,
+		visible: raw,
+		res:     r,
+		plan: func() (extract.Plan, error) {
+			inv := extract.Invocation{Seq: s.seq.Add(1), Command: a.Command, Cwd: dir, WorkspaceRoot: s.workspaceRoot}
+			return extract.DerivePlan(inv, extract.ExecResult{
+				Stdout:   r.Stdout,
+				Stderr:   r.Stderr,
+				ExitCode: r.ExitCode,
+				TimedOut: r.TimedOut,
+			})
+		},
 	})
-	if derr != nil {
-		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
-		s.log.WithContext(ctx).Warn("derive plan failed; returning raw output",
-			obs.DegradedReasonFieldCaptureFailed, logging.ErrorField(derr))
-		return TextResult(raw, false), &DegradedSignal{Reason: obs.DegradedReasonCaptureFailed}
-	}
-	plan.Token = extract.MintToken()
-
-	outcomes, rep, sessErr := s.dualWriteIngest(ctx, token, plan, raw)
-	if sessErr != nil {
-		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
-		return TextResult(raw, false), s.sessionFailureSignal(ctx, token, sessErr)
-	}
-	s.recordPersistedTokens(plan, outcomes)
-	res, err = s.formatCaptureOutcome(ctx, outcomes, rep, raw, r, plan.Token)
-
-	// Fire-and-forget: events are pure observability and must never delay the response
-	// (never-worse) — a stalled /v1/events can't hold the tool call hostage.
-	if ev := extract.FinalizeEvents(plan, outcomes); len(ev) > 0 {
-		s.emitEvents(ctx, token, ev)
-	}
-
-	return
 }
 
 // dualWriteIngest runs the preservation-first dual-write per LABELING.md

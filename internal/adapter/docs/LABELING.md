@@ -104,9 +104,15 @@ always carry it (e.g., `calm:v1:file:read:foo.py@a3f2k6`).
 | `go test ./...` / `pytest` / `make` (runners) | coexist | — | `calm:v1:shell:<program>#<seq>` |
 | unknown / pipeline | coexist | — | `calm:v1:shell:<program>#<seq>` (`sh` for pipelines) |
 
-The structured tools above (`calm_edit_file`, `calm_write_file`, and the structured-inspection set referenced by their `cat` / `ls` / `git` / `grep` equivalents) are defined in [`DESIGN.md`](DESIGN.md)'s Tool Surface; this document owns how their captures are labeled and what events they emit.
+The structured tools above (`calm_edit_file`, `calm_write_file`, and the
+structured-inspection set referenced by their `cat` / `ls` / `git` / `grep`
+equivalents) are defined in [`DESIGN.md`](DESIGN.md)'s Tool Surface; this document
+owns how their captures are labeled and what events they emit.
 
-Both `calm_edit_file` and `calm_write_file` use the same history verb (`file:edit:#<seq>`). The history source represents "post-modification snapshot of this file"; the operation type (edit / write / create) is carried in the accompanying `file_touched` event payload, not in the label.
+Both `calm_edit_file` and `calm_write_file` use the same history verb
+(`file:edit:#<seq>`). The history source represents "post-modification snapshot of
+this file"; the operation type (edit / write / create) is carried in the
+accompanying `file_touched` event payload, not in the label.
 
 The `WorkspaceID` context segment is omitted in the common one-workspace-per-session
 case shown above. When a session binds multiple workspaces, the segment is
@@ -158,7 +164,25 @@ normalization happens *before* the grammar is built:
   not access control**: an escaping command still runs and its output is still
   captured (under `coexist`). The adapter does not sandbox execution or confine
   commands to `WorkspaceRoot` — local shell access is full, by design (DL02).
-- **Cosmetic flags** (`--color`, `--no-pager`) — which don't change output — are stripped so cosmetic variants share one label. **Output-affecting flags** (`-q`, `--stat`, `-l`, …) are *not* stripped: a recognized command carrying one has an ambiguous output identity (e.g. `grep -q` emits nothing), so it falls back to `coexist` rather than risk overwriting the flag-free label.
+- **Cosmetic flags** (`--color`, `--no-pager`) — which don't change output — are
+  stripped so cosmetic variants share one label. **Output-affecting flags**
+  (`-q`, `--stat`, `-l`, …) are *not* stripped: a recognized command carrying one
+  has an ambiguous output identity (e.g. `grep -q` emits nothing), so it falls
+  back to `coexist` rather than risk overwriting the flag-free label.
+- **Structured-tool flags are excluded from identity.** A structured inspection
+  tool's typed flags (`calm_grep`'s `case_insensitive`, `include`) refine *how*
+  the same search intent matches, never *which identity* the results belong to —
+  the label stays `calm:v1:search:grep:<pattern>:<scope>` and the latest capture
+  wins across flag variants. This deliberately differs from the shell rule above:
+  unknown shell flag's effect on output identity is unknowable, but a typed flag's
+  is known by construction, so replace-mode aliasing is accepted rather than
+  accidental.
+- **Structured-tool coexist fallback uses the program-equivalent bucket.** When a
+  structured tool's operand escapes the workspace or globs, its coexist label uses
+  the shell-domain program equivalent (`calm:v1:shell:cat#<seq>` for
+  `calm_read_file`, `ls` for `calm_list_dir`, `grep` for `calm_grep`, `git` for
+  the git tools) — typed and shell fallbacks share buckets, and tool names never
+  enter the label grammar.
 - **Whitespace** is collapsed by tokenization.
 - **All operands** form the identity — `cat a b` → `calm:v1:file:read:a:b`, never just
   `read:a` — so a multi-operand command can't alias onto a single-operand label. If any
@@ -168,6 +192,12 @@ normalization happens *before* the grammar is built:
   directories would collide on one label.
 - **Glob patterns** (`*.go`) resolve to an unstable identity (the expansion is not
   fixed), so they fall back to `coexist`.
+- **Git refs vs pathspecs.** When git's `--` separator is present with pathspecs
+  after it, it is preserved as a literal identity segment: `git diff main -- src`
+  → `calm:v1:vcs:git:diff:main:--:src`, distinct from `git diff main src` →
+  `…:diff:main:src`. A ref list and a ref+pathspec split can therefore never
+  alias onto one label; without the separator, operands keep git's own
+  ambiguity and flatten into one list.
 
 ## 5. Event derivation (HLD-aligned)
 

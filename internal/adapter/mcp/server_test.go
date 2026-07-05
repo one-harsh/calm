@@ -214,8 +214,17 @@ func TestToolsListAndCall(t *testing.T) {
 	if err := json.Unmarshal(r.Result, &list); err != nil {
 		t.Fatalf("decode tools/list: %v", err)
 	}
-	if len(list.Tools) != 2 || list.Tools[0].Name != "calm_run_command" || list.Tools[1].Name != "calm_search" {
-		t.Fatalf("tools = %+v; want [calm_run_command calm_search]", list.Tools)
+	want := []string{
+		"calm_run_command", "calm_search",
+		"calm_read_file", "calm_list_dir", "calm_grep", "calm_git_status", "calm_git_diff",
+	}
+	if len(list.Tools) != len(want) {
+		t.Fatalf("tools = %+v; want %v", list.Tools, want)
+	}
+	for i, w := range want {
+		if list.Tools[i].Name != w {
+			t.Fatalf("tools[%d] = %q; want %q", i, list.Tools[i].Name, w)
+		}
 	}
 
 	h.send(req(2, "tools/call", map[string]any{"name": "calm_run_command", "arguments": map[string]any{}}))

@@ -49,6 +49,8 @@ type Server struct {
 	defaultClient string
 	ttlMinutes    int
 	idemKey       string
+	// grepEngine is probed once at construction; the tool description names it.
+	grepEngine string
 	// DESIGN-DEVIATION: DESIGN.md §5 Workspace Binding — single-workspace only;
 	// multi-workspace WorkspaceID exists in the extract grammar and is tested,
 	// but no caller populates it from runtime, so cross-workspace
@@ -94,6 +96,7 @@ func NewServer(cfg Config) *Server {
 		idemKey:       cfg.SessionIdempotencyKey,
 		workspaceRoot: cfg.WorkspaceRoot,
 		registry:      newTokenRegistry(),
+		grepEngine:    probeGrepEngine(),
 	}
 	for _, t := range cfg.Tools {
 		s.addTool(t)
@@ -108,15 +111,17 @@ func (s *Server) addTool(t Tool) {
 }
 
 func (s *Server) registerBuiltins() {
-	// TODO: register the structured-inspection, structured-editing, and
-	// context-health tools per DESIGN.md §3. Only calm_run_command and
-	// calm_search ship today. Missing: calm_read_file, calm_list_dir,
-	// calm_grep, calm_git_status, calm_git_diff (structured inspection,
-	// read-only by contract); calm_edit_file, calm_write_file (structured
+	// TODO: register the structured-editing and context-health tools per
+	// DESIGN.md §3. Missing: calm_edit_file, calm_write_file (structured
 	// editing, dual-mode capture + file_touched event per AD04);
 	// calm_report_outcome (context health, calls /v1/feedback).
 	s.addToolIfAbsent(s.newRunCommandTool())
 	s.addToolIfAbsent(s.newSearchTool())
+	s.addToolIfAbsent(s.newReadFileTool())
+	s.addToolIfAbsent(s.newListDirTool())
+	s.addToolIfAbsent(s.newGrepTool())
+	s.addToolIfAbsent(s.newGitStatusTool())
+	s.addToolIfAbsent(s.newGitDiffTool())
 }
 
 func (s *Server) addToolIfAbsent(t Tool) {
@@ -296,16 +301,22 @@ func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (
 }
 
 type toolDescriptor struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	InputSchema json.RawMessage  `json:"inputSchema"`
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
 }
 
 func (s *Server) toolsList() any {
 	out := make([]toolDescriptor, 0, len(s.order))
 	for _, name := range s.order {
 		t := s.tools[name]
-		out = append(out, toolDescriptor{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema})
+		out = append(out, toolDescriptor{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+			Annotations: t.Annotations,
+		})
 	}
 	return map[string]any{"tools": out}
 }

@@ -121,6 +121,50 @@ func TestRun_AlreadyExpiredContextIsTimedOut(t *testing.T) {
 	}
 }
 
+func TestRunArgv_CapturesOutput(t *testing.T) {
+	res, err := exec.RunArgv(context.Background(), []string{"echo", "hi"}, "")
+	if err != nil {
+		t.Fatalf("RunArgv: %v", err)
+	}
+	if res.Stdout != "hi\n" || res.ExitCode != 0 {
+		t.Errorf("res = %+v; want stdout %q exit 0", res, "hi\n")
+	}
+}
+
+// The no-shell proof: shell metacharacters in argv arrive at the process as
+// literal bytes — typed tool arguments cannot inject through this entry.
+func TestRunArgv_NoShellInterpretation(t *testing.T) {
+	res, err := exec.RunArgv(context.Background(), []string{"echo", "$(pwd); rm -rf /"}, "")
+	if err != nil {
+		t.Fatalf("RunArgv: %v", err)
+	}
+	if res.Stdout != "$(pwd); rm -rf /\n" {
+		t.Errorf("stdout = %q; want the metacharacters literal", res.Stdout)
+	}
+}
+
+func TestRunArgv_EmptyArgvIsError(t *testing.T) {
+	if _, err := exec.RunArgv(context.Background(), nil, ""); err == nil {
+		t.Fatal("empty argv must be an error")
+	}
+}
+
+func TestRunArgv_TimeoutParity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	res, err := exec.RunArgv(ctx, []string{"sleep", "5"}, "")
+	if err != nil {
+		t.Fatalf("RunArgv: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
+		t.Fatalf("RunArgv took %v; deadline should have killed the process promptly", elapsed)
+	}
+	if !res.TimedOut {
+		t.Errorf("TimedOut = false; want true")
+	}
+}
+
 func trimNewline(s string) string {
 	if len(s) > 0 && s[len(s)-1] == '\n' {
 		return s[:len(s)-1]

@@ -74,6 +74,12 @@ func buildFileRead(c cmd, inv Invocation) (classification, bool) {
 	if len(paths) == 0 {
 		return classification{}, false
 	}
+	return classifyFileRead(paths, inv)
+}
+
+// classifyFileRead is the route-shared core: the shell rule and the typed
+// calm_read_file constructor both land here, so their labels cannot diverge.
+func classifyFileRead(paths []string, inv Invocation) (classification, bool) {
 	ident, ok := relIdents(paths, inv)
 	if !ok || len(ident) == 0 {
 		return classification{}, false
@@ -83,7 +89,11 @@ func buildFileRead(c cmd, inv Invocation) (classification, bool) {
 }
 
 func buildList(c cmd, inv Invocation) (classification, bool) {
-	ident, ok := relIdents(operandsOrCwd(c), inv)
+	return classifyList(operandsOrCwd(c), inv)
+}
+
+func classifyList(paths []string, inv Invocation) (classification, bool) {
+	ident, ok := relIdents(paths, inv)
 	if !ok {
 		return classification{}, false
 	}
@@ -114,9 +124,15 @@ func buildGrep(c cmd, inv Invocation) (classification, bool) {
 	if len(paths) == 0 {
 		return classification{}, false
 	}
-	id := labelID{domain: domainSearch, verb: "grep", context: []string{paths[0]}}
-	if len(paths) > 1 {
-		ident, ok := relIdents(paths[1:], inv)
+	return classifyGrep(paths[0], paths[1:], inv)
+}
+
+// classifyGrep: the pattern enters the label context unresolved (it is not a
+// path); scope paths resolve workspace-relative into the identity.
+func classifyGrep(pattern string, scopes []string, inv Invocation) (classification, bool) {
+	id := labelID{domain: domainSearch, verb: "grep", context: []string{pattern}}
+	if len(scopes) > 0 {
+		ident, ok := relIdents(scopes, inv)
 		if !ok {
 			return classification{}, false
 		}
@@ -131,25 +147,38 @@ func buildGit(c cmd, inv Invocation) (classification, bool) {
 	// Git output is never replace-safe: refs (HEAD, branches, ranges like main..feat)
 	// move, so the same command yields different output over time — always dual. Every
 	// operand routes through wsRel, so an absolute or escaping path coexists rather than
-	// leaking into the label.
-	var operands []string
-	for _, a := range c.args {
-		if a != "--" { // the rev/pathspec separator, not an operand
-			operands = append(operands, a)
+	// leaking into the label. A `--` with pathspecs after it is preserved as a literal
+	// separator segment so a ref list and a ref+pathspec split can never alias.
+	refs := c.args
+	var paths []string
+	for i, a := range c.args {
+		if a == "--" {
+			refs, paths = c.args[:i], c.args[i+1:]
+			break
 		}
 	}
-	if len(operands) == 0 {
+	if len(refs) == 0 && len(paths) == 0 {
 		if c.subcommand != "status" {
 			id.ident = []string{"HEAD"}
 		}
 		return classification{id: id, mode: Dual, content: gitContent(c.subcommand)}, true
 	}
-	for _, op := range operands {
+	for _, op := range refs {
 		rel, ok := wsRel(op, inv)
 		if !ok {
 			return classification{}, false
 		}
 		id.ident = append(id.ident, identOf(rel)...)
+	}
+	if len(paths) > 0 {
+		id.ident = append(id.ident, "--")
+		for _, op := range paths {
+			rel, ok := wsRel(op, inv)
+			if !ok {
+				return classification{}, false
+			}
+			id.ident = append(id.ident, identOf(rel)...)
+		}
 	}
 	return classification{id: id, mode: Dual, content: gitContent(c.subcommand)}, true
 }

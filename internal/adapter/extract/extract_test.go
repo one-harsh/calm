@@ -535,10 +535,15 @@ func TestDerivePlan_GitOperandSafety(t *testing.T) {
 		}
 	})
 
-	t.Run("pathspec_after_dashdash_resolved", func(t *testing.T) {
+	t.Run("pathspec_after_dashdash_keeps_separator", func(t *testing.T) {
 		p, _ := DerivePlan(inv("git diff HEAD -- src/foo.go", 3), okResult())
-		if p.Mode != Dual || p.LatestSource != "calm:v1:vcs:git:diff:HEAD:src/foo.go" {
-			t.Errorf("pathspec should be workspace-resolved into the identity: %+v", p)
+		if p.Mode != Dual || p.LatestSource != "calm:v1:vcs:git:diff:HEAD:--:src/foo.go" {
+			t.Errorf("pathspec must sit after the literal -- segment: %+v", p)
+		}
+		// A ref list flattening to the same tokens must NOT alias with it.
+		q, _ := DerivePlan(inv("git diff HEAD src/foo.go", 3), okResult())
+		if q.LatestSource == p.LatestSource {
+			t.Errorf("ref list aliased with ref+pathspec: %q", q.LatestSource)
 		}
 	})
 }

@@ -12,7 +12,9 @@ import (
 	"time"
 )
 
-const maxOutputBytes = 512 * 1024
+// MaxOutputBytes caps each captured stream. Shared with native capture paths
+// (structured file reads) so subprocess and native captures cannot diverge.
+const MaxOutputBytes = 512 * 1024
 
 const killGraceDelay = 2 * time.Second
 
@@ -28,7 +30,23 @@ func Run(ctx context.Context, command, dir string) (Result, error) {
 	//nolint:gosec // DL02: local exec is an adapter capability; CALM the service never runs code
 	cmd := osexec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = dir
+	return runCmd(ctx, cmd)
+}
 
+// RunArgv executes argv directly — no shell. Typed tool arguments must never
+// be spliced into a shell string, so this is the only sanctioned exec entry
+// for structured tools.
+func RunArgv(ctx context.Context, argv []string, dir string) (Result, error) {
+	if len(argv) == 0 {
+		return Result{}, errors.New("exec: empty argv")
+	}
+	//nolint:gosec // DL02: local exec is an adapter capability; CALM the service never runs code
+	cmd := osexec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
+	return runCmd(ctx, cmd)
+}
+
+func runCmd(ctx context.Context, cmd *osexec.Cmd) (Result, error) {
 	// Own process group + kill the whole group on timeout. Killing only the sh leader
 	// leaves a forked child (e.g. `sleep`) holding the inherited output pipe, which keeps
 	// Wait blocked until that child exits — long past the deadline.
@@ -39,8 +57,8 @@ func Run(ctx context.Context, command, dir string) (Result, error) {
 	}
 	cmd.WaitDelay = killGraceDelay
 
-	stdout := &cappedBuffer{limit: maxOutputBytes}
-	stderr := &cappedBuffer{limit: maxOutputBytes}
+	stdout := &cappedBuffer{limit: MaxOutputBytes}
+	stderr := &cappedBuffer{limit: MaxOutputBytes}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 

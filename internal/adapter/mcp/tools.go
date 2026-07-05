@@ -16,7 +16,17 @@ type Tool struct {
 	Description string
 	InputSchema json.RawMessage
 	Handler     ToolHandler
+	Annotations *ToolAnnotations
 }
+
+// ToolAnnotations mirrors the MCP tool-annotation hints the adapter emits.
+// Hints are advisory — the adapter signals; hosts and users own the trust
+// decisions (DESIGN.md §3, honest mutation surfacing).
+type ToolAnnotations struct {
+	ReadOnlyHint bool `json:"readOnlyHint,omitempty"`
+}
+
+var readOnlyAnnotations = &ToolAnnotations{ReadOnlyHint: true}
 
 type ToolResult struct {
 	Content []Content `json:"content"`
