@@ -48,6 +48,10 @@ task smoke:adapter       # offline MCP-protocol smoke
 
 Operator-facing deployment instructions (binary install, MCP-host registration, environment variables) live in the top-level [`README.md`](../../README.md). Project-wide engineering disciplines (logging, transactions, comment policy, …) live in [`CLAUDE.md`](../../CLAUDE.md).
 
+## Platform notes
+
+The module compile-checks on linux/darwin/windows × amd64/arm64 (`task build:all`, packages and all test files). Every tool lands on something that ships with the OS: `calm_run_command` uses the platform shell (`sh -c` on Unix, `cmd /c` on Windows — named in its description) and labels cmd-native idioms (`type`, `dir`, `findstr`) with the same stable identities as their Unix equivalents; `calm_grep` selects its engine at startup (ripgrep when installed, else grep, else findstr on Windows) and names it — findstr's limited regex dialect is stated in the description. The native file tools and `calm_search` are platform-independent. Only the git tools require an external install (`git` — which a git workspace implies). Timeout kills use process groups on Unix; on Windows only the direct child is killed, with the wait still bounded.
+
 ## Related
 
 - [`docs/HLD.md`](../../docs/HLD.md) — CALM's High-Level Design (workload-agnostic, no MCP-specific surface). The adapter is one of CALM's workloads.

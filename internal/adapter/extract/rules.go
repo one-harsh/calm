@@ -5,6 +5,7 @@ package extract
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
@@ -45,12 +46,40 @@ var (
 // First match wins. Build/test runners (go, pytest, make, …) and anything unrecognized
 // fall through to coexist — their output is invocation history, not a content identity
 // derivable from the command without per-tool knowledge.
-var registry = []rule{
-	{match: func(c cmd) bool { return c.program == "git" && gitSubs[c.subcommand] }, build: buildGit},
-	{match: progIn(fileReadProgs), build: buildFileRead},
-	{match: progIs("ls"), build: buildList},
-	{match: progIn(grepProgs), build: buildGrep},
-	{match: progIs("find"), build: buildFind},
+var registry = buildRegistry(runtime.GOOS)
+
+// buildRegistry is GOOS-parameterized so Windows cmd-native idioms (`type`,
+// `dir`, `findstr` through `cmd /c`) derive the same stable identities as
+// their Unix equivalents — and so tests can exercise the Windows registry
+// from any host. The aliases are per-platform, not universal: a unix
+// executable named `dir` must not alias with directory listings.
+func buildRegistry(goos string) []rule {
+	fileRead := progIn(fileReadProgs)
+	list := progIs("ls")
+	grep := progIn(grepProgs)
+	if goos == "windows" {
+		fileRead = anyOf(fileRead, progIs("type"))
+		list = anyOf(list, progIs("dir"))
+		grep = anyOf(grep, progIs("findstr"))
+	}
+	return []rule{
+		{match: func(c cmd) bool { return c.program == "git" && gitSubs[c.subcommand] }, build: buildGit},
+		{match: fileRead, build: buildFileRead},
+		{match: list, build: buildList},
+		{match: grep, build: buildGrep},
+		{match: progIs("find"), build: buildFind},
+	}
+}
+
+func anyOf(fns ...func(cmd) bool) func(cmd) bool {
+	return func(c cmd) bool {
+		for _, fn := range fns {
+			if fn(c) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 func progIn(set map[string]bool) func(cmd) bool { return func(c cmd) bool { return set[c.program] } }

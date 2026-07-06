@@ -39,10 +39,7 @@ func main() {
 }
 
 func run() error {
-	// Raw tokens live transiently in memory; a core dump would persist them to disk.
-	if err := syscall.Setrlimit(syscall.RLIMIT_CORE, &syscall.Rlimit{Cur: 0, Max: 0}); err != nil {
-		fmt.Fprintf(os.Stderr, "warn: setrlimit(RLIMIT_CORE, 0) failed: %v\n", err)
-	}
+	disableCoreDumps()
 
 	cfg, err := config.Load(os.Getenv("CALM_CONFIG_FILE"))
 	if err != nil {

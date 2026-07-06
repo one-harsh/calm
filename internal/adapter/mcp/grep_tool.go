@@ -6,7 +6,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"os"
 	osexec "os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/one-harsh/calm/internal/adapter/exec"
@@ -15,11 +17,20 @@ import (
 
 const toolNameGrep = "calm_grep"
 
-// probeGrepEngine prefers ripgrep when installed — faster and
-// gitignore-aware, so captures don't wade through .git/ and vendored trees.
+// probeGrepEngine probes best-first but always lands on an engine that ships
+// with the OS: ripgrep when installed (faster, gitignore-aware — captures
+// don't wade through .git/ and vendored trees), else grep (POSIX-guaranteed
+// on unix; present in Git-for-Windows environments), else findstr on Windows
+// (always present; limited regex dialect, named in the tool description).
 func probeGrepEngine() string {
 	if _, err := osexec.LookPath("rg"); err == nil {
 		return "rg"
+	}
+	if runtime.GOOS == "windows" {
+		if _, err := osexec.LookPath("grep"); err == nil {
+			return "grep"
+		}
+		return "findstr"
 	}
 	return "grep"
 }
@@ -44,15 +55,19 @@ type grepArgs struct {
 }
 
 func (s *Server) newGrepTool() Tool {
+	desc := "Search workspace files with " + s.grepEngine + " and capture matching lines " +
+		"(path:line:text) into CALM. Prefer this over shell grep/rg. Small results come back verbatim " +
+		"(still captured and searchable via calm_search). Larger results come back as a compact summary " +
+		"plus a source label ending in @<token>; fetch the full match list later with calm_search " +
+		"source=<label exactly as returned> rather than re-running. The label refers to the latest " +
+		"results for this pattern and scope; case_insensitive/include variants share it. Never append " +
+		"#<n> after the @<token>."
+	if s.grepEngine == "findstr" {
+		desc += " findstr supports literal and basic regex patterns only — no alternation (|), no + or {} quantifiers."
+	}
 	return Tool{
-		Name: toolNameGrep,
-		Description: "Search workspace files with " + s.grepEngine + " and capture matching lines " +
-			"(path:line:text) into CALM. Prefer this over shell grep/rg. Small results come back verbatim " +
-			"(still captured and searchable via calm_search). Larger results come back as a compact summary " +
-			"plus a source label ending in @<token>; fetch the full match list later with calm_search " +
-			"source=<label exactly as returned> rather than re-running. The label refers to the latest " +
-			"results for this pattern and scope; case_insensitive/include variants share it. Never append " +
-			"#<n> after the @<token>.",
+		Name:        toolNameGrep,
+		Description: desc,
 		InputSchema: json.RawMessage(grepSchema),
 		Handler:     s.grep,
 		Annotations: readOnlyAnnotations,
@@ -78,9 +93,13 @@ func (s *Server) grep(ctx context.Context, args json.RawMessage) (ToolResult, er
 		paths[i] = p
 	}
 
+	isDir := func(p string) bool {
+		fi, statErr := os.Stat(s.resolveWorkspacePath(p))
+		return statErr == nil && fi.IsDir()
+	}
 	ectx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
-	r, runErr := exec.RunArgv(ectx, grepArgv(s.grepEngine, a.Pattern, paths, a.CaseInsensitive, a.Include), s.workspaceRoot)
+	r, runErr := exec.RunArgv(ectx, grepArgv(s.grepEngine, a.Pattern, paths, a.CaseInsensitive, a.Include, isDir), s.workspaceRoot)
 	if runErr != nil {
 		return TextResult("failed to run "+s.grepEngine+": "+runErr.Error(), true), nil
 	}
@@ -104,9 +123,13 @@ func (s *Server) grep(ctx context.Context, args json.RawMessage) (ToolResult, er
 	})
 }
 
-// grepArgv builds the engine invocation. Both engines emit path:line:text;
-// `--` guards patterns beginning with `-`.
-func grepArgv(engine, pattern string, paths []string, caseInsensitive bool, include string) []string {
+// grepArgv builds the engine invocation. All engines emit path:line:text;
+// `--` guards patterns beginning with `-` (findstr's `/C:` serves the same
+// role and additionally forces single-pattern semantics — without it,
+// findstr splits the pattern on spaces into an OR of words). isDir is
+// consulted by the findstr branch only, to tell directory scopes from
+// explicit files.
+func grepArgv(engine, pattern string, paths []string, caseInsensitive bool, include string, isDir func(string) bool) []string {
 	var argv []string
 	switch engine {
 	case "rg":
@@ -117,6 +140,18 @@ func grepArgv(engine, pattern string, paths []string, caseInsensitive bool, incl
 		if include != "" {
 			argv = append(argv, "-g", include)
 		}
+	case "findstr":
+		specs, recurse := findstrFilespecs(paths, include, isDir)
+		argv = []string{"findstr"}
+		if recurse {
+			argv = append(argv, "/S")
+		}
+		argv = append(argv, "/N", "/R")
+		if caseInsensitive {
+			argv = append(argv, "/I")
+		}
+		argv = append(argv, "/C:"+pattern)
+		return append(argv, specs...)
 	default:
 		argv = []string{"grep", "-rn"}
 		if caseInsensitive {
@@ -128,4 +163,33 @@ func grepArgv(engine, pattern string, paths []string, caseInsensitive bool, incl
 	}
 	argv = append(argv, "--", pattern)
 	return append(argv, paths...)
+}
+
+// findstrFilespecs composes scope paths with the include glob: findstr has no
+// include flag — the filespec IS the filter (`src\*.go`). Directory scopes get
+// `<dir>\<include-or-*>`; explicit files pass through as-is (include filters
+// only directory recursion, matching grep --include semantics). /S is emitted
+// only when a directory is in scope: a file-only invocation must not recurse,
+// because /S re-applies the filespec as a name pattern in every subdirectory.
+// Mixed file+dir scopes keep /S and accept that name-shadowing quirk. The `\`
+// join is explicit (not filepath.Join) so the pure function is deterministic
+// in cross-platform unit tests.
+func findstrFilespecs(paths []string, include string, isDir func(string) bool) (specs []string, recurse bool) {
+	if include == "" {
+		include = "*"
+	}
+	specs = make([]string, 0, len(paths))
+	for _, p := range paths {
+		switch {
+		case p == ".":
+			specs = append(specs, include)
+			recurse = true
+		case isDir != nil && isDir(p):
+			specs = append(specs, strings.TrimSuffix(p, "/")+`\`+include)
+			recurse = true
+		default:
+			specs = append(specs, p)
+		}
+	}
+	return specs, recurse
 }

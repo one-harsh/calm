@@ -1,4 +1,5 @@
-# Parallel fan-out of the gates in `task ci` (the serial local equivalent).
+# Parallel fan-out of the gates in `task ci` (the serial local equivalent),
+# plus the cross-platform compile matrix (`task build:all` locally).
 # Each job is an independent runner; only `test` needs Postgres.
 name: CI
 
@@ -183,3 +184,28 @@ jobs:
 
       - name: Build binaries
         run: task build
+
+  build-matrix:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cross compile-check (packages + all test files)
+        run: task build:target GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}

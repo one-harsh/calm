@@ -138,6 +138,33 @@ tasks:
     desc: Build both binaries (static, no CGO)
     deps: [build:calm, build:adapter]
 
+  build:all:
+    desc: Compile-check every OS/arch in parallel (no artifacts) — packages and all test files
+    summary: |
+      Cross-compiles the whole module for each distribution target and
+      type-checks every unit/integration test file there (`go build` alone
+      never compiles tests; the vet leg does). Standalone pre-push/pre-release
+      gate — not part of `task ci`. CI runs one leg per runner; the host leg
+      doubles as the native build.
+    deps:
+      - for:
+          matrix:
+            GOOS: [linux, darwin, windows]
+            GOARCH: [amd64, arm64]
+        task: build:target
+        vars:
+          GOOS: "{{.ITEM.GOOS}}"
+          GOARCH: "{{.ITEM.GOARCH}}"
+
+  build:target:
+    desc: Compile-check packages + type-check all tests for one GOOS/GOARCH
+    label: "build {{.GOOS}}/{{.GOARCH}}"
+    requires:
+      vars: [GOOS, GOARCH]
+    cmds:
+      - CGO_ENABLED=0 GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build ./...
+      - CGO_ENABLED=0 GOOS={{.GOOS}} GOARCH={{.GOARCH}} go vet -tags=mocks ./...
+
   build:calm:
     desc: Build the CALM service binary (CGO_ENABLED=0 — static-binary invariant)
     env:

@@ -36,10 +36,10 @@ const runCommandDescription = "Run a shell command locally, capturing its output
 	"for that identity; for one specific past run, drop the @<token> suffix and use <base>#<n>. " +
 	"Never append #<n> after the @<token>."
 
-const runCommandSchema = `{
+var runCommandSchema = `{
   "type": "object",
   "properties": {
-    "command": {"type": "string", "description": "Shell command to run, executed via sh -c on the local machine."},
+    "command": {"type": "string", "description": "Shell command to run, executed via ` + exec.ShellInvocation + ` on the local machine."},
     "cwd": {"type": "string", "description": "Working directory; defaults to the adapter's workspace root."}
   },
   "required": ["command"],

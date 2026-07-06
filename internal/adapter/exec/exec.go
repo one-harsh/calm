@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	osexec "os/exec"
-	"syscall"
 	"time"
 )
 
@@ -27,8 +26,9 @@ type Result struct {
 }
 
 func Run(ctx context.Context, command, dir string) (Result, error) {
+	argv := shellArgv(command)
 	//nolint:gosec // DL02: local exec is an adapter capability; CALM the service never runs code
-	cmd := osexec.CommandContext(ctx, "sh", "-c", command)
+	cmd := osexec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	return runCmd(ctx, cmd)
 }
@@ -47,14 +47,7 @@ func RunArgv(ctx context.Context, argv []string, dir string) (Result, error) {
 }
 
 func runCmd(ctx context.Context, cmd *osexec.Cmd) (Result, error) {
-	// Own process group + kill the whole group on timeout. Killing only the sh leader
-	// leaves a forked child (e.g. `sleep`) holding the inherited output pipe, which keeps
-	// Wait blocked until that child exits — long past the deadline.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		return nil
-	}
+	setupProcessControl(cmd)
 	cmd.WaitDelay = killGraceDelay
 
 	stdout := &cappedBuffer{limit: MaxOutputBytes}
