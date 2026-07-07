@@ -111,10 +111,8 @@ func (s *Server) addTool(t Tool) {
 }
 
 func (s *Server) registerBuiltins() {
-	// TODO: register the structured-editing and context-health tools per
-	// DESIGN.md §3. Missing: calm_edit_file, calm_write_file (structured
-	// editing, dual-mode capture + file_touched event per AD04);
-	// calm_report_outcome (context health, calls /v1/feedback).
+	// TODO: register the context-health tool per DESIGN.md §3:
+	// calm_report_outcome (calls /v1/feedback).
 	s.addToolIfAbsent(s.newRunCommandTool())
 	s.addToolIfAbsent(s.newSearchTool())
 	s.addToolIfAbsent(s.newReadFileTool())
@@ -122,6 +120,8 @@ func (s *Server) registerBuiltins() {
 	s.addToolIfAbsent(s.newGrepTool())
 	s.addToolIfAbsent(s.newGitStatusTool())
 	s.addToolIfAbsent(s.newGitDiffTool())
+	s.addToolIfAbsent(s.newEditFileTool())
+	s.addToolIfAbsent(s.newWriteFileTool())
 }
 
 func (s *Server) addToolIfAbsent(t Tool) {

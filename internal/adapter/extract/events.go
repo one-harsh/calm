@@ -16,14 +16,7 @@ const (
 	EventToolInvocation = "tool_invocation"
 	EventErrorObserved  = "error_observed"
 	EventGitOperation   = "git_operation"
-	// TODO: add file_touched event type + payload (path, operation
-	// edit/write/create, unified diff sanitized per LABELING.md §7
-	// event-metadata discipline, invocation_id, optional latest_source /
-	// history_source cross-links) per LABELING.md §5. Emitted by
-	// calm_edit_file / calm_write_file when those structured editing tools
-	// land per DESIGN.md AD04. Today there are no edit/write tools in the
-	// surface, so the event has nothing to observe — but the deferred-by-tool
-	// gap is the design's own framing, not an open question.
+	EventFileTouched    = "file_touched"
 )
 
 // Event types and priorities mirror the HLD's example taxonomy — changing them is
@@ -32,6 +25,7 @@ const (
 	priorityToolInvocation = 3
 	priorityErrorObserved  = 2
 	priorityGitOperation   = 2
+	priorityFileTouched    = 1
 )
 
 const (
@@ -45,9 +39,28 @@ const (
 	keySource        = "source"
 	keyTraceSnippet  = "trace_snippet"
 	keySubcommand    = "subcommand"
+	keyPath          = "path"
+	keyOperation     = "operation"
+	keyDiff          = "diff"
+	keyDiffTruncated = "diff_truncated"
+)
+
+// FileOperation is the file_touched operation enum per LABELING.md §5.
+type FileOperation string
+
+const (
+	OperationEdit   FileOperation = "edit"
+	OperationWrite  FileOperation = "write"
+	OperationCreate FileOperation = "create"
 )
 
 const maxTraceSnippet = 512
+
+// maxDiffBytes bounds the file_touched diff payload. Larger than
+// maxTraceSnippet because the diff IS the payload's point — 512 would gut
+// most multi-hunk edits, while 2KiB keeps typical edits whole and bounds a
+// full-file rewrite.
+const maxDiffBytes = 2048
 
 // commandSummary is program + subcommand only — never the raw arg string, so an
 // argument carrying a secret is never persisted.
@@ -80,6 +93,25 @@ func traceSnippet(stderr string) string {
 		s = strings.ToValidUTF8(s[len(s)-maxTraceSnippet:], "")
 	}
 	return strings.TrimSpace(s)
+}
+
+// sanitizeDiff applies LABELING.md §7 event-metadata discipline to a unified
+// diff: redact before truncating (same reasoning as traceSnippet), strip
+// control bytes / invalid UTF-8, then HEAD-truncate at maxDiffBytes — the
+// opposite of traceSnippet's tail-keep, because a diff's signal lives at the
+// head (file header + first hunks) while stderr's lives at the tail.
+func sanitizeDiff(diff string) (string, bool) {
+	s := strings.TrimSpace(diff)
+	if s == "" {
+		return "", false
+	}
+	s = redactSecrets(sanitizeText(s))
+	truncated := false
+	if len(s) > maxDiffBytes {
+		s = strings.ToValidUTF8(s[:maxDiffBytes], "")
+		truncated = true
+	}
+	return strings.TrimSpace(s), truncated
 }
 
 func sanitizeText(s string) string {

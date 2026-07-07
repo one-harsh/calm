@@ -181,8 +181,8 @@ normalization happens *before* the grammar is built:
   structured tool's operand escapes the workspace or globs, its coexist label uses
   the shell-domain program equivalent (`calm:v1:shell:cat#<seq>` for
   `calm_read_file`, `ls` for `calm_list_dir`, `grep` for `calm_grep`, `git` for
-  the git tools) — typed and shell fallbacks share buckets, and tool names never
-  enter the label grammar.
+  the git tools, `sed` for `calm_edit_file`, `tee` for `calm_write_file`) — typed
+  and shell fallbacks share buckets, and tool names never enter the label grammar.
 - **Whitespace** is collapsed by tokenization.
 - **All operands** form the identity — `cat a b` → `calm:v1:file:read:a:b`, never just
   `read:a` — so a multi-operand command can't alias onto a single-operand label. If any

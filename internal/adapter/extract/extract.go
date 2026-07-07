@@ -84,6 +84,14 @@ type eventFacts struct {
 	invocationID   int64
 	errMessage     string
 	traceSnippet   string
+	fileTouched    *fileTouchedFacts
+}
+
+type fileTouchedFacts struct {
+	path          string // workspace-relative; agent-supplied form on escape fallback
+	operation     FileOperation
+	diff          string // sanitized unified diff; "" when the change is empty
+	diffTruncated bool
 }
 
 // DerivePlan errors only on a blank (untranslatable) command — the handler's cue to
@@ -150,14 +158,6 @@ func coexistPlan(id labelID, inv Invocation, facts eventFacts) Plan {
 
 // Cross-links are set only for outcomes that persisted, so an event never points at a
 // source that was never written.
-//
-// TODO: emit file_touched events when the invocation came from a structured
-// editing tool (calm_edit_file / calm_write_file) per DESIGN.md AD04 +
-// LABELING.md §5. The Plan currently has no notion of "this came from an edit
-// tool" — Invocation needs to carry the operation kind (edit / write / create)
-// and the diff payload, and this function needs a branch for the
-// file_touched event alongside tool_invocation. Today no edit/write tools
-// exist in the surface, so the branch has nothing to fire on.
 func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 	persisted := make(map[string]bool, len(outcomes))
 	for _, o := range outcomes {
@@ -166,7 +166,7 @@ func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 		}
 	}
 	f := p.base
-	events := make([]calm.EventInput, 0, 3)
+	events := make([]calm.EventInput, 0, 4)
 
 	inv := map[string]any{
 		keyToolName:     f.toolName,
@@ -215,6 +215,31 @@ func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 			Type:     EventGitOperation,
 			Priority: priorityGitOperation,
 			Data:     gd,
+		})
+	}
+
+	if f.fileTouched != nil {
+		fd := map[string]any{
+			keyPath:         f.fileTouched.path,
+			keyOperation:    string(f.fileTouched.operation),
+			keyInvocationID: f.invocationID,
+		}
+		if f.fileTouched.diff != "" {
+			fd[keyDiff] = f.fileTouched.diff
+		}
+		if f.fileTouched.diffTruncated {
+			fd[keyDiffTruncated] = true
+		}
+		if p.LatestSource != "" && persisted[p.LatestSource] {
+			fd[keyLatestSource] = p.LatestSource
+		}
+		if p.HistorySource != "" && persisted[p.HistorySource] {
+			fd[keyHistorySource] = p.HistorySource
+		}
+		events = append(events, calm.EventInput{
+			Type:     EventFileTouched,
+			Priority: priorityFileTouched,
+			Data:     fd,
 		})
 	}
 

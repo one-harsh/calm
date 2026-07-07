@@ -450,15 +450,16 @@ func TestToolsList_ReadOnlyAnnotations(t *testing.T) {
 		"calm_search": true, "calm_read_file": true, "calm_list_dir": true,
 		"calm_grep": true, "calm_git_status": true, "calm_git_diff": true,
 	}
+	mutating := map[string]bool{"calm_run_command": true, "calm_edit_file": true, "calm_write_file": true}
 	for _, tool := range list.Tools {
 		switch {
 		case readOnly[tool.Name]:
 			if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 				t.Errorf("%s missing readOnlyHint annotation", tool.Name)
 			}
-		case tool.Name == "calm_run_command":
+		case mutating[tool.Name]:
 			if tool.Annotations != nil {
-				t.Errorf("calm_run_command must not carry annotations; got %+v", tool.Annotations)
+				t.Errorf("%s must not carry annotations; got %+v", tool.Name, tool.Annotations)
 			}
 		}
 	}

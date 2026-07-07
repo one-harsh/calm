@@ -217,6 +217,7 @@ func TestToolsListAndCall(t *testing.T) {
 	want := []string{
 		"calm_run_command", "calm_search",
 		"calm_read_file", "calm_list_dir", "calm_grep", "calm_git_status", "calm_git_diff",
+		"calm_edit_file", "calm_write_file",
 	}
 	if len(list.Tools) != len(want) {
 		t.Fatalf("tools = %+v; want %v", list.Tools, want)
