@@ -284,6 +284,8 @@ func TestRunCommand_StderrPresent_IngestedAlongsideStdout(t *testing.T) {
 // mean the agent has no diagnostic from a failing build/test/compile.
 func TestRunCommand_StderrPresent_CalmDownVisibleIncludesBoth(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "calm-adapter").
+		Return(false, errors.New("dial tcp: connection refused")).Once()
 	h := newHarness(t, m)
 
 	res := callRunCommand(t, h, 1, map[string]any{"command": "sh -c 'echo stdoutline; echo stderrline >&2'"})
@@ -298,19 +300,85 @@ func TestRunCommand_StderrPresent_CalmDownVisibleIncludesBoth(t *testing.T) {
 	}
 }
 
-func TestRunCommand_CalmDown_UnreachablePhrasingThenRaw(t *testing.T) {
-	// No initialize → no session token → degraded mode. Zero mock expectations,
-	// so any CALM call would fail the test.
+// A process with no CALM session lazily attempts establishment on the first
+// capture call (DESIGN.md §5): registration runs first and a registration
+// failure defers the create entirely (no doomed round-trip, no 400 misread
+// as a credential verdict — the strict mock proves CreateSession never
+// fires). The throttle keeps the next call from re-paying the timeout.
+func TestRunCommand_CalmDown_LazyEstablishFailsThenThrottled(t *testing.T) {
 	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "calm-adapter").
+		Return(false, errors.New("dial tcp: connection refused")).Once()
 	h := newHarness(t, m)
 
 	res := callRunCommand(t, h, 1, map[string]any{"command": "echo hello"})
 	if res.IsError {
 		t.Fatalf("CALM-down must not be an error result: %+v", res)
 	}
-	want := obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable) + "\n\nhello\n"
-	if got := resultText(t, res); got != want {
-		t.Errorf("text = %q; want calm_unreachable phrasing prefix then raw: %q", got, want)
+	text := resultText(t, res)
+	phrase := obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable)
+	if !strings.HasPrefix(text, phrase) || !strings.Contains(text, "hello") {
+		t.Errorf("text = %q; want calm_unreachable phrasing then raw output", text)
+	}
+
+	// Inside the throttle window: no second create (the mock's Once enforces
+	// it), and no detail block because no attempt was made.
+	res = callRunCommand(t, h, 2, map[string]any{"command": "echo again"})
+	if want := phrase + "\n\nagain\n"; resultText(t, res) != want {
+		t.Errorf("throttled text = %q; want %q", resultText(t, res), want)
+	}
+}
+
+// The establishing call is captured normally — the visible transition into
+// capture-active state that DESIGN.md §5 promises.
+func TestRunCommand_LazyEstablish_CapturesNormally(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "calm-adapter").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "calm-adapter", 60, mock.Anything).
+		Return("tok-lazy", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-lazy").Return(nil).Once()
+	m.EXPECT().Ingest(mock.Anything, "tok-lazy", mock.Anything).Return(calm.IngestSummary{
+		Source:          "calm:v1:shell:echo#1",
+		SectionsIndexed: 1,
+		SectionsTotal:   1,
+	}, nil).Once()
+	eventsDone := writeEventsSignal(m, nil)
+
+	h := newHarness(t, m)
+
+	cmd, _ := bigEcho("lazy")
+	res := callRunCommand(t, h, 1, map[string]any{"command": cmd})
+	if res.IsError {
+		t.Fatalf("lazy-established call errored: %+v", res)
+	}
+	if got := resultText(t, res); !strings.Contains(got, "calm:v1:shell:echo#1") ||
+		strings.Contains(got, "CALM degraded") {
+		t.Errorf("establishing call must capture normally; got:\n%s", got)
+	}
+	awaitSignal(t, eventsDone)
+}
+
+// A 4xx on the lazy create is the same credential verdict as on the recovery
+// create: auth_failed latches and subsequent calls make zero CALM traffic.
+func TestRunCommand_LazyCreate4xx_AuthFailedSticky(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "calm-adapter").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "calm-adapter", 60, mock.Anything).
+		Return("", &calm.StatusError{Op: "create session", Code: 403, Status: "403 Forbidden"}).Once()
+	h := newHarness(t, m)
+
+	res := callRunCommand(t, h, 1, map[string]any{"command": "echo hello"})
+	if res.IsError {
+		t.Fatalf("auth failure must not be an error result on a capture tool: %+v", res)
+	}
+	phrase := obs.DegradedPhrase(obs.DegradedReasonAuthFailed)
+	if got := resultText(t, res); !strings.HasPrefix(got, phrase) {
+		t.Errorf("text = %q; want auth_failed phrasing", got)
+	}
+
+	res = callRunCommand(t, h, 2, map[string]any{"command": "echo again"})
+	if want := phrase + "\n\nagain\n"; resultText(t, res) != want {
+		t.Errorf("latched text = %q; want %q with zero CALM traffic", resultText(t, res), want)
 	}
 }
 

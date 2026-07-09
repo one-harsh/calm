@@ -6,10 +6,25 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/one-harsh/calm/internal/adapter/config"
 )
+
+// clearAdapterEnv isolates the loader's env overlay from the developer's
+// shell: MCP hosts export CALM_ADAPTER_* for the registered adapter, and an
+// inherited value contaminates default/override assertions. Viper treats an
+// empty env value as unset (AllowEmptyEnv is off), so blanking suffices, and
+// t.Setenv restores the shell value afterward.
+func clearAdapterEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "CALM_ADAPTER_") {
+			t.Setenv(k, "")
+		}
+	}
+}
 
 func writeYAML(t *testing.T, body string) string {
 	t.Helper()
@@ -21,6 +36,7 @@ func writeYAML(t *testing.T, body string) string {
 }
 
 func TestLoad_DefaultsWhenNoFile(t *testing.T) {
+	clearAdapterEnv(t)
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -34,6 +50,7 @@ func TestLoad_DefaultsWhenNoFile(t *testing.T) {
 }
 
 func TestLoad_FileOverrides(t *testing.T) {
+	clearAdapterEnv(t)
 	p := writeYAML(t, `
 calm:
   url: http://calm:9090
@@ -60,6 +77,7 @@ log:
 }
 
 func TestLoad_EnvOverride(t *testing.T) {
+	clearAdapterEnv(t)
 	t.Setenv("CALM_ADAPTER_CALM_URL", "http://env-override:1234")
 	cfg, err := config.Load("")
 	if err != nil {
@@ -71,6 +89,7 @@ func TestLoad_EnvOverride(t *testing.T) {
 }
 
 func TestLoad_UnknownKeyRejected(t *testing.T) {
+	clearAdapterEnv(t)
 	p := writeYAML(t, "bogus_key: 1\n")
 	if _, err := config.Load(p); err == nil {
 		t.Fatal("Load: want error for unknown key, got nil")
@@ -78,6 +97,7 @@ func TestLoad_UnknownKeyRejected(t *testing.T) {
 }
 
 func TestLoad_ValidationErrors(t *testing.T) {
+	clearAdapterEnv(t)
 	urlEmpty := writeYAML(t, "calm:\n  url: \"\"\n")
 	if _, err := config.Load(urlEmpty); err == nil {
 		t.Error("Load: want error for empty calm.url")
@@ -89,6 +109,7 @@ func TestLoad_ValidationErrors(t *testing.T) {
 }
 
 func TestLoad_ReadError(t *testing.T) {
+	clearAdapterEnv(t)
 	if _, err := config.Load(filepath.Join(t.TempDir(), "does-not-exist.yaml")); err == nil {
 		t.Fatal("Load: want error for missing file path")
 	}
@@ -97,6 +118,7 @@ func TestLoad_ReadError(t *testing.T) {
 // The workspace surface is discovery-driven (DESIGN.md §5): any workspace
 // key in config is an unknown key and fails loudly.
 func TestLoad_WorkspaceKeysRejected(t *testing.T) {
+	clearAdapterEnv(t)
 	oldKey := writeYAML(t, "calm:\n  workspace_root: /repos/alpha\n")
 	if _, err := config.Load(oldKey); err == nil {
 		t.Error("Load: want error for retired workspace_root key")

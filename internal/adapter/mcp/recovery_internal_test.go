@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 
@@ -30,6 +31,64 @@ func TestRecoverSession_AlreadyReplaced_NoSecondCreate(t *testing.T) {
 	sig := s.recoverSession(context.Background(), "stale-tok")
 	if sig.Reason != obs.DegradedReasonSessionLost {
 		t.Errorf("reason = %q; want session_lost", sig.Reason)
+	}
+}
+
+// Establishment attempts are throttled: inside the window ensureSession
+// degrades without a create; past it, the next capture re-attempts.
+// Registration is memoized on first success (the mock's Once enforces it
+// across all attempts). White-box because the throttle window is backdated
+// directly.
+func TestEnsureSession_ThrottledThenRetries(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "calm-adapter").Return(true, nil).Once()
+	calls := 0
+	m.EXPECT().CreateSession(mock.Anything, "calm-adapter", 60, mock.Anything).RunAndReturn(
+		func(context.Context, string, int, string) (string, error) {
+			calls++
+			if calls == 1 {
+				return "", errors.New("dial tcp: connection refused")
+			}
+			return "tok-lazy", nil
+		},
+	).Times(2)
+	s := NewServer(Config{Calm: m, Logger: logging.Nop(), SessionTTLMinutes: 60, DefaultClient: "calm-adapter"})
+
+	if _, sig := s.ensureSession(context.Background()); sig == nil || sig.Reason != obs.DegradedReasonCalmUnreachable {
+		t.Fatalf("failed attempt signal = %+v; want calm_unreachable", sig)
+	}
+	if _, sig := s.ensureSession(context.Background()); sig == nil || sig.Reason != obs.DegradedReasonCalmUnreachable {
+		t.Fatalf("throttled signal = %+v; want calm_unreachable without a create", sig)
+	}
+	if calls != 1 {
+		t.Fatalf("creates inside the window = %d; want 1", calls)
+	}
+
+	s.mu.Lock()
+	s.lastEstablishAttempt = time.Now().Add(-establishRetryInterval - time.Second)
+	s.mu.Unlock()
+	tok, sig := s.ensureSession(context.Background())
+	if sig != nil || tok != "tok-lazy" {
+		t.Fatalf("post-interval attempt = %q, %+v; want established token", tok, sig)
+	}
+	if _, sig := s.ensureSession(context.Background()); sig != nil {
+		t.Errorf("established session must return without a create; got %+v", sig)
+	}
+}
+
+// A 401 on the lazy registration is a credential verdict: auth_failed
+// latches and no create fires (strict mock proves it).
+func TestEnsureSession_RegisterAuthRejected_Latches(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "calm-adapter").
+		Return(false, &calm.StatusError{Op: "register client", Code: 401, Status: "401 Unauthorized"}).Once()
+	s := NewServer(Config{Calm: m, Logger: logging.Nop(), SessionTTLMinutes: 60, DefaultClient: "calm-adapter"})
+
+	if _, sig := s.ensureSession(context.Background()); sig == nil || sig.Reason != obs.DegradedReasonAuthFailed {
+		t.Fatalf("signal = %+v; want auth_failed", sig)
+	}
+	if _, sig := s.ensureSession(context.Background()); sig == nil || sig.Reason != obs.DegradedReasonAuthFailed {
+		t.Errorf("latched signal = %+v; want auth_failed with zero CALM traffic", sig)
 	}
 }
 

@@ -44,16 +44,18 @@ func (s *Server) capturePipeline(ctx context.Context, spec captureSpec) (res Too
 		}
 	}()
 
-	token, authFailed := s.sessionState()
-	if authFailed {
+	// Capture is the only establishment trigger by design: a process that
+	// never had a session has no captures for search to find, so search's
+	// calm_unreachable error stays more honest than a fresh session's
+	// "no matches".
+	token, sig := s.ensureSession(ctx)
+	if sig != nil {
 		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
-		return TextResult(spec.visible, false), &DegradedSignal{Reason: obs.DegradedReasonAuthFailed}
-	}
-	if token == "" {
-		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
-		s.log.WithContext(ctx).Warn("CALM unavailable; returning raw output",
-			obs.DegradedReasonFieldCalmUnreachable)
-		return TextResult(spec.visible, false), &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable}
+		if sig.Reason == obs.DegradedReasonCalmUnreachable {
+			s.log.WithContext(ctx).Warn("CALM unavailable; returning raw output",
+				obs.DegradedReasonFieldCalmUnreachable)
+		}
+		return TextResult(spec.visible, false), sig
 	}
 
 	plan, derr := spec.plan()

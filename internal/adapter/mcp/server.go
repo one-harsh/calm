@@ -75,6 +75,13 @@ type Server struct {
 	// call. Un-stick = adapter restart.
 	authFailed  bool
 	recoverySeq int
+	// lastEstablishAttempt throttles ensureSession's lazy create so a down
+	// CALM taxes at most one tool call per establishRetryInterval.
+	lastEstablishAttempt time.Time
+	// clientRegistered records a successful RegisterClient; ensureSession
+	// re-attempts registration until it lands — a create for an unregistered
+	// client is a guaranteed 400, which must not read as a credential verdict.
+	clientRegistered bool
 
 	// registry tracks per-invocation staleness tokens for source labels per
 	// LABELING.md §2. Its own internal mutex covers reads/writes; there's no
@@ -260,6 +267,9 @@ func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (
 			s.log.WithContext(ctx).Warn("client registration failed; continuing",
 				logging.StringField("client", client), logging.ErrorField(rerr))
 		} else {
+			s.mu.Lock()
+			s.clientRegistered = true
+			s.mu.Unlock()
 			s.log.WithContext(ctx).Debug("client registered",
 				logging.StringField("client", client), logging.BoolField("created", created))
 		}
@@ -276,6 +286,14 @@ func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (
 				s.log.WithContext(ctx).Warn("CALM rejected credentials; CALM disabled for this conversation",
 					obs.DegradedReasonFieldAuthFailed, logging.StringField("client", client), logging.ErrorField(err))
 			} else {
+				// The client identity is fixed at initialize even when the create
+				// fails — ensureSession's lazy create keeps the same attribution.
+				// The throttle stamp keeps the first tool call from immediately
+				// re-paying the create timeout.
+				s.mu.Lock()
+				s.sessionClient = client
+				s.lastEstablishAttempt = time.Now()
+				s.mu.Unlock()
 				s.log.WithContext(ctx).Warn("create session failed; continuing without CALM",
 					logging.StringField("client", client), logging.ErrorField(err))
 			}
