@@ -64,14 +64,15 @@ func newHarnessWithLogger(t *testing.T, log *logging.Logger, client calm.Client,
 	return newHarnessCore(t, log, client, "", tools...)
 }
 
-// newWorkspaceHarness anchors the adapter in a real workspace root so shell
+// newWorkspaceHarness launches the adapter in a real directory so shell
 // commands resolve fixture files and path-based source labels derive normally.
-func newWorkspaceHarness(t *testing.T, client calm.Client, workspaceRoot string) *harness {
+// The dir's project anchor (or the dir itself) becomes the primary workspace.
+func newWorkspaceHarness(t *testing.T, client calm.Client, launchDir string) *harness {
 	t.Helper()
-	return newHarnessCore(t, discardLogger(t), client, workspaceRoot)
+	return newHarnessCore(t, discardLogger(t), client, launchDir)
 }
 
-func newHarnessCore(t *testing.T, log *logging.Logger, client calm.Client, workspaceRoot string, tools ...mcp.Tool) *harness {
+func newHarnessCore(t *testing.T, log *logging.Logger, client calm.Client, launchDir string, tools ...mcp.Tool) *harness {
 	t.Helper()
 	srv := mcp.NewServer(mcp.Config{
 		Calm:                  client,
@@ -81,7 +82,7 @@ func newHarnessCore(t *testing.T, log *logging.Logger, client calm.Client, works
 		DefaultClient:         "calm-adapter",
 		SessionTTLMinutes:     60,
 		Tools:                 tools,
-		WorkspaceRoot:         workspaceRoot,
+		LaunchDir:             launchDir,
 		SessionIdempotencyKey: "idem-base",
 	})
 	inR, inW := io.Pipe()

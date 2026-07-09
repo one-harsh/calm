@@ -77,13 +77,9 @@ func run() error {
 		return fmt.Errorf("generate idempotency key: %w", err)
 	}
 
-	workspaceRoot := cfg.Calm.WorkspaceRoot
-	if workspaceRoot == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("determine workspace root: %w", err)
-		}
-		workspaceRoot = wd
+	launchDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("determine launch directory: %w", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -92,7 +88,7 @@ func run() error {
 		ctx,
 		logging.StringField("calm_url", cfg.Calm.URL),
 		logging.StringField("client", cfg.Calm.Client),
-		logging.StringField("workspace_root", workspaceRoot),
+		logging.StringField("launch_dir", launchDir),
 	)
 
 	var apiKey string
@@ -112,7 +108,7 @@ func run() error {
 		ServerVersion:         serverVersion,
 		DefaultClient:         cfg.Calm.Client,
 		SessionTTLMinutes:     cfg.Calm.SessionTTLMinutes,
-		WorkspaceRoot:         workspaceRoot,
+		LaunchDir:             launchDir,
 		SessionIdempotencyKey: idempotencyKey,
 	})
 

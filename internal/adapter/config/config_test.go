@@ -93,3 +93,16 @@ func TestLoad_ReadError(t *testing.T) {
 		t.Fatal("Load: want error for missing file path")
 	}
 }
+
+// The workspace surface is discovery-driven (DESIGN.md §5): any workspace
+// key in config is an unknown key and fails loudly.
+func TestLoad_WorkspaceKeysRejected(t *testing.T) {
+	oldKey := writeYAML(t, "calm:\n  workspace_root: /repos/alpha\n")
+	if _, err := config.Load(oldKey); err == nil {
+		t.Error("Load: want error for retired workspace_root key")
+	}
+	listKey := writeYAML(t, "calm:\n  workspaces:\n    - root: /repos/alpha\n")
+	if _, err := config.Load(listKey); err == nil {
+		t.Error("Load: want error for retired workspaces key")
+	}
+}

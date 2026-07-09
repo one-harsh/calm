@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/one-harsh/calm/internal/adapter/exec"
@@ -24,14 +23,16 @@ const readFileDescription = "Read a file from the workspace, capturing its conte
 	"compact summary plus a source label ending in @<token>; fetch the captured content later with " +
 	"calm_search source=<label exactly as returned> rather than re-reading. Optional start_line/end_line " +
 	"limit only what is shown — the capture is always the full file. The label refers to the latest read " +
-	"of this file. Never append #<n> after the @<token>."
+	"of this file. Never append #<n> after the @<token>. In multi-workspace sessions, set " +
+	"workspace=<id> to target a non-default workspace."
 
 const readFileSchema = `{
   "type": "object",
   "properties": {
     "path": {"type": "string", "description": "File path, workspace-relative (absolute paths inside the workspace also resolve)."},
     "start_line": {"type": "integer", "description": "1-based first line to show; limits presentation only."},
-    "end_line": {"type": "integer", "description": "1-based last line to show (inclusive); limits presentation only."}
+    "end_line": {"type": "integer", "description": "1-based last line to show (inclusive); limits presentation only."},
+    "workspace": {"type": "string", "description": "Workspace ID to target; defaults to the primary workspace."}
   },
   "required": ["path"],
   "additionalProperties": false
@@ -41,6 +42,7 @@ type readFileArgs struct {
 	Path      string `json:"path"`
 	StartLine int    `json:"start_line"`
 	EndLine   int    `json:"end_line"`
+	Workspace string `json:"workspace"`
 }
 
 func (s *Server) newReadFileTool() Tool {
@@ -68,7 +70,12 @@ func (s *Server) readFile(ctx context.Context, args json.RawMessage) (ToolResult
 		return ToolResult{}, &ArgError{Detail: fmt.Sprintf("end_line %d is before start_line %d", a.EndLine, a.StartLine)}
 	}
 
-	full, truncated, rerr := readCapped(s.resolveWorkspacePath(a.Path))
+	b, werr := s.workspaceForPath(a.Workspace, a.Path)
+	if werr != nil {
+		return ToolResult{}, werr
+	}
+
+	full, truncated, rerr := readCapped(b.resolve(a.Path))
 	if rerr != nil {
 		return TextResult("read failed: "+rerr.Error(), true), nil
 	}
@@ -85,17 +92,9 @@ func (s *Server) readFile(ctx context.Context, args json.RawMessage) (ToolResult
 		visible: visible,
 		res:     r,
 		plan: func() (extract.Plan, error) {
-			inv := extract.Invocation{Seq: s.seq.Add(1), Cwd: s.workspaceRoot, WorkspaceRoot: s.workspaceRoot}
-			return extract.PlanFileRead(inv, execResultOf(r), a.Path), nil
+			return extract.PlanFileRead(s.invocation(b, "", b.Root), execResultOf(r), a.Path), nil
 		},
 	})
-}
-
-func (s *Server) resolveWorkspacePath(path string) string {
-	if filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(s.workspaceRoot, path)
 }
 
 // readCapped reads at most exec.MaxOutputBytes — the shared cap keeps native

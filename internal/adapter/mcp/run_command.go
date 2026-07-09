@@ -34,13 +34,15 @@ const runCommandDescription = "Run a shell command locally, capturing its output
 	"ending in @<token>; fetch the full captured output later with calm_search " +
 	"source=<label exactly as returned> rather than re-running. The label refers to the latest output " +
 	"for that identity; for one specific past run, drop the @<token> suffix and use <base>#<n>. " +
-	"Never append #<n> after the @<token>."
+	"Never append #<n> after the @<token>. The tool runs from the primary workspace root by default; do " +
+	"not cd in your command — use the cwd parameter to run elsewhere. An absolute cwd inside another " +
+	"project selects that project's workspace for labeling (workspaces are discovered on first touch)."
 
 var runCommandSchema = `{
   "type": "object",
   "properties": {
     "command": {"type": "string", "description": "Shell command to run, executed via ` + exec.ShellInvocation + ` on the local machine."},
-    "cwd": {"type": "string", "description": "Working directory; defaults to the adapter's workspace root."}
+    "cwd": {"type": "string", "description": "Working directory; defaults to the primary workspace root. An absolute cwd inside another project selects that project's workspace for labeling."}
   },
   "required": ["command"],
   "additionalProperties": false
@@ -52,12 +54,6 @@ type runCommandArgs struct {
 }
 
 func (s *Server) newRunCommandTool() Tool {
-	// TODO: tool description should affirmatively state "Tool runs from the
-	// workspace root by default; do not `cd` in your command. Use the `cwd`
-	// parameter to run from a different directory." The cwd default is buried
-	// in the parameter doc; the main description is silent on it. Observed
-	// agents prefix commands with `cd <root> &&` despite the default, leaking
-	// host paths into captured output and wasting tokens.
 	return Tool{
 		Name:        toolNameRunCommand,
 		Description: runCommandDescription,
@@ -75,10 +71,7 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 		return ToolResult{}, &ArgError{Detail: "command is required"}
 	}
 
-	dir := a.Cwd
-	if dir == "" {
-		dir = s.workspaceRoot
-	}
+	wb, dir := s.workspaceForCwd(a.Cwd)
 
 	ectx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
@@ -93,7 +86,7 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (res Tool
 		visible: raw,
 		res:     r,
 		plan: func() (extract.Plan, error) {
-			inv := extract.Invocation{Seq: s.seq.Add(1), Command: a.Command, Cwd: dir, WorkspaceRoot: s.workspaceRoot}
+			inv := s.invocation(wb, a.Command, dir)
 			return extract.DerivePlan(inv, extract.ExecResult{
 				Stdout:   r.Stdout,
 				Stderr:   r.Stderr,

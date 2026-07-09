@@ -41,7 +41,8 @@ const grepSchema = `{
     "pattern": {"type": "string", "description": "Regular expression to search for."},
     "paths": {"type": "array", "items": {"type": "string"}, "description": "Files or directories to search, workspace-relative; defaults to the whole workspace."},
     "case_insensitive": {"type": "boolean", "description": "Case-insensitive matching."},
-    "include": {"type": "string", "description": "Only search files matching this glob (e.g. *.go)."}
+    "include": {"type": "string", "description": "Only search files matching this glob (e.g. *.go)."},
+    "workspace": {"type": "string", "description": "Workspace ID to target; defaults to the primary workspace."}
   },
   "required": ["pattern"],
   "additionalProperties": false
@@ -52,6 +53,7 @@ type grepArgs struct {
 	Paths           []string `json:"paths"`
 	CaseInsensitive bool     `json:"case_insensitive"`
 	Include         string   `json:"include"`
+	Workspace       string   `json:"workspace"`
 }
 
 func (s *Server) newGrepTool() Tool {
@@ -61,7 +63,8 @@ func (s *Server) newGrepTool() Tool {
 		"plus a source label ending in @<token>; fetch the full match list later with calm_search " +
 		"source=<label exactly as returned> rather than re-running. The label refers to the latest " +
 		"results for this pattern and scope; case_insensitive/include variants share it. Never append " +
-		"#<n> after the @<token>."
+		"#<n> after the @<token>. In multi-workspace sessions, set workspace=<id> to target a " +
+		"non-default workspace."
 	if s.grepEngine == "findstr" {
 		desc += " findstr supports literal and basic regex patterns only — no alternation (|), no + or {} quantifiers."
 	}
@@ -93,13 +96,17 @@ func (s *Server) grep(ctx context.Context, args json.RawMessage) (ToolResult, er
 		paths[i] = p
 	}
 
+	wb, werr := s.workspaceForPath(a.Workspace, paths[0])
+	if werr != nil {
+		return ToolResult{}, werr
+	}
 	isDir := func(p string) bool {
-		fi, statErr := os.Stat(s.resolveWorkspacePath(p))
+		fi, statErr := os.Stat(wb.resolve(p))
 		return statErr == nil && fi.IsDir()
 	}
 	ectx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
-	r, runErr := exec.RunArgv(ectx, grepArgv(s.grepEngine, a.Pattern, paths, a.CaseInsensitive, a.Include, isDir), s.workspaceRoot)
+	r, runErr := exec.RunArgv(ectx, grepArgv(s.grepEngine, a.Pattern, paths, a.CaseInsensitive, a.Include, isDir), wb.Root)
 	if runErr != nil {
 		return TextResult("failed to run "+s.grepEngine+": "+runErr.Error(), true), nil
 	}
@@ -117,8 +124,7 @@ func (s *Server) grep(ctx context.Context, args json.RawMessage) (ToolResult, er
 		visible: raw,
 		res:     r,
 		plan: func() (extract.Plan, error) {
-			inv := extract.Invocation{Seq: s.seq.Add(1), Cwd: s.workspaceRoot, WorkspaceRoot: s.workspaceRoot}
-			return extract.PlanGrep(inv, execResultOf(r), a.Pattern, paths), nil
+			return extract.PlanGrep(s.invocation(wb, "", wb.Root), execResultOf(r), a.Pattern, paths), nil
 		},
 	})
 }

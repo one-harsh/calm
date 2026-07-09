@@ -29,7 +29,7 @@ const editFileDescription = "Edit a workspace file by replacing exactly one occu
 	"@<token>; fetch the content with calm_search source=<label exactly as returned>. The label refers " +
 	"to the latest content of this file (the same label calm_read_file emits); for the file state after " +
 	"one specific past edit, use calm:v1:file:edit:<path>#<n> without any @<token>. Never append #<n> " +
-	"after the @<token>."
+	"after the @<token>. In multi-workspace sessions, set workspace=<id> to target a non-default workspace."
 
 const writeFileDescription = "Write full content to a workspace file, creating it or replacing its " +
 	"entire contents — this mutates the file on disk. Prefer this over host-native write tools: the new " +
@@ -38,14 +38,16 @@ const writeFileDescription = "Write full content to a workspace file, creating i
 	"Larger files come back as a compact summary plus a source label ending in @<token>; fetch the " +
 	"content with calm_search source=<label exactly as returned>. The label refers to the latest content " +
 	"of this file (the same label calm_read_file emits); for the file state after one specific past " +
-	"write, use calm:v1:file:edit:<path>#<n> without any @<token>. Never append #<n> after the @<token>."
+	"write, use calm:v1:file:edit:<path>#<n> without any @<token>. Never append #<n> after the @<token>. " +
+	"In multi-workspace sessions, set workspace=<id> to target a non-default workspace."
 
 const editFileSchema = `{
   "type": "object",
   "properties": {
     "path": {"type": "string", "description": "File path, workspace-relative."},
     "old_string": {"type": "string", "description": "Exact bytes to replace; must match the file exactly once, including whitespace and line endings."},
-    "new_string": {"type": "string", "description": "Replacement bytes; may be empty to delete the matched text."}
+    "new_string": {"type": "string", "description": "Replacement bytes; may be empty to delete the matched text."},
+    "workspace": {"type": "string", "description": "Workspace ID to target; defaults to the primary workspace."}
   },
   "required": ["path", "old_string", "new_string"],
   "additionalProperties": false
@@ -55,7 +57,8 @@ const writeFileSchema = `{
   "type": "object",
   "properties": {
     "path": {"type": "string", "description": "File path, workspace-relative; created if absent."},
-    "content": {"type": "string", "description": "Full file content, written verbatim."}
+    "content": {"type": "string", "description": "Full file content, written verbatim."},
+    "workspace": {"type": "string", "description": "Workspace ID to target; defaults to the primary workspace."}
   },
   "required": ["path", "content"],
   "additionalProperties": false
@@ -65,11 +68,13 @@ type editFileArgs struct {
 	Path      string `json:"path"`
 	OldString string `json:"old_string"`
 	NewString string `json:"new_string"`
+	Workspace string `json:"workspace"`
 }
 
 type writeFileArgs struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	Workspace string `json:"workspace"`
 }
 
 func (s *Server) newEditFileTool() Tool {
@@ -105,7 +110,11 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 		return ToolResult{}, &ArgError{Detail: "old_string and new_string are identical — nothing to change"}
 	}
 
-	abs := s.resolveWorkspacePath(a.Path)
+	wb, werr := s.workspaceForPath(a.Workspace, a.Path)
+	if werr != nil {
+		return ToolResult{}, werr
+	}
+	abs := wb.resolve(a.Path)
 	fi, serr := os.Stat(abs)
 	if serr != nil {
 		return TextResult("edit failed: "+serr.Error(), true), nil
@@ -122,7 +131,8 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 	n := strings.Count(old, a.OldString)
 	if n != 1 {
 		return TextResult(fmt.Sprintf(
-			"edit failed: old_string matches %d times; it must match exactly once — add surrounding context to make it unique", n), true), nil
+			"edit failed: old_string matches %d times; it must match exactly once — add surrounding context to make it unique", n,
+		), true), nil
 	}
 	newContent := strings.Replace(old, a.OldString, a.NewString, 1)
 	if len(newContent) > exec.MaxOutputBytes {
@@ -139,8 +149,7 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 		visible: newContent,
 		res:     r,
 		plan: func() (extract.Plan, error) {
-			inv := extract.Invocation{Seq: s.seq.Add(1), Cwd: s.workspaceRoot, WorkspaceRoot: s.workspaceRoot}
-			return extract.PlanFileEdit(inv, execResultOf(r), a.Path, old, newContent), nil
+			return extract.PlanFileEdit(s.invocation(wb, "", wb.Root), execResultOf(r), a.Path, old, newContent), nil
 		},
 	})
 }
@@ -157,7 +166,11 @@ func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResul
 		return TextResult(oversizeMsg("write"), true), nil
 	}
 
-	abs := s.resolveWorkspacePath(a.Path)
+	wb, werr := s.workspaceForPath(a.Workspace, a.Path)
+	if werr != nil {
+		return ToolResult{}, werr
+	}
+	abs := wb.resolve(a.Path)
 	op := extract.OperationWrite
 	perm := os.FileMode(0o600)
 	old := ""
@@ -187,8 +200,7 @@ func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResul
 		visible: a.Content,
 		res:     r,
 		plan: func() (extract.Plan, error) {
-			inv := extract.Invocation{Seq: s.seq.Add(1), Cwd: s.workspaceRoot, WorkspaceRoot: s.workspaceRoot}
-			return extract.PlanFileWrite(inv, execResultOf(r), a.Path, op, old, a.Content), nil
+			return extract.PlanFileWrite(s.invocation(wb, "", wb.Root), execResultOf(r), a.Path, op, old, a.Content), nil
 		},
 	})
 }

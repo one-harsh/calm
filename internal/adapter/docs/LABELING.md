@@ -44,7 +44,7 @@ calm:v1:<domain>:<verb>:<context…>:<identity>[#<seq>][@<token>]
 - `domain` ∈ `{file, vcs, search, shell}`.
 - `verb` — the operation (`read`, `list`, `git`, `grep`, `find`).
 - `context…` — zero or more scoping segments (a git subcommand, a grep pattern, and
-  — only when a session spans more than one workspace — a `WorkspaceID`).
+  — on captures anchored to a non-primary workspace — a `WorkspaceID`).
 - `identity` — the semantic identity (a workspace-relative path, a ref range).
 - `#<seq>` — the **invocation id** (a session-local sequence allocated at
   invocation start). Present only on history/coexist sources. It is deliberately
@@ -114,13 +114,31 @@ Both `calm_edit_file` and `calm_write_file` use the same history verb
 this file"; the operation type (edit / write / create) is carried in the
 accompanying `file_touched` event payload, not in the label.
 
-The `WorkspaceID` context segment is omitted in the common one-workspace-per-session
-case shown above. When a session binds multiple workspaces, the segment is
-implementer-chosen at workspace registration (basename of root, operator-configured
-name, or short hash of the root path) and stays stable for the workspace's lifetime
-within the session. Collision-free identifiers across the registered set are
-required; the adapter MUST refuse to bind two workspaces with conflicting IDs at
-startup.
+The `WorkspaceID` context segment appears only on captures anchored to a
+**non-primary** workspace; the primary workspace (the launch directory's anchor)
+always labels bare, so the segment's presence never depends on how many
+workspaces the session has discovered — late discovery cannot change the
+meaning of an existing label.
+
+Workspaces are discovered lazily from **project anchors** (see `DESIGN.md`'s
+workspace-binding section): the deepest VCS-marker ancestor (`.git` directory
+*or file* — submodules and worktrees are distinct workspaces), ignoring a
+marker at the user home directory or filesystem root; when no VCS ancestor
+exists — dependency stores such as module caches — the deepest ancestor
+carrying a recognized project manifest (`go.mod`, `package.json`,
+`pyproject.toml`, `Cargo.toml`, …; the manifest set is implementer policy,
+curated and extensible). VCS-first ordering is deliberate: in-repo manifests
+(test fixtures, `examples/`) must not fragment a repository's identity, and a
+manifest created mid-session must not re-anchor a subtree.
+
+The `WorkspaceID` is the anchor directory's basename, percent-encoded per the
+segment rules (a module-cache `name@version` basename encodes its `@` as
+`%40`, so a raw `@` never appears in a base label and the fused-token parse is
+unaffected). IDs are collision-free within the session: the first workspace
+discovered under a basename keeps it; a later workspace with the same basename
+takes `basename-<short root hash>`. Which one gets the bare basename depends
+on discovery order and may differ between sessions — accepted, since sources
+are session-scoped and the ID only needs within-session coherence.
 
 ## 3. Capture policy — three modes
 

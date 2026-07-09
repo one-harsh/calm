@@ -465,9 +465,95 @@ func TestToolsList_ReadOnlyAnnotations(t *testing.T) {
 	}
 }
 
+// Workspaces are discovered at capture time: primary captures label bare, an
+// absolute path into a foreign repo discovers it and stamps its WorkspaceID
+// segment, and run_command's cwd routes the same way — the same relative path
+// disambiguates across roots (LABELING.md §2, DESIGN.md §5).
+func TestMultiWorkspace_LabelsDisambiguate(t *testing.T) {
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	var mu sync.Mutex
+	var sources []string
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).RunAndReturn(
+		func(_ context.Context, _ string, in calm.IngestInput) (calm.IngestSummary, error) {
+			mu.Lock()
+			sources = append(sources, in.Source)
+			mu.Unlock()
+			return calm.IngestSummary{Source: in.Source, SectionsIndexed: 1, SectionsTotal: 1}, nil
+		},
+	).Times(3)
+	var wg sync.WaitGroup
+	wg.Add(3)
+	m.EXPECT().WriteEvents(mock.Anything, mock.Anything, mock.Anything).
+		RunAndReturn(func(context.Context, string, []calm.EventInput) error {
+			wg.Done()
+			return nil
+		}).Times(3)
+
+	base := t.TempDir()
+	repoa := gitRepoMCP(t, base, "repoa")
+	repob := gitRepoMCP(t, base, "repob")
+	writeWorkspaceFileMCP(t, repoa, "foo.py", "alpha content\n")
+	writeWorkspaceFileMCP(t, repob, "foo.py", "beta content\n")
+	h := newWorkspaceHarness(t, m, repoa)
+	initSession(t, h, "claude-code")
+
+	// Relative → primary (bare); absolute foreign path → discovery; run_command
+	// cwd → the discovered binding.
+	if res := callTool(t, h, 2, "calm_read_file", map[string]any{"path": "foo.py"}); res.IsError {
+		t.Fatalf("primary read errored: %+v", res)
+	}
+	if res := callTool(t, h, 3, "calm_read_file", map[string]any{"path": filepath.Join(repob, "foo.py")}); res.IsError {
+		t.Fatalf("repob read errored: %+v", res)
+	}
+	if res := callTool(t, h, 4, "calm_run_command", map[string]any{"command": "cat foo.py", "cwd": repob}); res.IsError {
+		t.Fatalf("cwd-routed run errored: %+v", res)
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{
+		"calm:v1:file:read:foo.py",
+		"calm:v1:file:read:repob:foo.py",
+		"calm:v1:file:read:repob:foo.py",
+	}
+	for i, w := range want {
+		if sources[i] != w {
+			t.Errorf("sources[%d] = %q; want %q", i, sources[i], w)
+		}
+	}
+	if sources[0] == sources[1] {
+		t.Errorf("same relative path did not disambiguate across workspaces")
+	}
+}
+
+func TestMultiWorkspace_UnknownIDArgError(t *testing.T) {
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	h := newWorkspaceHarness(t, m, gitRepoMCP(t, t.TempDir(), "repoa"))
+	initSession(t, h, "claude-code")
+
+	res := callTool(t, h, 2, "calm_list_dir", map[string]any{"workspace": "zzz"})
+	if !res.IsError || !strings.Contains(resultText(t, res), "repoa") {
+		t.Errorf("unknown workspace = %+v; want ArgError listing known IDs", res)
+	}
+}
+
 func writeWorkspaceFileMCP(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+// gitRepoMCP mints a named directory with a .git marker so workspace
+// discovery anchors it (the anchor walk stats markers; no real git needed).
+func gitRepoMCP(t *testing.T, parent, name string) string {
+	t.Helper()
+	dir := filepath.Join(parent, name)
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	return dir
 }

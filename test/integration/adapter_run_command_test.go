@@ -68,7 +68,7 @@ type mcpDriver struct {
 	nextID int
 }
 
-func newMCPDriver(t *testing.T, client calm.Client, workspaceRoot string) *mcpDriver {
+func newMCPDriver(t *testing.T, client calm.Client, launchDir string) *mcpDriver {
 	t.Helper()
 	srv := mcp.NewServer(mcp.Config{
 		Calm:              client,
@@ -76,7 +76,7 @@ func newMCPDriver(t *testing.T, client calm.Client, workspaceRoot string) *mcpDr
 		ServerName:        "calm-adapter",
 		ServerVersion:     "test",
 		SessionTTLMinutes: testDefaultTTLMinutes,
-		WorkspaceRoot:     workspaceRoot,
+		LaunchDir:         launchDir,
 		// Per-test unique: the suite shares one CALM, so a repeated key would
 		// hit the create-dedup window and hand two tests the same session.
 		SessionIdempotencyKey: fmt.Sprintf("adapter-%s-%d", t.Name(), time.Now().UnixNano()),

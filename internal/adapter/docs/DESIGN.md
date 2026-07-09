@@ -142,11 +142,11 @@ Cross-process detection — distinguishing a freshly-bound adapter from a contin
 
 ## Workspace Binding
 
-Configured at adapter startup — explicit configuration (one or more workspace roots) or discovery from the MCP host when the host exposes its workspace surface. When the adapter binds a single workspace, source labels omit the WorkspaceID segment per `LABELING.md` grammar; the common case stays clean.
+Workspaces are discovered at capture time since the non-working directories that agentic sessions touch cannot be known at the time of start of the session. A path's workspace is its **project anchor**: the deepest ancestor directory carrying a version-control marker, or — only when no VCS ancestor exists, which is the dependency-store case — the deepest ancestor carrying a recognized project manifest. A VCS marker directly at the user's home directory or the filesystem root is ignored as an anchor (a home-level repository is a dotfiles setup, not a project boundary). Paths with no anchor fall back to `coexist` mode per `LABELING.md`'s escape-path rule.
 
-When the adapter binds multiple workspaces — a workflow observed in practice for monorepo-adjacent sessions and agents that switch repos within one conversation — source labels include the WorkspaceID segment to disambiguate collisions between same-workspace-relative-path captures across distinct roots. Paths outside every registered workspace root fall back to `coexist` mode per `LABELING.md`'s escape-path rule.
+The **primary workspace** is the anchor of the directory the adapter was launched in (or that directory itself when unmarked). Its captures label bare — no WorkspaceID segment — so the common single-repository session stays clean. Every other workspace, whenever discovered, labels its captures with its WorkspaceID segment. Discovery is monotonic within a session: new workspaces are added on first touch and existing labels never change meaning; the workspace set only grows.
 
-Workspaces are fixed at session start; mid-session workspace addition is not supported in this contract.
+Tool calls select a workspace explicitly by its ID (structured tools), implicitly by the path's or cwd's own project anchor — which registers the workspace on first touch — or default to the primary. Anchor resolution is per-path, so a nested anchor (a submodule inside an already-known repository) is its own workspace regardless of which was touched first.
 
 # 6. Labeling & Events
 

@@ -32,7 +32,9 @@ type Config struct {
 	ServerVersion     string
 	DefaultClient     string
 	SessionTTLMinutes int
-	WorkspaceRoot     string
+	// LaunchDir is the directory the host launched the adapter in; its
+	// project anchor becomes the primary workspace (DESIGN.md §5).
+	LaunchDir string
 	// SessionIdempotencyKey makes the initialize-time session create
 	// retry-safe. Recovery creates derive per-attempt keys from it so
 	// CALM's dedup window can never replay a dead session.
@@ -51,14 +53,11 @@ type Server struct {
 	idemKey       string
 	// grepEngine is probed once at construction; the tool description names it.
 	grepEngine string
-	// DESIGN-DEVIATION: DESIGN.md §5 Workspace Binding — single-workspace only;
-	// multi-workspace WorkspaceID exists in the extract grammar and is tested,
-	// but no caller populates it from runtime, so cross-workspace
-	// same-relative-path captures collide. Multi-workspace binding (explicit
-	// roots or host-config discovery + collision-free WorkspaceID derivation +
-	// startup conflict refusal) is needed to lift this.
-	workspaceRoot string
-	seq           atomic.Int64
+	// workspaces is the session's discovery-driven workspace registry
+	// (DESIGN.md §5); anchor discovery, selection, and WorkspaceID population
+	// live in workspace.go.
+	workspaces *workspaceSet
+	seq        atomic.Int64
 
 	wmu sync.Mutex // serializes writes to the protocol channel
 	out io.Writer
@@ -94,7 +93,7 @@ func NewServer(cfg Config) *Server {
 		defaultClient: cfg.DefaultClient,
 		ttlMinutes:    cfg.SessionTTLMinutes,
 		idemKey:       cfg.SessionIdempotencyKey,
-		workspaceRoot: cfg.WorkspaceRoot,
+		workspaces:    newWorkspaceSet(cfg.LaunchDir),
 		registry:      newTokenRegistry(),
 		grepEngine:    probeGrepEngine(),
 	}

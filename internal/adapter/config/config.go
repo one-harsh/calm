@@ -24,9 +24,6 @@ type CalmConfig struct {
 	APIKey            secrets.Secret `mapstructure:"api_key"`
 	Client            string         `mapstructure:"client"`
 	SessionTTLMinutes int            `mapstructure:"session_ttl_minutes"`
-	// Anchors source-label path normalization, not a sandbox: commands keep full
-	// local shell access. Empty → main falls back to os.Getwd() at startup.
-	WorkspaceRoot string `mapstructure:"workspace_root"`
 }
 
 type LogConfig struct {
@@ -65,7 +62,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("calm.api_key", "")
 	v.SetDefault("calm.client", "calm-adapter")
 	v.SetDefault("calm.session_ttl_minutes", 120)
-	v.SetDefault("calm.workspace_root", "")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.file", "")

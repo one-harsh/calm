@@ -27,7 +27,8 @@ func sourcesCapture(m *calm.MockClient, times int) (*sync.Mutex, *[]string) {
 			sources = append(sources, in.Source)
 			mu.Unlock()
 			return calm.IngestSummary{Source: in.Source, SectionsIndexed: 1, SectionsTotal: 1}, nil
-		}).Times(times)
+		},
+	).Times(times)
 	return &mu, &sources
 }
 
