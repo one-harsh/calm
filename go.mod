@@ -16,6 +16,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
+	github.com/yuin/goldmark v1.8.4
 	go.opentelemetry.io/otel v1.42.0
 	go.opentelemetry.io/otel/trace v1.42.0
 	golang.org/x/sync v0.20.0

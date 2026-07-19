@@ -109,3 +109,11 @@ func looksMarkdownDoc(content string) bool {
 	}
 	return fenceCount > 0 || listLines >= minListLines
 }
+
+func headingText(line string) (string, bool) {
+	m := mdHeadingRe.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
