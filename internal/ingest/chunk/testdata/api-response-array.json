@@ -1,0 +1,5 @@
+[
+  {"id": "sess-9001", "client": "claude-code", "ttl_minutes": 120, "labels": {"run": "pipeline-step-2"}},
+  {"id": "sess-9002", "client": "eval-harness", "ttl_minutes": 60, "labels": {}},
+  {"id": "sess-9003", "client": "claude-code", "ttl_minutes": 4320, "labels": {"run": "dogfood"}}
+]

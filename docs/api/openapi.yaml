@@ -718,9 +718,9 @@ components:
       type: object
       required: [sections_indexed, sections_total, summary_truncated, source, summary, distinctive_terms]
       properties:
-        sections_indexed: { type: integer, description: Number of sections included in the returned `summary`. }
-        sections_total: { type: integer, description: Total sections produced by chunking; may exceed `sections_indexed` if truncated. }
-        summary_truncated: { type: boolean, description: True when `summary` was capped at the 50-entry limit. }
+        sections_indexed: { type: integer, description: Number of sections actually indexed, capped at 500 per source. }
+        sections_total: { type: integer, description: Total sections produced by chunking; exceeds `sections_indexed` when the 500-section indexing cap fired. }
+        summary_truncated: { type: boolean, description: True when the returned `summary` covers fewer sections than `sections_total` (the summary is capped at 50 entries). }
         source: { type: string, description: Echoes the request `source` for confirmation. }
         summary:
           type: array

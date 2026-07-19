@@ -1,0 +1,13 @@
+{
+  "status": "degraded",
+  "checks": {
+    "database": {"healthy": true, "latency_ms": 4},
+    "search": {"healthy": false, "error": "pg_textsearch: index rebuild in progress"}
+  },
+  "uptime_seconds": 86412,
+  "version": "1.4.2",
+  "notes": [
+    "index rebuild started 02:10Z",
+    "expected completion 02:45Z"
+  ]
+}

@@ -1,0 +1,5 @@
+{"id": "eval-001", "task": "refund-flow", "score": 0.91, "completion": "The agent routed the refund correctly."}
+{"case": "sku-lookup-17", "model": "claude-fable-5", "score": 0.42, "completion": "# Analysis\n\nThe model picked `catalog_search` instead of `inventory_lookup`.\n\n```python\nresult = catalog_search(sku)\n```\n\nWrong tool for exact SKU availability."}
+{"score": 0.77, "prompt": "summarize the incident", "completion": "Timeout cascade traced to pool exhaustion."}
+{"id": "eval-004", "task": "schema-following", "score": 1.0, "completion": "All required fields present; arguments validated against the schema."}
+{"id": "eval-005", "task": "timeout-retry", "score": 0.63, "completion": "Retried twice, then fell back to the cached answer. Latency budget exceeded by 340ms."}

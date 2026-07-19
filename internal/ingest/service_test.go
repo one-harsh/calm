@@ -28,49 +28,6 @@ func mustCorrelationID(t *testing.T) uuid.UUID {
 	return id
 }
 
-func TestChunk_MarkdownSplitsAtHeadings(t *testing.T) {
-	content := "intro line\n\n# First\nbody one\n\n## Second\nbody two\n"
-	got := chunk("src", content, "", "")
-	if len(got) != 3 {
-		t.Fatalf("got %d chunks; want 3: %+v", len(got), got)
-	}
-	if got[0].Title != "src" {
-		t.Errorf("chunk[0].Title = %q; want preamble titled source", got[0].Title)
-	}
-	if got[1].Title != "First" || got[2].Title != "Second" {
-		t.Errorf("heading titles = %q,%q; want First,Second", got[1].Title, got[2].Title)
-	}
-	for _, c := range got {
-		if c.ContentType != "prose" {
-			t.Errorf("content_type = %q; want prose default", c.ContentType)
-		}
-	}
-}
-
-func TestChunk_TextSplitsOnBlankLines(t *testing.T) {
-	content := "para one\nstill one\n\npara two\n\n\npara three"
-	got := chunk("src", content, "text", "")
-	if len(got) != 3 {
-		t.Fatalf("got %d chunks; want 3: %+v", len(got), got)
-	}
-	if got[0].Content != "para one\nstill one" {
-		t.Errorf("chunk[0].Content = %q", got[0].Content)
-	}
-}
-
-func TestChunk_EmptyContentNoChunks(t *testing.T) {
-	if got := chunk("src", "   \n  ", "", ""); len(got) != 0 {
-		t.Fatalf("got %+v; want zero chunks for whitespace-only content", got)
-	}
-}
-
-func TestChunk_HonorsContentTypeHint(t *testing.T) {
-	got := chunk("src", "hello world", "text", "code")
-	if got[0].ContentType != "code" {
-		t.Errorf("content_type = %q; want code", got[0].ContentType)
-	}
-}
-
 type ingestMocks struct {
 	sources      *db.MockSourcesRepo
 	chunks       *db.MockChunksRepo
@@ -195,14 +152,41 @@ func TestIngest_TruncatesSummaryAt50(t *testing.T) {
 	if res.SectionsTotal != 60 {
 		t.Errorf("SectionsTotal = %d; want 60", res.SectionsTotal)
 	}
-	if res.SectionsIndexed != 50 {
-		t.Errorf("SectionsIndexed = %d; want 50", res.SectionsIndexed)
+	// All 60 land under the 500-section indexing cap; only the summary caps.
+	if res.SectionsIndexed != 60 {
+		t.Errorf("SectionsIndexed = %d; want 60 (all indexed)", res.SectionsIndexed)
 	}
 	if !res.SummaryTruncated {
 		t.Error("SummaryTruncated = false; want true")
 	}
 	if len(res.Summary) != 50 {
 		t.Errorf("summary len = %d; want 50", len(res.Summary))
+	}
+}
+
+func TestIngest_CapsChunksAt500(t *testing.T) {
+	svc, m := newMockService(t)
+	m.expectIndex(1, "huge", true, nil)
+
+	var sb strings.Builder
+	for i := range 620 {
+		if i > 0 {
+			sb.WriteString("\n\n")
+		}
+		fmt.Fprintf(&sb, "paragraph %d", i)
+	}
+	res, err := svc.Ingest(context.Background(), "ns-a", 1, mustCorrelationID(t), Input{Source: "huge", Content: sb.String()})
+	if err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if res.SectionsTotal != 620 || res.SectionsIndexed != 500 {
+		t.Errorf("total/indexed = %d/%d; want 620/500 (cap enforced)", res.SectionsTotal, res.SectionsIndexed)
+	}
+	if !res.SummaryTruncated {
+		t.Error("SummaryTruncated = false; want true")
+	}
+	if got := len(m.chunks.Calls[len(m.chunks.Calls)-1].Arguments.Get(2).([]db.Chunk)); got != 500 {
+		t.Errorf("chunks inserted = %d; want exactly the first 500", got)
 	}
 }
 

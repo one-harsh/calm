@@ -1,0 +1,24 @@
+Launching torchrun with 4 workers on host gpu-03
+world_size=4 backend=nccl
+[rank 0] 2026-07-01T09:14:02.118Z step=100 loss=2.4183 lr=3.0e-4 tokens_per_s=48211
+[rank 1] 2026-07-01T09:14:02.121Z step=100 loss=2.4190 lr=3.0e-4 tokens_per_s=47983
+[rank 2] 2026-07-01T09:14:02.125Z step=100 loss=2.4171 lr=3.0e-4 tokens_per_s=48044
+[rank 3] 2026-07-01T09:14:02.131Z step=100 loss=2.4188 lr=3.0e-4 tokens_per_s=47901
+[rank 0] 2026-07-01T09:14:41.902Z step=200 loss=2.3011 lr=3.0e-4 tokens_per_s=48307
+[rank 2] 2026-07-01T09:14:41.914Z NCCL WARN retrying allreduce after transient timeout
+    ring 0 -> peer 3 latency 812ms
+    falling back to tree algorithm for this bucket
+[rank 1] 2026-07-01T09:14:41.951Z step=200 loss=2.3025 lr=3.0e-4 tokens_per_s=47712
+[rank 3] 2026-07-01T09:14:42.007Z step=200 loss=2.3019 lr=3.0e-4 tokens_per_s=46110
+[rank 0] 2026-07-01T09:15:20.552Z step=300 loss=2.2410 lr=2.9e-4 tokens_per_s=48195
+[rank 0] 2026-07-01T09:15:20.553Z checkpoint saved to /ckpt/step-300
+    shards: 4/4 complete
+    duration: 9.2s
+[rank 1] 2026-07-01T09:15:20.601Z step=300 loss=2.2431 lr=2.9e-4 tokens_per_s=47960
+[rank 2] 2026-07-01T09:15:20.610Z step=300 loss=2.2402 lr=2.9e-4 tokens_per_s=48012
+[rank 3] 2026-07-01T09:15:20.688Z step=300 loss=2.2427 lr=2.9e-4 tokens_per_s=47355
+[rank 0] 2026-07-01T09:16:00.121Z eval step=300 val_loss=2.3104 val_ppl=10.08
+[rank 0] 2026-07-01T09:16:00.409Z step=400 loss=2.1902 lr=2.9e-4 tokens_per_s=48233
+[rank 1] 2026-07-01T09:16:00.455Z step=400 loss=2.1899 lr=2.9e-4 tokens_per_s=47871
+[rank 2] 2026-07-01T09:16:00.462Z step=400 loss=2.1911 lr=2.9e-4 tokens_per_s=48090
+[rank 3] 2026-07-01T09:16:00.529Z step=400 loss=2.1907 lr=2.9e-4 tokens_per_s=47404

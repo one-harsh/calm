@@ -137,9 +137,9 @@ The ingestion layer chunks the input, indexes it into the knowledge store, and r
 **Format handling** is two-tiered.
 
 Auto-detected, no workload effort:
-- **JSON** — parsed and chunked by key paths
-- **Markdown** — chunked by heading hierarchy; code blocks kept intact
-- **Plain text** — chunked by line groups
+- **JSON** — record sequences (line-delimited or a top-level array) chunk by record, small records packed toward the target chunk size with records never split across chunks; a single object chunks by top-level key
+- **Markdown** — chunked by heading hierarchy; code blocks kept intact as their own code-typed chunks, excised from the surrounding prose so every byte lands in exactly one chunk
+- **Plain text** — chunked by line groups, with oversized groups windowed to the target chunk size
 
 Format-hinted (workload passes an optional `format` field):
 - **Log output** — chunked by time window or error grouping rather than arbitrary line splits

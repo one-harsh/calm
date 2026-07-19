@@ -11,6 +11,7 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/db"
+	"github.com/one-harsh/calm/internal/ingest/chunk"
 	"github.com/one-harsh/calm/internal/obs"
 )
 
@@ -18,6 +19,9 @@ const (
 	summaryCap          = 50
 	previewMax          = 200
 	distinctiveTermsCap = 40
+	// maxChunksPerSource is the HLD scale-limits cap: chunking may produce
+	// more sections, but only the first 500 are indexed.
+	maxChunksPerSource = 500
 
 	requestTypeIngest = "ingest"
 )
@@ -57,7 +61,11 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 	if in.Source == "" {
 		return Result{}, db.ErrSourceRequired
 	}
-	chunks := chunk(in.Source, in.Content, in.Format, in.ContentType)
+	chunks, effectiveFormat := chunk.Split(in.Source, in.Content, in.Format, in.ContentType)
+	total := len(chunks)
+	if total > maxChunksPerSource {
+		chunks = chunks[:maxChunksPerSource]
+	}
 
 	var created bool
 	var terms []string
@@ -94,24 +102,18 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 		return Result{}, err
 	}
 
-	total := len(chunks)
-	indexed := total
-	truncated := false
-	if indexed > summaryCap {
-		indexed = summaryCap
-		truncated = true
-	}
-	summary := make([]Section, indexed)
-	for i := 0; i < indexed; i++ {
+	summaryLen := min(len(chunks), summaryCap)
+	summary := make([]Section, summaryLen)
+	for i := range summaryLen {
 		summary[i] = Section{Title: chunks[i].Title, Preview: preview(chunks[i].Content)}
 	}
 
 	result := Result{
 		Source:           in.Source,
 		Created:          created,
-		SectionsIndexed:  indexed,
+		SectionsIndexed:  len(chunks),
 		SectionsTotal:    total,
-		SummaryTruncated: truncated,
+		SummaryTruncated: summaryLen < total,
 		Summary:          summary,
 		DistinctiveTerms: terms,
 	}
@@ -119,20 +121,23 @@ func (s *Service) Ingest(ctx context.Context, namespace string, sessionID int64,
 		s.logger.WithContext(ctx).Debug(
 			"ingest indexed",
 			obs.Source(in.Source),
+			obs.FormatHint(in.Format),
+			obs.FormatEffective(effectiveFormat),
 			obs.IngestSectionsTotal(result.SectionsTotal),
 			obs.IngestSectionsIndexed(result.SectionsIndexed),
 			obs.IngestSourceCreated(result.Created),
 		)
 	}
-	s.captureCorrelation(ctx, namespace, sessionID, correlationID, result)
+	s.captureCorrelation(ctx, namespace, sessionID, correlationID, result, effectiveFormat)
 	return result, nil
 }
 
-func (s *Service) captureCorrelation(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, result Result) {
+func (s *Service) captureCorrelation(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, result Result, effectiveFormat string) {
 	meta, err := json.Marshal(map[string]any{
 		"sections_indexed":  result.SectionsIndexed,
 		"sections_total":    result.SectionsTotal,
 		"summary_truncated": result.SummaryTruncated,
+		"format":            effectiveFormat,
 	})
 	if err != nil {
 		s.logger.WithContext(ctx).Warn("correlation marshal failed",
@@ -147,4 +152,12 @@ func (s *Service) captureCorrelation(ctx context.Context, namespace string, sess
 
 func (s *Service) ListSources(ctx context.Context, namespace string, sessionID int64) ([]db.SourceSummary, error) {
 	return s.store.Sources().List(ctx, namespace, sessionID)
+}
+
+func preview(content string) string {
+	r := []rune(content)
+	if len(r) <= previewMax {
+		return content
+	}
+	return string(r[:previewMax])
 }

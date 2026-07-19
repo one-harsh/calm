@@ -60,8 +60,9 @@ const (
 	KeyCascadedLabels  = "session.delete.cascaded_labels"
 
 	// Source / content scope.
-	KeySource     = "source"
-	KeyFormatHint = "format_hint"
+	KeySource          = "source"
+	KeyFormatHint      = "format_hint"
+	KeyFormatEffective = "format_effective"
 
 	// Event scope.
 	KeyEventType = "event_type"
@@ -134,6 +135,10 @@ func EventType(value string) logging.LoggingField {
 
 func FormatHint(value string) logging.LoggingField {
 	return logging.StringField(KeyFormatHint, value)
+}
+
+func FormatEffective(value string) logging.LoggingField {
+	return logging.StringField(KeyFormatEffective, value)
 }
 
 func CascadedSources(value int) logging.LoggingField {

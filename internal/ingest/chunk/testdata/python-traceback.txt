@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "/app/orders/refund.py", line 41, in process_refund
+    amount = parse_amount(payload["amount"])
+  File "/app/orders/money.py", line 12, in parse_amount
+    return Decimal(raw)
+ValueError: bad input
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/api/handlers.py", line 88, in post_refund
+    result = process_refund(payload)
+  File "/app/orders/refund.py", line 44, in process_refund
+    raise RuntimeError("failed request") from exc
+RuntimeError: failed request
+
+Traceback (most recent call last):
+  File "/app/workers/reindex.py", line 19, in run
+    index.rebuild(session_id)
+  File "/app/search/index.py", line 203, in rebuild
+    conn.execute(REBUILD_SQL)
+psycopg.OperationalError: connection closed unexpectedly

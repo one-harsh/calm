@@ -1,0 +1,10 @@
+case,verdict,latency_ms,notes
+refund-flow,pass,412,clean run
+sku-lookup-17,fail,388,"wrong tool selected:
+catalog_search instead of inventory_lookup"
+schema-following,pass,205,
+timeout-retry,flaky,1740,"retried twice, cache fallback"
+hallucinated-output,fail,299,fabricated tool response
+overbroad-retrieval,pass,510,narrowed on second probe
+malformed-arguments,fail,180,missing required field
+prompt-v17-diff,pass,95,review only

@@ -1,0 +1,76 @@
+# HELP http_requests_total Total HTTP requests served.
+# TYPE http_requests_total counter
+http_requests_total{method="get",code="200"} 1027
+http_requests_total{method="post",code="500"} 3
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+# UNIT process_resident_memory_bytes bytes
+process_resident_memory_bytes 4.5e+07
+# HELP rpc_duration_seconds RPC latency summary.
+# TYPE rpc_duration_seconds summary
+rpc_duration_seconds{quantile="0.5"} 0.052
+rpc_duration_seconds{quantile="0.9"} 0.121
+rpc_duration_seconds{quantile="0.99"} 0.34
+rpc_duration_seconds_sum 8953.332
+rpc_duration_seconds_count 27892
+# HELP http_request_duration_seconds Request latency histogram.
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="0.005"} 7
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="0.01"} 14
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="0.025"} 21
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="0.05"} 28
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="0.1"} 35
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="0.25"} 42
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="0.5"} 49
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="1"} 56
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="2.5"} 63
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="5"} 70
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="10"} 77
+http_request_duration_seconds_bucket{route="/api/v1/search",method="GET",le="+Inf"} 84
+http_request_duration_seconds_sum{route="/api/v1/search",method="GET"} 311.25
+http_request_duration_seconds_count{route="/api/v1/search",method="GET"} 84
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="0.005"} 14
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="0.01"} 28
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="0.025"} 42
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="0.05"} 56
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="0.1"} 70
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="0.25"} 84
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="0.5"} 98
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="1"} 112
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="2.5"} 126
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="5"} 140
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="10"} 154
+http_request_duration_seconds_bucket{route="/api/v1/ingest",method="POST",le="+Inf"} 168
+http_request_duration_seconds_sum{route="/api/v1/ingest",method="POST"} 622.25
+http_request_duration_seconds_count{route="/api/v1/ingest",method="POST"} 168
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="0.005"} 21
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="0.01"} 42
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="0.025"} 63
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="0.05"} 84
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="0.1"} 105
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="0.25"} 126
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="0.5"} 147
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="1"} 168
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="2.5"} 189
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="5"} 210
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="10"} 231
+http_request_duration_seconds_bucket{route="/api/v1/sessions",method="POST",le="+Inf"} 252
+http_request_duration_seconds_sum{route="/api/v1/sessions",method="POST"} 933.25
+http_request_duration_seconds_count{route="/api/v1/sessions",method="POST"} 252
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="0.005"} 28
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="0.01"} 56
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="0.025"} 84
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="0.05"} 112
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="0.1"} 140
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="0.25"} 168
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="0.5"} 196
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="1"} 224
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="2.5"} 252
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="5"} 280
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="10"} 308
+http_request_duration_seconds_bucket{route="/api/v1/feedback",method="DELETE",le="+Inf"} 336
+http_request_duration_seconds_sum{route="/api/v1/feedback",method="DELETE"} 1244.25
+http_request_duration_seconds_count{route="/api/v1/feedback",method="DELETE"} 336
+queue_depth 42
+this is not a metric line !!!
+# EOF
