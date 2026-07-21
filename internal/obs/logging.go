@@ -73,11 +73,12 @@ const (
 	KeyIngestSourceCreated   = "ingest.source_created"
 
 	// Search scope.
-	KeyMatchLayer        = "match_layer"
-	KeySearchQueries     = "search.queries"
-	KeySearchHitsTotal   = "search.hits_total"
-	KeySearchHitsPrimary = "search.hits_primary"
-	KeySearchHitsTrigram = "search.hits_trigram"
+	KeyMatchLayer             = "match_layer"
+	KeySearchQueries          = "search.queries"
+	KeySearchHitsTotal        = "search.hits_total"
+	KeySearchHitsPrimary      = "search.hits_primary"
+	KeySearchHitsTrigram      = "search.hits_trigram"
+	KeySearchSnippetFallbacks = "search.snippet_fallbacks"
 
 	// Snapshot scope.
 	KeySnapshotEventsIncluded = "snapshot.events_included"
@@ -191,6 +192,10 @@ func SearchHitsPrimary(value int) logging.LoggingField {
 
 func SearchHitsTrigram(value int) logging.LoggingField {
 	return logging.IntField(KeySearchHitsTrigram, value)
+}
+
+func SearchSnippetFallbacks(value int) logging.LoggingField {
+	return logging.IntField(KeySearchSnippetFallbacks, value)
 }
 
 func IngestSectionsTotal(value int) logging.LoggingField {

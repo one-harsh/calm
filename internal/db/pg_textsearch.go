@@ -82,7 +82,7 @@ func (pgTextsearchExtension) classCandidatesSQL(class bm25Class) string {
 			       tsvector_to_array(to_tsvector('%[1]s', $4)) AS query_lexemes
 		),
 		candidates AS (
-			SELECT c.id, c.title, c.content, s.label,
+			SELECT c.id, c.title, c.content, c.content_type, s.label,
 			       2.0 * (c.title   <@> q.title_query)
 			     + 1.0 * (c.content <@> q.content_query)         AS score,
 			       doc.vec @@ q.and_query                        AS matches_all,
@@ -99,7 +99,7 @@ func (pgTextsearchExtension) classCandidatesSQL(class bm25Class) string {
 			  AND ($2 = '' OR s.label = $2)
 			  AND %[4]s
 		)
-		SELECT id, title, content, label, matches_all FROM candidates
+		SELECT id, title, content, content_type, label, matches_all FROM candidates
 		WHERE matches_any
 		ORDER BY matches_all DESC, score ASC, id ASC
 		LIMIT $5`,

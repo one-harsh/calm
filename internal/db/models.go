@@ -66,6 +66,12 @@ type SearchHit struct {
 	Snippet    string
 	Source     string
 	MatchLayer string // "primary" | "trigram"
+	// SnippetFallback marks a hit whose snippet is a leading-window fallback:
+	// no query term was literally located in the (over-budget) chunk content.
+	// The search service aggregates this into the snippet_fallbacks correlation
+	// dimension. db.SearchHit is never marshaled — the wire type genapi.SearchHit
+	// carries no such field, so this stays an internal signal.
+	SnippetFallback bool
 }
 
 type SearchResult struct {

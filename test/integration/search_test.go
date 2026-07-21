@@ -397,6 +397,88 @@ func TestSearch_ValidationErrors(t *testing.T) {
 	}
 }
 
+// A prose chunk larger than the snippet budget surfaces the decisive sentence
+// whole rather than truncating it mid-word: the returned snippet contains the
+// full sentence carrying the query term, and is an exact substring of the stored
+// content (content-fidelity), aligned to a sentence boundary.
+func TestSearch_ProseSnippetSurfacesDecisiveSentenceWhole(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+
+	pad := strings.Repeat("This is filler context that surrounds the point. ", 12)
+	decisive := "The rollback aborted because the migration lock was already held."
+	content := pad + decisive + " " + pad
+
+	seedIndexedSource(t, store, "ns-a", sess.ID, "runbook.md",
+		[]db.Chunk{{Title: "incident", Content: content, ContentType: "prose"}})
+
+	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Queries: []string{"migration"},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got[0].Hits) != 1 {
+		t.Fatalf("hits = %+v; want one hit", got[0].Hits)
+	}
+	snip := got[0].Hits[0].Snippet
+	if !strings.Contains(snip, decisive) {
+		t.Errorf("snippet = %q; want the decisive sentence whole", snip)
+	}
+	if !strings.Contains(content, snip) {
+		t.Errorf("snippet is not an exact substring of the stored content")
+	}
+}
+
+// A code chunk larger than the snippet budget returns whole lines around the
+// matched identifier — never a partial leading or trailing line — and the
+// snippet is an exact substring of the stored content (guards against a
+// content_type scan-column reorder regression).
+func TestSearch_CodeSnippetIsWholeLines(t *testing.T) {
+	t.Parallel()
+	store, sqlDB, teardown := openConcreteStore(t)
+	defer teardown()
+	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
+	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
+
+	head := strings.Repeat("// preamble comment line describing setup\n", 15)
+	anchor := "func handleLinkerError() error { return recoverLinker() }\n"
+	tail := strings.Repeat("// trailing comment line describing teardown\n", 15)
+	content := head + anchor + tail
+
+	seedIndexedSource(t, store, "ns-a", sess.ID, "main.go",
+		[]db.Chunk{{Title: "handler", Content: content, ContentType: "code"}})
+
+	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Queries: []string{"handleLinkerError"},
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got[0].Hits) != 1 {
+		t.Fatalf("hits = %+v; want one hit", got[0].Hits)
+	}
+	snip := got[0].Hits[0].Snippet
+	if !strings.Contains(snip, strings.TrimRight(anchor, "\n")) {
+		t.Errorf("snippet = %q; want the anchor line whole", snip)
+	}
+	if !strings.Contains(content, snip) {
+		t.Errorf("snippet is not an exact substring of the stored content")
+	}
+	// Whole-line boundaries: every line in the snippet is a complete line of the source.
+	for _, line := range strings.Split(strings.Trim(snip, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		if !strings.Contains(content, "\n"+line+"\n") && !strings.HasPrefix(content, line+"\n") {
+			t.Errorf("snippet line %q is not a whole source line", line)
+		}
+	}
+}
+
 // A partial identifier ("ProcessRequest") catches a longer identifier ("handleProcessRequest")
 // via the trigram word-similarity fallback when the code tokenizer keeps the longer form
 // whole. The returned hit carries match_layer=trigram with the matched identifier verbatim

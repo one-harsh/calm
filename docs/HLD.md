@@ -618,7 +618,7 @@ Search is not scoped by `content_type`. A session that has indexed a mix of pros
 }
 ```
 
-Result assembly is byte-budgeted. The allocator runs in rank rounds: every query's first-ranked candidate is offered before any query's second, every second before any third. A candidate is included only when its compact-JSON-serialized size (UTF-8 bytes of its standalone `SearchHit` representation) fits the remaining budget. Snippets are never further truncated — their sizing was already settled at index time by smart-snippet extraction.
+Result assembly is byte-budgeted. The allocator runs in rank rounds: every query's first-ranked candidate is offered before any query's second, every second before any third. A candidate is included only when its compact-JSON-serialized size (UTF-8 bytes of its standalone `SearchHit` representation) fits the remaining budget. Snippets are never further truncated — each is an exact excerpt of the matched chunk's stored text, derived at query time under a length budget.
 
 Per-query `budget_omitted` reports the count of otherwise-returnable candidates (from that query's top-`limit` set) that were not included because the budget didn't accommodate them. Response-level `byte_budget_used` reports the actual bytes consumed. `budget_bytes` echoes the committed budget (after operator-ceiling clamping); workloads detect clamping by comparing requested vs echoed.
 

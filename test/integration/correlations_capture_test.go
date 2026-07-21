@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -87,6 +88,47 @@ func TestSearch_PersistsCorrelationOnSuccess(t *testing.T) {
 	if !hasKey(t, row.requestMeta, "hit_count") {
 		t.Errorf("request_meta = %s; want hit_count", row.requestMeta)
 	}
+	// A short chunk with a literal term match is not a fallback.
+	if got := metaInt(t, row.requestMeta, "snippet_fallbacks"); got != 0 {
+		t.Errorf("snippet_fallbacks = %d; want 0 on a clean match", got)
+	}
+}
+
+// A search whose query matches only stemmed variants (no literal substring in an
+// over-budget chunk) records the snippet as a leading-window fallback: the
+// correlation row's snippet_fallbacks dimension is >= 1. This is the instrumented
+// signal that gates the future lexeme-expansion locator upgrade.
+func TestSearch_StemmedMissRecordedAsSnippetFallback(t *testing.T) {
+	t.Parallel()
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+
+	// Over-budget prose whose only relation to "caching" is the stem "cached";
+	// "caching" never appears literally, so the locator finds no site.
+	pad := strings.Repeat("Background paragraph that fills the chunk beyond the budget. ", 10)
+	content := pad + "The lookup result was cached for later reuse. " + pad
+
+	if _, err := client.IngestWithResponse(context.Background(),
+		&genapi.IngestParams{XCALMSessionToken: sess.SessionToken},
+		genapi.IngestJSONRequestBody{Source: "notes.md", Content: content}); err != nil {
+		t.Fatalf("seed ingest: %v", err)
+	}
+
+	resp, err := client.SearchWithResponse(context.Background(),
+		&genapi.SearchParams{XCALMSessionToken: sess.SessionToken},
+		genapi.SearchJSONRequestBody{Queries: []string{"caching"}})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", resp.StatusCode(), string(resp.Body))
+	}
+
+	correlationID := mustParseCorrelationID(t, resp.HTTPResponse.Header.Get("X-CALM-Correlation-Id"))
+	row := readCorrelationRow(t, correlationID)
+	if got := metaInt(t, row.requestMeta, "snippet_fallbacks"); got < 1 {
+		t.Errorf("snippet_fallbacks = %d; want >= 1 for a stemmed miss over budget", got)
+	}
 }
 
 // A successful snapshot produces a correlation row with request_type=snapshot
@@ -160,4 +202,21 @@ func hasKey(t *testing.T, meta []byte, key string) bool {
 	}
 	_, ok := m[key]
 	return ok
+}
+
+func metaInt(t *testing.T, meta []byte, key string) int {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(meta, &m); err != nil {
+		t.Fatalf("unmarshal request_meta: %v", err)
+	}
+	v, ok := m[key]
+	if !ok {
+		t.Fatalf("request_meta = %s; missing key %q", meta, key)
+	}
+	f, ok := v.(float64)
+	if !ok {
+		t.Fatalf("request_meta[%q] = %v; want a number", key, v)
+	}
+	return int(f)
 }

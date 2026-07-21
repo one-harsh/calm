@@ -10,15 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
-	"unicode/utf8"
 
 	logging "github.com/one-harsh/context-logging"
 )
 
 const (
 	defaultSearchLimit = 5
-	snippetRadius      = 50
 	rrfK               = 60
 )
 
@@ -122,12 +119,13 @@ func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInp
 }
 
 type bm25Candidate struct {
-	id         int64
-	title      string
-	content    string
-	label      string
-	matchesAll bool
-	rrf        float64
+	id          int64
+	title       string
+	content     string
+	contentType string
+	label       string
+	matchesAll  bool
+	rrf         float64
 }
 
 // searchOne is the layer-1 query: each tokenizer class contributes its top
@@ -164,11 +162,13 @@ func (r *sourcesRepo) searchOne(ctx context.Context, namespace string, sessionID
 
 	hits := make([]SearchHit, 0, limit)
 	for _, c := range fused {
+		snip := extractSnippet(c.content, c.contentType, q)
 		hits = append(hits, SearchHit{
-			Title:      c.title,
-			Snippet:    snippet(c.content, q),
-			Source:     c.label,
-			MatchLayer: "primary",
+			Title:           c.title,
+			Snippet:         snip.text,
+			SnippetFallback: snip.fallback,
+			Source:          c.label,
+			MatchLayer:      "primary",
 		})
 	}
 
@@ -197,7 +197,7 @@ func (r *sourcesRepo) classCandidates(ctx context.Context, namespace string, cla
 	rank := 0
 	for rows.Next() {
 		var c bm25Candidate
-		if err := rows.Scan(&c.id, &c.title, &c.content, &c.label, &c.matchesAll); err != nil {
+		if err := rows.Scan(&c.id, &c.title, &c.content, &c.contentType, &c.label, &c.matchesAll); err != nil {
 			return nil, fmt.Errorf("%w: scan search hit for session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
 		}
 		rank++
@@ -208,35 +208,4 @@ func (r *sourcesRepo) classCandidates(ctx context.Context, namespace string, cla
 		return nil, fmt.Errorf("%w: iterate search hits for session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
 	}
 	return cands, nil
-}
-
-// snippet returns a ±snippetRadius-rune window of content around the first
-// case-insensitive occurrence of the query or, failing that, of any single
-// query term — BM25 matches stemmed/derived forms, so the literal query may
-// be absent from the matched content. Exact text (content-fidelity), never
-// paraphrased; no occurrence at all (e.g. title-only or stemmed match) falls
-// back to a leading window of the content.
-func snippet(content, query string) string {
-	lower := strings.ToLower(content)
-	needles := []string{query}
-	if terms := strings.Fields(query); len(terms) > 1 {
-		needles = append(needles, terms...)
-	}
-	for _, needle := range needles {
-		at := strings.Index(lower, strings.ToLower(needle))
-		if at < 0 {
-			continue
-		}
-		runes := []rune(content)
-		start := utf8.RuneCountInString(content[:at])
-		end := start + utf8.RuneCountInString(needle)
-		from := max(start-snippetRadius, 0)
-		to := min(end+snippetRadius, len(runes))
-		return string(runes[from:to])
-	}
-	runes := []rune(content)
-	if len(runes) <= 2*snippetRadius {
-		return content
-	}
-	return string(runes[:2*snippetRadius])
 }

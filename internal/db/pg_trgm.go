@@ -95,7 +95,7 @@ func trigramCandidatesSQL(termCount int) string {
 			placeholder, placeholder)
 	}
 	return fmt.Sprintf(`
-		SELECT c.id, c.title, c.content, s.label
+		SELECT c.id, c.title, c.content, c.content_type, s.label
 		FROM chunks c
 		JOIN sources s ON c.source_id = s.id
 		WHERE s.session_id = $1
@@ -140,20 +140,23 @@ func (r *sourcesRepo) trigramCandidates(
 	hits := []SearchHit{}
 	for rows.Next() {
 		var (
-			id      int64
-			title   string
-			content string
-			label   string
+			id          int64
+			title       string
+			content     string
+			contentType string
+			label       string
 		)
-		if err := rows.Scan(&id, &title, &content, &label); err != nil {
+		if err := rows.Scan(&id, &title, &content, &contentType, &label); err != nil {
 			return nil, fmt.Errorf("%w: scan trigram hit for session %d in %q: %w",
 				ErrStorageBackend, sessionID, namespace, err)
 		}
+		snip := extractSnippet(content, contentType, q)
 		hits = append(hits, SearchHit{
-			Title:      title,
-			Snippet:    snippet(content, q),
-			Source:     label,
-			MatchLayer: "trigram",
+			Title:           title,
+			Snippet:         snip.text,
+			SnippetFallback: snip.fallback,
+			Source:          label,
+			MatchLayer:      "trigram",
 		})
 	}
 	if err := rows.Err(); err != nil {

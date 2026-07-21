@@ -74,7 +74,9 @@ func TestSearch_PersistsCorrelationOnSuccess(t *testing.T) {
 	results := []db.SearchResult{{
 		Query: "alpha",
 		Hits: []db.SearchHit{
-			{MatchLayer: "primary"}, {MatchLayer: "primary"}, {MatchLayer: "trigram"},
+			{MatchLayer: "primary"},
+			{MatchLayer: "primary", SnippetFallback: true},
+			{MatchLayer: "trigram"},
 		},
 	}}
 	sources := db.NewMockSourcesRepo(t)
@@ -87,8 +89,9 @@ func TestSearch_PersistsCorrelationOnSuccess(t *testing.T) {
 			if err := json.Unmarshal(meta, &got); err != nil {
 				return false
 			}
-			// hits_primary=2, hits_trigram=1, hit_count=3 → flat fields, ready for WI-44 label promotion.
-			return got["hits_primary"] == float64(2) && got["hits_trigram"] == float64(1) && got["hit_count"] == float64(3)
+			// hits_primary=2, hits_trigram=1, hit_count=3, snippet_fallbacks=1 → flat fields.
+			return got["hits_primary"] == float64(2) && got["hits_trigram"] == float64(1) &&
+				got["hit_count"] == float64(3) && got["snippet_fallbacks"] == float64(1)
 		}),
 	).Return(nil).Once()
 	dal := db.NewMockDAL(t)

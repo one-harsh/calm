@@ -38,7 +38,7 @@ func (s *Service) Search(ctx context.Context, namespace string, sessionID int64,
 	if err != nil {
 		return nil, err
 	}
-	primary, trigram, total := hitBreakdown(results)
+	primary, trigram, total, snippetFallbacks := hitBreakdown(results)
 	if s.logger.Enabled(logging.DebugLevel) {
 		s.logger.WithContext(ctx).Debug(
 			"search executed",
@@ -46,16 +46,20 @@ func (s *Service) Search(ctx context.Context, namespace string, sessionID int64,
 			obs.SearchHitsTotal(total),
 			obs.SearchHitsPrimary(primary),
 			obs.SearchHitsTrigram(trigram),
+			obs.SearchSnippetFallbacks(snippetFallbacks),
 		)
 	}
-	s.captureCorrelation(ctx, namespace, sessionID, correlationID, primary, trigram, total)
+	s.captureCorrelation(ctx, namespace, sessionID, correlationID, primary, trigram, total, snippetFallbacks)
 	return results, nil
 }
 
-func hitBreakdown(results []db.SearchResult) (primary, trigram, total int) {
+func hitBreakdown(results []db.SearchResult) (primary, trigram, total, snippetFallbacks int) {
 	for _, r := range results {
 		for _, h := range r.Hits {
 			total++
+			if h.SnippetFallback {
+				snippetFallbacks++
+			}
 			switch h.MatchLayer {
 			case matchLayerPrimary:
 				primary++
@@ -64,14 +68,15 @@ func hitBreakdown(results []db.SearchResult) (primary, trigram, total int) {
 			}
 		}
 	}
-	return primary, trigram, total
+	return primary, trigram, total, snippetFallbacks
 }
 
-func (s *Service) captureCorrelation(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, primary, trigram, total int) {
+func (s *Service) captureCorrelation(ctx context.Context, namespace string, sessionID int64, correlationID uuid.UUID, primary, trigram, total, snippetFallbacks int) {
 	meta, err := json.Marshal(map[string]any{
-		"hits_primary": primary,
-		"hits_trigram": trigram,
-		"hit_count":    total,
+		"hits_primary":      primary,
+		"hits_trigram":      trigram,
+		"hit_count":         total,
+		"snippet_fallbacks": snippetFallbacks,
 	})
 	if err != nil {
 		s.logger.WithContext(ctx).Warn("correlation marshal failed",
