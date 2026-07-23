@@ -79,6 +79,10 @@ const (
 	KeySearchHitsPrimary      = "search.hits_primary"
 	KeySearchHitsTrigram      = "search.hits_trigram"
 	KeySearchSnippetFallbacks = "search.snippet_fallbacks"
+	KeySearchByteBudgetUsed   = "search.byte_budget_used"
+	KeySearchBudgetExhausted  = "search.budget_exhausted"
+	KeySearchResultsOmitted   = "search.results.omitted"
+	KeyAllocator              = "allocator"
 
 	// Snapshot scope.
 	KeySnapshotEventsIncluded = "snapshot.events_included"
@@ -196,6 +200,18 @@ func SearchHitsTrigram(value int) logging.LoggingField {
 
 func SearchSnippetFallbacks(value int) logging.LoggingField {
 	return logging.IntField(KeySearchSnippetFallbacks, value)
+}
+
+func SearchByteBudgetUsed(value int) logging.LoggingField {
+	return logging.IntField(KeySearchByteBudgetUsed, value)
+}
+
+func SearchBudgetExhausted(value bool) logging.LoggingField {
+	return logging.BoolField(KeySearchBudgetExhausted, value)
+}
+
+func SearchResultsOmitted(value int) logging.LoggingField {
+	return logging.IntField(KeySearchResultsOmitted, value)
 }
 
 func IngestSectionsTotal(value int) logging.LoggingField {
