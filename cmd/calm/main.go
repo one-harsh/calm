@@ -126,8 +126,9 @@ func run() error {
 			Feedback: feedbackSvc,
 			Version:  cfg.Service.Version,
 			Cfg: handlers.HandlersConfig{
-				DefaultTTLMinutes: cfg.Sessions.DefaultTTLMinutes,
-				MaxTTLMinutes:     cfg.Sessions.MaxTTLMinutes,
+				DefaultTTLMinutes:    cfg.Sessions.DefaultTTLMinutes,
+				MaxTTLMinutes:        cfg.Sessions.MaxTTLMinutes,
+				SearchMaxBudgetBytes: cfg.Search.MaxBudgetKB * 1024,
 			},
 		}),
 	})

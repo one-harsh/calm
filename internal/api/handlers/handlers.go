@@ -23,8 +23,9 @@ import (
 var ErrNotImplemented = errors.New("endpoint not implemented")
 
 type HandlersConfig struct {
-	DefaultTTLMinutes int
-	MaxTTLMinutes     int
+	DefaultTTLMinutes    int
+	MaxTTLMinutes        int
+	SearchMaxBudgetBytes int
 }
 
 type Deps struct {

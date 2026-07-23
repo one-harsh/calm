@@ -32,6 +32,8 @@ func TestMemoryRegistry_Resolve(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 
 	cases := []struct {
@@ -66,6 +68,8 @@ func TestMemoryRegistry_RateFor(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 
 	cases := []struct {
@@ -89,7 +93,7 @@ func TestMemoryRegistry_RateFor(t *testing.T) {
 }
 
 func TestMemoryRegistry_NilMapsAcceptable(t *testing.T) {
-	reg := NewMemoryRegistry(nil, nil, nil, nil)
+	reg := NewMemoryRegistry(nil, nil, nil, nil, nil, nil)
 
 	if ns, ok := reg.Resolve("anything"); ok {
 		t.Errorf("Resolve on empty registry returned (%q, true); want (\"\", false)", ns)
@@ -107,6 +111,8 @@ func TestMemoryRegistry_RequiresClientCredentials(t *testing.T) {
 		map[string]string{"k1": "credentialed-ns", "k2": "uncredentialed-ns"},
 		nil,
 		map[string]bool{"credentialed-ns": true},
+		nil,
+		nil,
 		nil,
 	)
 	cases := []struct {
@@ -286,4 +292,52 @@ func TestBuildRegistryFatalHelper(t *testing.T) {
 		t.Fatalf("unknown scenario: %q", scenario)
 	}
 	t.Fatal("BuildRegistry returned without Fataling — bad test fixture?")
+}
+
+func TestMemoryRegistry_DefaultAllocatorFor(t *testing.T) {
+	reg := NewMemoryRegistry(
+		map[string]string{"k1": "with-alloc", "k2": "without"},
+		nil,
+		nil,
+		nil,
+		map[string]string{"with-alloc": "mmr"},
+		nil,
+	)
+	cases := []struct {
+		ns       string
+		want     string
+		wantHave bool
+	}{
+		{"with-alloc", "mmr", true},
+		{"without", "", false},
+		{"unknown", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ns, func(t *testing.T) {
+			got, have := reg.DefaultAllocatorFor(tc.ns)
+			if got != tc.want || have != tc.wantHave {
+				t.Errorf("DefaultAllocatorFor(%q) = (%q, %v); want (%q, %v)", tc.ns, got, have, tc.want, tc.wantHave)
+			}
+		})
+	}
+}
+
+func TestMemoryRegistry_AllowAllocatorOverride(t *testing.T) {
+	reg := NewMemoryRegistry(
+		map[string]string{"k1": "override-on", "k2": "override-off"},
+		nil,
+		nil,
+		nil,
+		nil,
+		map[string]bool{"override-on": true},
+	)
+	if !reg.AllowAllocatorOverride("override-on") {
+		t.Errorf("AllowAllocatorOverride(override-on) = false; want true")
+	}
+	if reg.AllowAllocatorOverride("override-off") {
+		t.Errorf("AllowAllocatorOverride(override-off) = true; want false (default)")
+	}
+	if reg.AllowAllocatorOverride("unknown") {
+		t.Errorf("AllowAllocatorOverride(unknown) = true; want false (default)")
+	}
 }

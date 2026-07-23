@@ -50,6 +50,8 @@ const (
 	testDefaultTTLMinutes = 120
 	testMaxTTLMinutes     = 240
 
+	testSearchMaxBudgetBytes = 64 * 1024
+
 	testVersion = "test"
 )
 
@@ -92,6 +94,10 @@ func bootstrap() (*harness, error) {
 		nil,
 		nil,
 		nil,
+		nil,
+		// Allocator override on for testNamespace only; tenant-A drives the
+		// override-ignored scenario.
+		map[string]bool{testNamespace: true},
 	)
 	clientSvc := clientreg.New(store, logging.Nop())
 
@@ -137,8 +143,9 @@ func bootstrap() (*harness, error) {
 			Feedback: feedbackSvc,
 			Version:  testVersion,
 			Cfg: handlers.HandlersConfig{
-				DefaultTTLMinutes: testDefaultTTLMinutes,
-				MaxTTLMinutes:     testMaxTTLMinutes,
+				DefaultTTLMinutes:    testDefaultTTLMinutes,
+				MaxTTLMinutes:        testMaxTTLMinutes,
+				SearchMaxBudgetBytes: testSearchMaxBudgetBytes,
 			},
 		}),
 	})

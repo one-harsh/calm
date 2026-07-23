@@ -15,6 +15,7 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 
+	"github.com/one-harsh/calm/internal/search"
 	"github.com/one-harsh/calm/internal/secrets"
 )
 
@@ -25,6 +26,7 @@ const (
 	minFeedbackTTLMinutes     = 1
 	maxFeedbackTTLMinutes     = 1440
 	defaultFeedbackTTLMinutes = 60
+	maxSearchBudgetKB         = 256
 )
 
 var namespaceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -34,8 +36,13 @@ type Config struct {
 	Server        ServerConfig        `mapstructure:"server"`
 	Sessions      SessionsConfig      `mapstructure:"sessions"`
 	Storage       StorageConfig       `mapstructure:"storage"`
+	Search        SearchConfig        `mapstructure:"search"`
 	Observability ObservabilityConfig `mapstructure:"observability"`
 	Namespaces    []NamespaceConfig   `mapstructure:"namespaces"`
+}
+
+type SearchConfig struct {
+	MaxBudgetKB int `mapstructure:"max_budget_kb"`
 }
 
 type ObservabilityConfig struct {
@@ -107,11 +114,17 @@ type StorageConfig struct {
 }
 
 type NamespaceConfig struct {
-	Name                     string         `mapstructure:"name"`
-	APIKey                   secrets.Secret `mapstructure:"api_key"`
-	RatePerSecond            int            `mapstructure:"rate_per_second"`
-	RequireClientCredentials bool           `mapstructure:"require_client_credentials"`
-	FeedbackTTLMinutes       int            `mapstructure:"feedback_ttl_minutes"`
+	Name                     string                `mapstructure:"name"`
+	APIKey                   secrets.Secret        `mapstructure:"api_key"`
+	RatePerSecond            int                   `mapstructure:"rate_per_second"`
+	RequireClientCredentials bool                  `mapstructure:"require_client_credentials"`
+	FeedbackTTLMinutes       int                   `mapstructure:"feedback_ttl_minutes"`
+	Search                   NamespaceSearchConfig `mapstructure:"search"`
+}
+
+type NamespaceSearchConfig struct {
+	DefaultAllocator       string `mapstructure:"default_allocator"`
+	AllowAllocatorOverride bool   `mapstructure:"allow_allocator_override"`
 }
 
 // Load reads the YAML at path, applies CALM_-prefixed env overrides, validates.
@@ -181,6 +194,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("storage.max_idle_conns", 25)
 	v.SetDefault("storage.conn_max_lifetime", 30*time.Minute)
 	v.SetDefault("storage.trigram_similarity_threshold", 0.5)
+
+	v.SetDefault("search.max_budget_kb", 64)
 }
 
 func validate(cfg *Config) error {
@@ -209,6 +224,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.TrigramSimilarityThreshold == 0 {
 		return errors.New("storage.trigram_similarity_threshold must be > 0 (set the explicit default 0.5 to match the Postgres pg_trgm default)")
+	}
+	if cfg.Search.MaxBudgetKB < 1 || cfg.Search.MaxBudgetKB > maxSearchBudgetKB {
+		return fmt.Errorf("search.max_budget_kb must be in [1, %d]; got %d", maxSearchBudgetKB, cfg.Search.MaxBudgetKB)
 	}
 	if err := validateRate("server.rate_limit_per_second", cfg.Server.RateLimitPerSecond); err != nil {
 		return err
@@ -312,6 +330,23 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("namespaces[%d] (%s): feedback_ttl_minutes %d above maximum (%d)", i, ns.Name, ns.FeedbackTTLMinutes, maxFeedbackTTLMinutes)
 			}
 		}
+
+		if err := validateAllocator(i, ns.Name, ns.Search.DefaultAllocator); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAllocator(i int, name, allocator string) error {
+	if allocator == "" {
+		return nil
+	}
+	if _, ok := search.ParseVariant(allocator); !ok {
+		return fmt.Errorf("namespaces[%d] (%s): invalid search.default_allocator %q (allowed: %s, %s, %s, %s, %s)",
+			i, name, allocator,
+			search.VariantRankRound, search.VariantScoreProportional, search.VariantKnapsackGreedy,
+			search.VariantEqualBudget, search.VariantMMR)
 	}
 	return nil
 }

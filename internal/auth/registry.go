@@ -26,6 +26,15 @@ type Registry interface {
 	// FeedbackTTLFor returns the per-namespace feedback-acceptance window override;
 	// hasOverride=false → caller uses the system default.
 	FeedbackTTLFor(namespace string) (minutes int, hasOverride bool)
+
+	// DefaultAllocatorFor returns the per-namespace default search allocator
+	// (raw string; auth stays search-agnostic); hasOverride=false → caller uses
+	// the system default variant.
+	DefaultAllocatorFor(namespace string) (allocator string, hasOverride bool)
+
+	// AllowAllocatorOverride reports whether the namespace honors a per-request
+	// X-CALM-Allocator-Variant header.
+	AllowAllocatorOverride(namespace string) bool
 }
 
 type memoryRegistry struct {
@@ -33,9 +42,18 @@ type memoryRegistry struct {
 	rates               map[string]int
 	credentialsRequired map[string]bool
 	feedbackTTLs        map[string]int
+	defaultAllocators   map[string]string
+	allocatorOverride   map[string]bool
 }
 
-func NewMemoryRegistry(keys map[string]string, rates map[string]int, credentialsRequired map[string]bool, feedbackTTLs map[string]int) Registry {
+func NewMemoryRegistry(
+	keys map[string]string,
+	rates map[string]int,
+	credentialsRequired map[string]bool,
+	feedbackTTLs map[string]int,
+	defaultAllocators map[string]string,
+	allocatorOverride map[string]bool,
+) Registry {
 	if keys == nil {
 		keys = map[string]string{}
 	}
@@ -48,7 +66,20 @@ func NewMemoryRegistry(keys map[string]string, rates map[string]int, credentials
 	if feedbackTTLs == nil {
 		feedbackTTLs = map[string]int{}
 	}
-	return &memoryRegistry{keys: keys, rates: rates, credentialsRequired: credentialsRequired, feedbackTTLs: feedbackTTLs}
+	if defaultAllocators == nil {
+		defaultAllocators = map[string]string{}
+	}
+	if allocatorOverride == nil {
+		allocatorOverride = map[string]bool{}
+	}
+	return &memoryRegistry{
+		keys:                keys,
+		rates:               rates,
+		credentialsRequired: credentialsRequired,
+		feedbackTTLs:        feedbackTTLs,
+		defaultAllocators:   defaultAllocators,
+		allocatorOverride:   allocatorOverride,
+	}
 }
 
 func (m *memoryRegistry) Resolve(apiKey string) (string, bool) {
@@ -70,6 +101,15 @@ func (m *memoryRegistry) FeedbackTTLFor(namespace string) (int, bool) {
 	return minutes, ok
 }
 
+func (m *memoryRegistry) DefaultAllocatorFor(namespace string) (string, bool) {
+	allocator, ok := m.defaultAllocators[namespace]
+	return allocator, ok
+}
+
+func (m *memoryRegistry) AllowAllocatorOverride(namespace string) bool {
+	return m.allocatorOverride[namespace]
+}
+
 // BuildRegistry is Fatal on resolution failure, empty resolved key, or two namespaces resolving to the same value.
 func BuildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, reader secrets.SecretReader, logger *logging.Logger) Registry {
 	reg, err := buildRegistry(ctx, namespaces, reader, logger)
@@ -84,6 +124,8 @@ func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 	rates := make(map[string]int, len(namespaces))
 	credentialsRequired := make(map[string]bool, len(namespaces))
 	feedbackTTLs := make(map[string]int, len(namespaces))
+	defaultAllocators := make(map[string]string, len(namespaces))
+	allocatorOverride := make(map[string]bool, len(namespaces))
 	keyOrigin := make(map[string]string, len(namespaces))
 
 	for _, ns := range namespaces {
@@ -112,6 +154,12 @@ func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 		if ns.FeedbackTTLMinutes > 0 {
 			feedbackTTLs[ns.Name] = ns.FeedbackTTLMinutes
 		}
+		if ns.Search.DefaultAllocator != "" {
+			defaultAllocators[ns.Name] = ns.Search.DefaultAllocator
+		}
+		if ns.Search.AllowAllocatorOverride {
+			allocatorOverride[ns.Name] = true
+		}
 	}
 
 	logger.WithContext(ctx).Info(
@@ -120,6 +168,7 @@ func buildRegistry(ctx context.Context, namespaces []config.NamespaceConfig, rea
 		logging.IntField("namespaces.with_rate_override", len(rates)),
 		logging.IntField("namespaces.credentialed", len(credentialsRequired)),
 		logging.IntField("namespaces.with_feedback_ttl_override", len(feedbackTTLs)),
+		logging.IntField("namespaces.with_allocator_override", len(allocatorOverride)),
 	)
-	return NewMemoryRegistry(keys, rates, credentialsRequired, feedbackTTLs), nil
+	return NewMemoryRegistry(keys, rates, credentialsRequired, feedbackTTLs, defaultAllocators, allocatorOverride), nil
 }

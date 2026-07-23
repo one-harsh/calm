@@ -711,3 +711,141 @@ namespaces:
 		t.Error("server.tls.enabled: want false")
 	}
 }
+
+func TestLoad_SearchMaxBudgetKBDefault(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Search.MaxBudgetKB != 64 {
+		t.Errorf("search.max_budget_kb default: want 64, got %d", cfg.Search.MaxBudgetKB)
+	}
+}
+
+func TestLoad_SearchMaxBudgetKBZeroRejected(t *testing.T) {
+	path := writeConfig(t, `
+search:
+  max_budget_kb: 0
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load: want error for search.max_budget_kb 0")
+	}
+}
+
+func TestLoad_NamespaceAllocatorValid(t *testing.T) {
+	for _, v := range []string{"rank-round", "score-proportional", "knapsack-greedy", "equal-budget", "mmr"} {
+		t.Run(v, func(t *testing.T) {
+			path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+    search:
+      default_allocator: `+v+`
+      allow_allocator_override: true
+`)
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load valid allocator %q: %v", v, err)
+			}
+			if cfg.Namespaces[0].Search.DefaultAllocator != v {
+				t.Errorf("default_allocator: want %q, got %q", v, cfg.Namespaces[0].Search.DefaultAllocator)
+			}
+			if !cfg.Namespaces[0].Search.AllowAllocatorOverride {
+				t.Errorf("allow_allocator_override: want true")
+			}
+		})
+	}
+}
+
+func TestLoad_NamespaceAllocatorEmptyDefaultsToUnset(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Namespaces[0].Search.DefaultAllocator != "" {
+		t.Errorf("empty default_allocator: want \"\", got %q", cfg.Namespaces[0].Search.DefaultAllocator)
+	}
+	if cfg.Namespaces[0].Search.AllowAllocatorOverride {
+		t.Errorf("allow_allocator_override: want false by default")
+	}
+}
+
+func TestLoad_NamespaceAllocatorInvalidRejected(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+    search:
+      default_allocator: not-a-variant
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load: want error for invalid default_allocator")
+	}
+	for _, want := range []string{"rank-round", "mmr"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name the valid set (%q); got %v", want, err)
+		}
+	}
+}
+
+func TestLoad_SearchMaxBudgetKBAtCapAccepted(t *testing.T) {
+	path := writeConfig(t, `
+search:
+  max_budget_kb: 256
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load at cap: %v", err)
+	}
+	if cfg.Search.MaxBudgetKB != 256 {
+		t.Errorf("max_budget_kb = %d; want 256", cfg.Search.MaxBudgetKB)
+	}
+}
+
+func TestLoad_SearchMaxBudgetKBAboveCapRejected(t *testing.T) {
+	path := writeConfig(t, `
+search:
+  max_budget_kb: 257
+storage:
+  dsn: postgres://localhost/calm
+namespaces:
+  - name: default
+    api_key: "[text:x]"
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load: want error for max_budget_kb above cap")
+	}
+	if !strings.Contains(err.Error(), "[1, 256]") {
+		t.Errorf("error should name the range [1, 256]; got %v", err)
+	}
+}

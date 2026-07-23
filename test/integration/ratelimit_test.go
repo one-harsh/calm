@@ -48,6 +48,8 @@ func newRateLimitTestServer(t *testing.T, cfg ratelimitTestCfg) (defaultClient, 
 		cfg.NSOverrides,
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 
 	sessionSvc := session.New(env.store, session.Config{CacheSize: 10_000}, logging.Nop())
