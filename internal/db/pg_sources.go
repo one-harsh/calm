@@ -85,6 +85,64 @@ func (r *sourcesRepo) List(ctx context.Context, namespace string, sessionID int6
 	return out, nil
 }
 
+// ChunksInOrder returns a source's chunks in the order they were indexed
+// (document order), a page at a time. Document order is chunk id ascending:
+// chunks carry a BIGSERIAL id and are inserted in slice order, so id order is
+// insertion order and stays stable across idempotent re-ingest.
+// hasMore is a LIMIT+1 probe: one extra row past the page means more chunks remain.
+func (r *sourcesRepo) ChunksInOrder(ctx context.Context, namespace string, in DocOrderInput) ([]DocChunk, bool, error) {
+	if namespace == "" {
+		return nil, false, ErrNamespaceRequired
+	}
+	if in.Source == "" {
+		return nil, false, ErrSourceRequired
+	}
+	if in.Limit < 0 || in.Offset < 0 {
+		return nil, false, ErrInvalidLimit
+	}
+
+	limit := in.Limit
+	if limit == 0 {
+		limit = defaultSearchLimit
+	}
+
+	const query = `SELECT c.title, c.content, s.label
+	               FROM chunks c
+	               JOIN sources s ON s.id = c.source_id
+	               WHERE s.session_id = $1
+	                 AND s.label = $2
+	                 AND EXISTS (SELECT 1 FROM sessions WHERE id = $1 AND namespace = $3)
+	               ORDER BY c.id ASC
+	               LIMIT $4 OFFSET $5`
+
+	rows, err := r.queryer.QueryContext(ctx, query, in.SessionID, in.Source, namespace, limit+1, in.Offset)
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: chunks in order for session %d in %q: %w",
+			ErrStorageBackend, in.SessionID, namespace, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []DocChunk{}
+	for rows.Next() {
+		var c DocChunk
+		if err := rows.Scan(&c.Title, &c.Content, &c.Source); err != nil {
+			return nil, false, fmt.Errorf("%w: scan chunk for session %d in %q: %w",
+				ErrStorageBackend, in.SessionID, namespace, err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("%w: iterate chunks for session %d in %q: %w",
+			ErrStorageBackend, in.SessionID, namespace, err)
+	}
+
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
 // Single-query by design: the repo is tx-agnostic, so batch fan-out lives in
 // the service layer that knows it holds a concurrency-safe *sql.DB.
 func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInput) ([]SearchHit, error) {

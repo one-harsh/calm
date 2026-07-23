@@ -41,18 +41,36 @@ func (h *Handlers) Search(
 	namespace := auth.NamespaceFromContext(ctx)
 	correlationID := correlationIDOrNil(ctx, h.deps.Logger, "search")
 
-	in := db.SearchInput{SessionID: md.ID, Limit: defaultSearchLimit}
+	queries := request.Body.Queries
+	source := ""
 	if request.Body.Source != nil {
-		in.Source = *request.Body.Source
+		source = *request.Body.Source
 	}
+	limit := defaultSearchLimit
 	if request.Body.Limit != nil {
-		in.Limit = *request.Body.Limit
+		limit = *request.Body.Limit
 	}
-
 	budget := h.searchBudget(ctx, request.Body.BudgetBytes)
-	variant := h.resolveAllocator(namespace, request.Params.XCALMAllocatorVariant)
 
-	result, err := h.deps.Search.Search(ctx, namespace, md.ID, correlationID, in, request.Body.Queries, budget, variant)
+	var result search.Result
+	var err error
+	if len(queries) == 0 {
+		if source == "" {
+			return genapi.Search400JSONResponse{BadRequestJSONResponse: genapi.BadRequestJSONResponse{
+				Error:  "invalid_request",
+				Detail: ptr("either queries or source is required"),
+			}}, nil
+		}
+		offset := 0
+		if request.Body.Offset != nil && *request.Body.Offset > 0 {
+			offset = *request.Body.Offset
+		}
+		result, err = h.deps.Search.DocumentOrder(ctx, namespace, md.ID, correlationID, source, limit, offset, budget)
+	} else {
+		in := db.SearchInput{SessionID: md.ID, Source: source, Limit: limit}
+		variant := h.resolveAllocator(namespace, request.Params.XCALMAllocatorVariant)
+		result, err = h.deps.Search.Search(ctx, namespace, md.ID, correlationID, in, queries, budget, variant)
+	}
 	if err != nil {
 		if m, ok := mapSearchError(err); ok {
 			body := genapi.Error{Error: m.Code, Detail: &m.Detail}
@@ -80,12 +98,17 @@ func (h *Handlers) Search(
 	for qi, r := range result.Queries {
 		hits := make([]genapi.SearchHit, len(r.Hits))
 		for i, hit := range r.Hits {
-			hits[i] = genapi.SearchHit{
+			gh := genapi.SearchHit{
 				Title:      hit.Title,
 				Snippet:    hit.Snippet,
 				Source:     hit.Source,
 				MatchLayer: genapi.SearchHitMatchLayer(hit.MatchLayer),
 			}
+			if hit.Truncated {
+				t := true
+				gh.Truncated = &t
+			}
+			hits[i] = gh
 		}
 		out[qi] = genapi.QuerySearchResult{Query: r.Query, Hits: hits, BudgetOmitted: r.BudgetOmitted}
 	}
@@ -97,6 +120,7 @@ func (h *Handlers) Search(
 		ByteBudgetUsed: result.ByteBudgetUsed,
 		BudgetExceeded: result.BudgetExceeded,
 		BudgetBytes:    result.BudgetBytes,
+		NextOffset:     result.NextOffset,
 	}), nil
 }
 

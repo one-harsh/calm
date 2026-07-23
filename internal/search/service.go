@@ -18,8 +18,12 @@ import (
 const (
 	requestTypeSearch = "search"
 
-	matchLayerPrimary = "primary"
-	matchLayerTrigram = "trigram"
+	matchLayerPrimary  = "primary"
+	matchLayerTrigram  = "trigram"
+	matchLayerDocument = "document"
+
+	modeRanked   = "ranked"
+	modeDocument = "document"
 
 	// Three disjoint bands (gaps deliberate) mirror the DAL's ordering tier in
 	// allocator value space: an additive bonus on unbounded raw scores cannot
@@ -48,6 +52,7 @@ type Result struct {
 	BudgetExceeded bool
 	BudgetBytes    int
 	Allocator      Variant
+	NextOffset     *int
 }
 
 type QueryResult struct {
@@ -112,6 +117,7 @@ func (s *Service) Search(
 	if s.logger.Enabled(logging.DebugLevel) {
 		s.logger.WithContext(ctx).Debug(
 			"search executed",
+			obs.ModeRanked,
 			obs.SearchQueries(len(queries)),
 			obs.SearchHitsTotal(total),
 			obs.SearchHitsPrimary(primary),
@@ -224,8 +230,10 @@ func (s *Service) captureCorrelation(
 	primary, trigram, total, snippetFallbacks, resultsOmitted int,
 ) {
 	meta, err := json.Marshal(map[string]any{
+		"mode":              modeRanked,
 		"hits_primary":      primary,
 		"hits_trigram":      trigram,
+		"hits_document":     0,
 		"hit_count":         total,
 		"snippet_fallbacks": snippetFallbacks,
 		"allocator":         string(result.Allocator),
@@ -248,12 +256,19 @@ func (s *Service) captureCorrelation(
 // mirrored locally (no genapi import). Envelope/separators aren't counted, so
 // the HTTP body runs slightly larger than byte_budget_used.
 func wireSize(h db.SearchHit) (int, error) {
-	b, err := json.Marshal(sizedHit{
+	sh := sizedHit{
 		Title:      h.Title,
 		Snippet:    h.Snippet,
 		Source:     h.Source,
 		MatchLayer: h.MatchLayer,
-	})
+	}
+	// omitempty keeps ranked hits (Truncated==false) byte-identical to before;
+	// a truncated document hit accounts for the extra ,"truncated":true bytes.
+	if h.Truncated {
+		t := true
+		sh.Truncated = &t
+	}
+	b, err := json.Marshal(sh)
 	if err != nil {
 		return 0, err
 	}
@@ -265,4 +280,5 @@ type sizedHit struct {
 	Snippet    string `json:"snippet"`
 	Source     string `json:"source"`
 	MatchLayer string `json:"match_layer"`
+	Truncated  *bool  `json:"truncated,omitempty"`
 }

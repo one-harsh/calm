@@ -148,7 +148,9 @@ func TestSearchHandler_CrossNamespaceInvisible404(t *testing.T) {
 	}
 }
 
-// An empty queries array is rejected with 400 by the OpenAPI validator before reaching the handler.
+// With queries relaxed to select document-order mode, a call carrying neither
+// queries nor source is the one still-invalid shape: the handler rejects it with
+// a 400 invalid_request (no longer the OpenAPI validator's required-field 400).
 func TestSearchHandler_MissingQueriesRejected400(t *testing.T) {
 	t.Parallel()
 	sess := createSessionForTest(t, testNamespace)
@@ -161,6 +163,9 @@ func TestSearchHandler_MissingQueriesRejected400(t *testing.T) {
 		t.Fatalf("Search: %v", err)
 	}
 	if resp.StatusCode() != http.StatusBadRequest {
-		t.Fatalf("status = %d; want 400 (validator rejects empty queries) body=%s", resp.StatusCode(), string(resp.Body))
+		t.Fatalf("status = %d; want 400 (neither queries nor source) body=%s", resp.StatusCode(), string(resp.Body))
+	}
+	if resp.JSON400 == nil || resp.JSON400.Error != "invalid_request" {
+		t.Fatalf("error = %+v; want invalid_request from the handler", resp.JSON400)
 	}
 }

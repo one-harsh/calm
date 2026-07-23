@@ -187,7 +187,7 @@ Workloads classify their events into these tiers when posting. `priority` is req
 
 | Type | Priority | Required fields | Optional fields |
 |---|---|---|---|
-| `file_touched` | 1 | `path`, `operation` (read/write/create/delete) | `outcome` (ok/error), `error_message` |
+| `file_touched` | 1 | `path`, `operation` (edit/write/create), `diff`, `invocation_id` | `latest_source`, `history_source` |
 | `task_in_progress` | 1 | `description` | `status` (active/blocked/completed) |
 | `project_rule` | 1 | `rule` | `source` (e.g. CLAUDE.md) |
 | `error_observed` | 2 | `message`, `source` | `exit_code`, `trace_snippet` |
@@ -203,7 +203,7 @@ When developers use the MCP adapter, priority assignment for these events is han
 Representative payloads:
 
 ```json
-{ "type": "file_touched", "data": { "path": "src/db/pool.go", "operation": "write", "outcome": "ok" } }
+{ "type": "file_touched", "data": { "path": "src/db/pool.go", "operation": "edit", "diff": "@@ -12,7 +12,7 @@ …", "invocation_id": 14 } }
 { "type": "error_observed", "data": { "message": "connection pool exhausted", "source": "clickhouse", "exit_code": 1, "trace_snippet": "dial tcp: connection refused" } }
 { "type": "user_decision", "data": { "decision": "skip retrying clickhouse, move to read replica", "context": "three consecutive timeouts", "rejected_alternatives": ["retry with backoff", "fallback to cache"] } }
 ```
@@ -562,7 +562,7 @@ Requires the `X-CALM-Session-Token` header.
 
 ### `POST /v1/search`
 
-Queries indexed content within a session. Supports multiple queries in a single call.
+Retrieves indexed content within a session, in one of two modes selected by the request shape: **ranked** — one or more `queries` present — returns relevance-ranked hits per query, multiple queries in a single call; **document-order** — `queries` omitted or empty with `source` supplied — returns that source's chunks in the order they were indexed, paginated. A request with neither queries nor a source is invalid.
 
 Requires the `X-CALM-Session-Token` header.
 
@@ -575,13 +575,18 @@ Requires the `X-CALM-Session-Token` header.
 }
 ```
 
-- `source` — optional. Scopes the search to a specific source label.
-- `limit` — maximum results per query.
+- `source` — optional in ranked mode (scopes the search to a specific source label); required to select document-order mode.
+- `limit` — maximum results per query (ranked mode) or maximum chunks per page (document-order mode).
+- `offset` — document-order only: the zero-based chunk index at which the page begins (default 0). Silently ignored in ranked mode. There is no upper bound — an offset at or past the last chunk returns an empty final page, not an error.
 - `budget_bytes` — optional. Response-level byte budget across all queries. Defaults to 4 KB; bounded by an operator-configurable ceiling (default 64 KB). Over-ceiling requests are clamped, not rejected (parallel to session-TTL clamping; the response echoes the committed value).
 
-Returns exact indexed text with smart snippets around matching terms. The two-layer fallback (primary tokenizer → trigram) is internal — the workload just sends a query and gets ranked results.
+In document-order mode the response carries `next_offset` when more chunks remain past the returned page and omits it on the final page, so a workload rereads a long captured output by following `next_offset` until it is absent. Each hit's `snippet` is the chunk's full stored text — not an excerpt — and `match_layer` is `document`. A page is bounded by both `limit` (chunk count) and `budget_bytes`, ending at whichever binds first; the byte budget stays strict with no overshoot. When the first chunk of a page alone exceeds the budget, the response returns a prefix of its exact text — never splitting a character — with `truncated` set to true, and `next_offset` advances past that chunk; a later chunk that does not fit instead ends the page and begins the next one.
 
-Search is not scoped by `content_type`. A session that has indexed a mix of prose and code chunks (e.g., a coding-agent run that ingested both API docs and source files) gets results from both tokenization paths in one ranked list — the layer-1 query runs against both the prose and code FTS indexes and the two rankings are fused (see [§7](#7-data-model--storage) for the fusion mechanics). The workload sees a single result list and does not need to know which tokenizer matched.
+A document-order response uses the same envelope as ranked mode: a single `results` entry whose `query` is the empty string, its `hits` carrying the chunks in order; `next_offset` rides at the response level beside `byte_budget_used`. `budget_omitted` counts the chunk — at most one, since document order forbids skipping ahead — that was dropped for budget this page (it leads the next page), and `budget_exceeded` is true whenever a chunk was dropped or truncated.
+
+In ranked mode the search returns exact indexed text with smart snippets around matching terms. The two-layer fallback (primary tokenizer → trigram) is internal — the workload just sends a query and gets ranked results.
+
+Ranked search is not scoped by `content_type`. A session that has indexed a mix of prose and code chunks (e.g., a coding-agent run that ingested both API docs and source files) gets results from both tokenization paths in one ranked list — the layer-1 query runs against both the prose and code FTS indexes and the two rankings are fused (see [§7](#7-data-model--storage) for the fusion mechanics). The workload sees a single result list and does not need to know which tokenizer matched.
 
 `results` is an ordered array with one entry per query, in the order the queries were submitted; each entry pairs the `query` with its ranked `hits`. (An array rather than a query-keyed object preserves request order, tolerates duplicate queries, and leaves room to attach per-query metadata without a breaking change.)
 
@@ -618,15 +623,15 @@ Search is not scoped by `content_type`. A session that has indexed a mix of pros
 }
 ```
 
-Result assembly is byte-budgeted. The allocator runs in rank rounds: every query's first-ranked candidate is offered before any query's second, every second before any third. A candidate is included only when its compact-JSON-serialized size (UTF-8 bytes of its standalone `SearchHit` representation) fits the remaining budget. Snippets are never further truncated — each is an exact excerpt of the matched chunk's stored text, derived at query time under a length budget.
+Ranked result assembly is byte-budgeted. The allocator runs in rank rounds: every query's first-ranked candidate is offered before any query's second, every second before any third. A candidate is included only when its compact-JSON-serialized size (UTF-8 bytes of the hit's standalone JSON object) fits the remaining budget. Ranked snippets are never further truncated — each is an exact excerpt of the matched chunk's stored text, derived at query time under a length budget, and the allocator includes or omits a hit whole.
 
 Per-query `budget_omitted` reports the count of otherwise-returnable candidates (from that query's top-`limit` set) that were not included because the budget didn't accommodate them. Response-level `byte_budget_used` reports the actual bytes consumed. `budget_bytes` echoes the committed budget (after operator-ceiling clamping); workloads detect clamping by comparing requested vs echoed.
 
-No-overshoot rule: the budget is strict. A candidate is included only when its serialized size fits the remaining budget; if no candidate fits, the results are empty with `byte_budget_used` zero and `budget_exceeded` true. `byte_budget_used` never exceeds the committed `budget_bytes`. The empty-plus-exceeded response is a precise retry signal — the workload raises `budget_bytes` if its context allows. Unlike the snapshot endpoint, search takes no P1-style overshoot exception: an oversized hit is un-trimmable downstream, and the budget is the caller's context-protection constraint. See Decision Log [DL15](#dl15).
+No-overshoot rule: the budget is strict in both modes — `byte_budget_used` never exceeds the committed `budget_bytes`. In ranked mode, if no candidate fits, the results are empty with `byte_budget_used` zero and `budget_exceeded` true; the empty-plus-exceeded response is a precise retry signal — the workload raises `budget_bytes` if its context allows. Unlike the snapshot endpoint, ranked search takes no P1-style overshoot exception; document-order's first-of-page prefix is not an exception to strictness — the cut is exact text, explicitly flagged, and exists so a reread can always advance. Rationale in Decision Log [DL15](#dl15).
 
-The default allocator is rank-round. Operators select alternatives per namespace via configuration; workloads may override per request by setting `X-CALM-Allocator-Variant` (when the namespace allows override). Supported variants: `rank-round` (default — multi-query coverage), `score-proportional` (allocates proportionally to per-query rank scores), `knapsack-greedy` (DP knapsack maximizing sum-of-relevance), `equal-budget` (`budget / N` per query), `mmr` (Maximal Marginal Relevance — diversifies against near-duplicate hits across queries). All variants honor the same budget contract: no overshoot, no snippet truncation, per-query `budget_omitted` accounting unchanged.
+The default allocator is rank-round. Operators select alternatives per namespace via configuration; workloads may override per request by setting `X-CALM-Allocator-Variant` (when the namespace allows override). Supported variants: `rank-round` (default — multi-query coverage), `score-proportional` (allocates proportionally to per-query rank scores), `knapsack-greedy` (DP knapsack maximizing sum-of-relevance), `equal-budget` (`budget / N` per query), `mmr` (Maximal Marginal Relevance — diversifies against near-duplicate hits across queries). All variants honor the same budget contract: no overshoot, hits included or omitted whole (never re-trimmed), per-query `budget_omitted` accounting unchanged.
 
-`match_layer` is one of `primary`, `trigram` — indicating which fallback layer produced the match. `primary` covers both the prose and code FTS indexes (which are RRF-fused at layer 1, per [§7](#7-data-model--storage)) — the workload does not see, and does not need to disambiguate, which tokenizer the underlying chunk was indexed with. The field is diagnostic context: operators read it alongside `search.hit_rate` and `search.zero_results` when investigating quality issues, not as a standalone signal.
+`match_layer` is one of `primary`, `trigram`, `document`. For ranked hits it indicates which fallback layer produced the match; `primary` covers both the prose and code FTS indexes (which are RRF-fused at layer 1, per [§7](#7-data-model--storage)) — the workload does not see, and does not need to disambiguate, which tokenizer the underlying chunk was indexed with. `document` is a mode indicator, not a relevance layer: it marks a hit returned by document-order pagination rather than ranked retrieval. The field is diagnostic context: operators read it alongside `search.hit_rate` and `search.zero_results` when investigating quality issues, not as a standalone signal.
 
 The response surface deliberately excludes raw BM25/RRF scores, tokenizer identity (which FTS index produced each match — `match_layer=primary` covers both), per-request ranking weights, and generated explanations of result ordering. Exposing these would tempt workloads to re-rank or filter results based on signals CALM doesn't standardize across deployments or time. The diagnostic surface (`match_layer`, `byte_budget_used`, `budget_bytes`, per-query `budget_omitted`) is the full set of observability fields the response carries.
 
@@ -911,6 +916,8 @@ IDF is computed on demand at query time as `log(N / doc_freq)`, where N is the c
 
 Vocabulary is per-session for isolation. On idempotent re-ingest of a source, the prior source's contribution to `doc_freq` is decremented before the new chunks' contributions are added. Rows reaching `doc_freq` zero are deleted.
 
+Workloads that retain a per-revision history of the same content — the MCP adapter's edit capture ingests each file revision as its own retained source alongside the replaced latest source — accumulate near-duplicate chunks across revisions. `doc_freq` for terms stable across those revisions rises with each retained revision, lowering their IDF; `distinctive_terms` and ranking then favor what changed between revisions over what persisted. This is the intended reading of chunk-level document frequency, not an anomaly: retained history weights the session's vocabulary toward recent variation.
+
 ### Session Events
 
 Structured events captured during a session. Used for state reconstruction via the snapshot endpoint.
@@ -1150,14 +1157,14 @@ These are the numbers that answer "is CALM paying for itself."
 
 - `search.hit_rate` — percentage of queries that returned at least one result
 - `search.zero_results` — count of queries with no matches
-- `search.match_layer` — distribution across `primary` and `trigram`. Diagnostic context, not an action trigger. When other metrics (`search.hit_rate`, `search.zero_results`, `ingest.reingest_rate`) surface a quality issue, the match_layer distribution helps explain what the fallback was doing — for example, a drop in `hit_rate` combined with elevated trigram rate suggests workload query patterns are shifting away from what layer-1 tokenization handles cleanly.
+- `search.match_layer` — distribution across `primary` and `trigram`. Document-order hits are deliberately excluded: they are pagination, not matches, and would dilute the match-quality signal. Diagnostic context, not an action trigger. When other metrics (`search.hit_rate`, `search.zero_results`, `ingest.reingest_rate`) surface a quality issue, the match_layer distribution helps explain what the fallback was doing — for example, a drop in `hit_rate` combined with elevated trigram rate suggests workload query patterns are shifting away from what layer-1 tokenization handles cleanly.
 - `search.latency_ms` — per-query latency
 - `ingest.intent.coverage` — when intents are provided on ingest, the average fraction of sections in the response with non-empty `matches`. Low coverage suggests workloads are providing intents that don't align with the content vocabulary.
 
 The search-budget metrics below carry an `allocator` label identifying which variant produced the budgeted result, enabling A/B comparison across `rank-round`, `score-proportional`, `knapsack-greedy`, `equal-budget`, and `mmr`.
 
 - `search.budget_exhausted` — count of `/v1/search` calls where budget forced at least one omission (any `budget_omitted > 0` across the response's queries). Elevated rates suggest workloads consistently request too-tight budgets or that the content set has hits exceeding typical budget sizes.
-- `search.results.omitted` — total count of `SearchHit` omissions across all queries due to budget exhaustion.
+- `search.results.omitted` — total count of hits omitted across all queries due to budget exhaustion.
 
 ### Session lifecycle
 
@@ -1172,7 +1179,7 @@ The search-budget metrics below carry an `allocator` label identifying which var
 
 Cost metrics tell you CALM is saving tokens. These tell you whether the model is still getting what it needs.
 
-- `ingest.reingest_rate` — how often the same source label is re-indexed within a session. A workload re-ingesting a source it already indexed is a signal that the compact representation wasn't sufficient.
+- `ingest.reingest_rate` — how often the same source label is re-indexed within a session. A workload re-ingesting a source it already indexed is a signal that the compact representation wasn't sufficient. Workloads that maintain a latest-content source per mutable file re-ingest by design — the MCP adapter refreshes a file's source on every edit so subsequent reads see current content — so in edit-heavy sessions an elevated rate tracks edit activity, not retrieval failure; interpret it per-source, not per-session, for such workloads.
 - `search.after_ingest_rate` — how often a `/v1/search` call follows a `/v1/ingest` on the same source within the same session turn. Expected behavior for iterative workflows; elevated rates on first turns suggest compact summaries aren't landing.
 - `snapshot.injection_count` — how often `/v1/snapshot` is called. Tracks how frequently session continuity is actually exercised, not just available.
 - `snapshot.events.returned` — counter of events included in snapshot responses, summed across calls.
@@ -1249,7 +1256,7 @@ Namespace isolation is enforced as **invisibility** — cross-namespace access r
 
 Of CALM's twin observable concerns, quality is the harder to detect. Token spend shows up in workload bills directly; degraded answer quality can be invisible to a workload that runs faster and cheaper but missed a critical detail that was filtered out or buried in a low-ranked chunk.
 
-The answer quality metrics above are the detection mechanism. Elevated re-ingest rates, high intent zero-match rates, and frequent search-after-ingest patterns are all signals that CALM is not surfacing the right content. These should be monitored from first production deployment and reviewed alongside workload-side outcome metrics (task completion, retry rates, user corrections) that the workload's owners already track.
+The answer quality metrics above are the detection mechanism. Elevated re-ingest rates (excepting by-design edit-capture re-ingest — see the `ingest.reingest_rate` caveat), high intent zero-match rates, and frequent search-after-ingest patterns are all signals that CALM is not surfacing the right content. These should be monitored from first production deployment and reviewed alongside workload-side outcome metrics (task completion, retry rates, user corrections) that the workload's owners already track.
 
 ---
 
@@ -1535,9 +1542,9 @@ This is distinct from [DL13](#dl13) (session-scoped *content* storage, no cross-
 
 **Response-level byte budget for `/v1/search`**
 
-`/v1/search` accepts a workload-controlled `budget_bytes` value that caps the total bytes of serialized `SearchHit` objects across all queries in the response. A deterministic rank-round allocator across queries decides which exact-text hits fit — every query's first-ranked candidate is offered before any query's second, every second before any third. Each candidate is accounted as its compact JSON UTF-8 representation; included only when its size fits the remaining budget; snippets are never further truncated. Per-query `budget_omitted` reports the count of otherwise-returnable candidates (from that query's top-`limit` set) that were not included. Default budget is 4 KB; bounded by an operator-configurable ceiling (default 64 KB). Over-ceiling requests are clamped, not rejected (per [DL04](#dl04)'s never-worse stance; parallel to session-TTL clamping).
+`/v1/search` accepts a workload-controlled `budget_bytes` value that caps the total serialized bytes of hits across all queries in the response. A deterministic allocator decides which exact-text hits fit; the mechanics, accounting unit, and `budget_omitted` reporting are specified in the API contract's search section. Default budget is 4 KB; bounded by an operator-configurable ceiling (default 64 KB). Over-ceiling requests are clamped, not rejected (per [DL04](#dl04)'s never-worse stance; parallel to session-TTL clamping).
 
-The allocator is pluggable. Five variants ship: **rank-round** (default — offers every query's first-ranked candidate before any query's second, preserving multi-query coverage); **score-proportional** (allocates budget proportionally to per-query rank scores); **knapsack-greedy** (DP knapsack maximizing sum-of-relevance under budget); **equal-budget** (`budget / N` per query); **MMR** (Maximal Marginal Relevance — re-ranks for diversity against near-duplicate hits across queries). Operators set the namespace default; workloads override per request via `X-CALM-Allocator-Variant` (gated by a namespace flag). All variants honor the same budget contract: no overshoot, no snippet truncation, per-query `budget_omitted` accounting unchanged. Rank-round is the default because it preserves multi-query coverage — no single query's tail starves another query's head, which is the canonical complaint about count-based and score-proportional allocators.
+The allocator is pluggable: five variants ship (rank-round default, score-proportional, knapsack-greedy, equal-budget, MMR), enumerated with their selection surface in the API contract's search section. Rank-round is the default because it preserves multi-query coverage — no single query's tail starves another query's head, which is the canonical complaint about count-based and score-proportional allocators.
 
 Considered alternatives:
 
@@ -1546,6 +1553,6 @@ Considered alternatives:
 - **Per-hit count limit only** (the existing `limit`). Rejected for the same reason as no-budget — counts don't predict bytes; the diagnostic surface is moot without a byte axis. `limit` and `budget_bytes` are not alternatives but composable gates: both apply, the tighter wins.
 - **Single fixed allocator (rank-round only).** Rejected: workloads' optimal allocation depends on their query patterns. Multi-query searches over independent topics benefit from rank-round's coverage preservation; searches over near-duplicate queries benefit from MMR's diversity; cost-sensitive workloads with stable query relevance distributions can prefer knapsack-greedy. Pluggability lets operators tune per namespace without code changes, and per-request override lets workloads A/B test for their specific access patterns. The variants are a small, well-understood set — not an open plugin surface.
 
-**No-overshoot rule.** The budget is strict: a candidate is included only when its serialized size fits the remaining budget, so `byte_budget_used` never exceeds the committed `budget_bytes`. When no candidate fits, the results are empty with `budget_exceeded` true — a precise retry signal the workload answers by raising `budget_bytes`. Search takes no P1-style overshoot exception (unlike the snapshot endpoint, §8): an oversized hit is un-trimmable downstream, and the budget is the caller's context-protection constraint, not a hint that never-worse may override.
+**No-overshoot rule.** The budget is strict; the behavior is specified in the API contract's search section. The rationale: a ranked snippet is already the final extraction product — trimming it further would corrupt evidence — and the budget is the caller's context-protection constraint, not a hint that never-worse may override. Hence no P1-style overshoot exception (unlike the snapshot endpoint, §8).
 
 ---

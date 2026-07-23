@@ -44,6 +44,7 @@ type SourcesRepo interface {
 	Upsert(ctx context.Context, namespace string, sessionID int64, source string) (sourceID int64, created bool, err error)
 	List(ctx context.Context, namespace string, sessionID int64) ([]SourceSummary, error)
 	Search(ctx context.Context, namespace string, in SearchInput) ([]SearchHit, error)
+	ChunksInOrder(ctx context.Context, namespace string, in DocOrderInput) (chunks []DocChunk, hasMore bool, err error)
 }
 
 type ChunksRepo interface {

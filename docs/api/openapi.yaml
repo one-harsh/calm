@@ -756,21 +756,36 @@ components:
 
     SearchRequest:
       type: object
-      required: [queries]
       properties:
         queries:
           type: array
-          minItems: 1
           maxItems: 10
           items: { type: string, minLength: 1 }
+          x-go-type-skip-optional-pointer: true
+          description: |
+            Queries to rank content against. When omitted or empty and `source`
+            is supplied, the search returns that source's chunks in document
+            order instead of by relevance (see `offset`).
         source:
           type: string
-          description: Scopes the search to a specific source label.
+          description: |
+            Scopes the search to a specific source label. Also selects
+            document-order mode: with no `queries`, the source's chunks are
+            returned in the order they were indexed.
         limit:
           type: integer
           minimum: 1
           maximum: 50
           default: 5
+        offset:
+          type: integer
+          minimum: 0
+          default: 0
+          description: |
+            Document-order pagination cursor: the zero-based chunk index to
+            start from. Silently ignored when `queries` are present. It has no
+            upper bound — an offset past the end returns an empty final page,
+            not an error.
         budget_bytes:
           type: integer
           minimum: 1
@@ -794,11 +809,21 @@ components:
         source: { type: string }
         match_layer:
           type: string
-          enum: [primary, trigram]
+          enum: [primary, trigram, document]
           description: |
             Which fallback layer produced this hit. `primary` covers both the
             prose and code FTS indexes (RRF-fused at layer 1) — workloads do
             not see, and do not need to disambiguate, which tokenizer matched.
+            `document` is a mode indicator, not a relevance layer: it marks a
+            hit returned by document-order pagination rather than ranked
+            retrieval.
+        truncated:
+          type: boolean
+          description: |
+            Present and true only for the first chunk of a document-order page
+            whose full text alone exceeds `budget_bytes`: the `snippet` is an
+            exact-text prefix of that chunk, and the chunk still counts as
+            consumed (`next_offset` advances past it).
 
     SearchResult:
       type: object
@@ -826,12 +851,23 @@ components:
           description: |
             The committed budget after the server clamps to its ceiling. Compare
             against the requested value to detect clamping.
+        next_offset:
+          type: integer
+          description: |
+            Document-order pagination cursor for the next page: present when
+            more chunks remain past the returned page, its value the `offset`
+            to request next; omitted on the final page. Never present on ranked
+            (query) responses.
 
     QuerySearchResult:
       type: object
       required: [query, hits, budget_omitted]
       properties:
-        query: { type: string }
+        query:
+          type: string
+          description: |
+            Echoes the submitted query. In document-order mode (no queries),
+            this is the empty string.
         hits:
           type: array
           items: { $ref: '#/components/schemas/SearchHit' }

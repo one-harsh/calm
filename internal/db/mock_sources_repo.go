@@ -24,6 +24,73 @@ func (_m *MockSourcesRepo) EXPECT() *MockSourcesRepo_Expecter {
 	return &MockSourcesRepo_Expecter{mock: &_m.Mock}
 }
 
+// ChunksInOrder provides a mock function with given fields: ctx, namespace, in
+func (_m *MockSourcesRepo) ChunksInOrder(ctx context.Context, namespace string, in DocOrderInput) ([]DocChunk, bool, error) {
+	ret := _m.Called(ctx, namespace, in)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ChunksInOrder")
+	}
+
+	var r0 []DocChunk
+	var r1 bool
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, DocOrderInput) ([]DocChunk, bool, error)); ok {
+		return rf(ctx, namespace, in)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, DocOrderInput) []DocChunk); ok {
+		r0 = rf(ctx, namespace, in)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]DocChunk)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, DocOrderInput) bool); ok {
+		r1 = rf(ctx, namespace, in)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, string, DocOrderInput) error); ok {
+		r2 = rf(ctx, namespace, in)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// MockSourcesRepo_ChunksInOrder_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ChunksInOrder'
+type MockSourcesRepo_ChunksInOrder_Call struct {
+	*mock.Call
+}
+
+// ChunksInOrder is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - in DocOrderInput
+func (_e *MockSourcesRepo_Expecter) ChunksInOrder(ctx interface{}, namespace interface{}, in interface{}) *MockSourcesRepo_ChunksInOrder_Call {
+	return &MockSourcesRepo_ChunksInOrder_Call{Call: _e.mock.On("ChunksInOrder", ctx, namespace, in)}
+}
+
+func (_c *MockSourcesRepo_ChunksInOrder_Call) Run(run func(ctx context.Context, namespace string, in DocOrderInput)) *MockSourcesRepo_ChunksInOrder_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(DocOrderInput))
+	})
+	return _c
+}
+
+func (_c *MockSourcesRepo_ChunksInOrder_Call) Return(chunks []DocChunk, hasMore bool, err error) *MockSourcesRepo_ChunksInOrder_Call {
+	_c.Call.Return(chunks, hasMore, err)
+	return _c
+}
+
+func (_c *MockSourcesRepo_ChunksInOrder_Call) RunAndReturn(run func(context.Context, string, DocOrderInput) ([]DocChunk, bool, error)) *MockSourcesRepo_ChunksInOrder_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // List provides a mock function with given fields: ctx, namespace, sessionID
 func (_m *MockSourcesRepo) List(ctx context.Context, namespace string, sessionID int64) ([]SourceSummary, error) {
 	ret := _m.Called(ctx, namespace, sessionID)

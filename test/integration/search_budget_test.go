@@ -19,6 +19,7 @@ type sizedWireHit struct {
 	Snippet    string `json:"snippet"`
 	Source     string `json:"source"`
 	MatchLayer string `json:"match_layer"`
+	Truncated  *bool  `json:"truncated,omitempty"`
 }
 
 func wireHitSize(t *testing.T, h genapi.SearchHit) int {
@@ -28,7 +29,8 @@ func wireHitSize(t *testing.T, h genapi.SearchHit) int {
 		Snippet:    h.Snippet,
 		Source:     h.Source,
 		MatchLayer: string(h.MatchLayer),
-	})
+		Truncated:  h.Truncated,
+	}) // Truncated mirrors the service's sizing so truncated-hit byte accounting matches.
 	if err != nil {
 		t.Fatalf("marshal hit: %v", err)
 	}

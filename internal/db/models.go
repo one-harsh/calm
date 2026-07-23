@@ -65,18 +65,31 @@ type SearchHit struct {
 	Title      string
 	Snippet    string
 	Source     string
-	MatchLayer string // "primary" | "trigram"
+	MatchLayer string // "primary" | "trigram" | "document"
+	Truncated  bool
 	// SnippetFallback marks a hit whose snippet is a leading-window fallback:
 	// no query term was literally located in the (over-budget) chunk content.
 	// The search service aggregates this into the snippet_fallbacks correlation
-	// dimension. db.SearchHit is never marshaled — the wire type genapi.SearchHit
-	// carries no such field, so this stays an internal signal.
+	// dimension.
 	SnippetFallback bool
 	// Relevance (layer-native ranking signal) and MatchesAll (the DAL's
 	// AND-before-OR tier) feed budget allocation only — never copied to the
 	// wire type (SnippetFallback pattern). MatchesAll is false for trigram hits.
 	Relevance  float64
 	MatchesAll bool
+}
+
+type DocOrderInput struct {
+	SessionID int64
+	Source    string
+	Limit     int
+	Offset    int
+}
+
+type DocChunk struct {
+	Title   string
+	Content string
+	Source  string
 }
 
 type Event struct {

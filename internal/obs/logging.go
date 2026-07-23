@@ -74,10 +74,12 @@ const (
 
 	// Search scope.
 	KeyMatchLayer             = "match_layer"
+	KeySearchMode             = "search_mode"
 	KeySearchQueries          = "search.queries"
 	KeySearchHitsTotal        = "search.hits_total"
 	KeySearchHitsPrimary      = "search.hits_primary"
 	KeySearchHitsTrigram      = "search.hits_trigram"
+	KeySearchHitsDocument     = "search.hits_document"
 	KeySearchSnippetFallbacks = "search.snippet_fallbacks"
 	KeySearchByteBudgetUsed   = "search.byte_budget_used"
 	KeySearchBudgetExhausted  = "search.budget_exhausted"
@@ -99,8 +101,12 @@ const (
 )
 
 var (
-	MatchLayerPrimary = logging.StringField(KeyMatchLayer, "primary")
-	MatchLayerTrigram = logging.StringField(KeyMatchLayer, "trigram")
+	MatchLayerPrimary  = logging.StringField(KeyMatchLayer, "primary")
+	MatchLayerTrigram  = logging.StringField(KeyMatchLayer, "trigram")
+	MatchLayerDocument = logging.StringField(KeyMatchLayer, "document")
+
+	ModeRanked   = logging.StringField(KeySearchMode, "ranked")
+	ModeDocument = logging.StringField(KeySearchMode, "document")
 
 	CloseReasonTTLExpired = logging.StringField(KeyCloseReason, "ttl_expired")
 	CloseReasonExplicit   = logging.StringField(KeyCloseReason, "explicit")
@@ -196,6 +202,10 @@ func SearchHitsPrimary(value int) logging.LoggingField {
 
 func SearchHitsTrigram(value int) logging.LoggingField {
 	return logging.IntField(KeySearchHitsTrigram, value)
+}
+
+func SearchHitsDocument(value int) logging.LoggingField {
+	return logging.IntField(KeySearchHitsDocument, value)
 }
 
 func SearchSnippetFallbacks(value int) logging.LoggingField {
