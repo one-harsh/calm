@@ -22,7 +22,7 @@ Read these before contributing to the adapter:
 | Path | Purpose |
 |---|---|
 | `calm/` | CALM HTTP client port (Client interface, genapi wrapper, transport logging, mockery mock). |
-| `mcp/` | MCP stdio protocol layer — server lifecycle, tool registry, handlers (`run_command`, `search`), result formatting. |
+| `mcp/` | MCP stdio protocol layer — server lifecycle, tool registry, the tool handlers (shell, retrieval, file, git), result formatting. |
 | `extract/` | Shell-command parsing → source label + event derivation per LABELING.md (registry of `{matcher, builder}` rules, normalization, dual-write planning). |
 | `exec/` | Local process execution wrapper used by the shell-substrate tool. |
 | `config/` | Adapter-side configuration loader (separate from CALM-server config under `cmd/calm/config/`). |

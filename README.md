@@ -25,10 +25,11 @@ agent) are end-to-end.
 Still stubbed (`501`): the `/v1/manage/*` administrative API. Search uses
 BM25 ranking per tokenizer class (prose and code), title-weighted, fused via
 reciprocal rank fusion, with a strict-word-similarity trigram fallback for
-partial identifiers; ingest maintains per-session vocabulary statistics and
-returns the highest-IDF distinctive terms with each response. Context-budgeting
-and response allocation are the active refinement area, improved in place
-without changing the wire contract.
+partial identifiers; responses are byte-budgeted by a pluggable allocator
+(five variants, per-namespace default with per-request override), and a
+queries-less source scope rereads captured content in document order. Ingest
+maintains per-session vocabulary statistics and returns the highest-IDF
+distinctive terms with each response.
 
 ## What problem this addresses
 
@@ -199,8 +200,12 @@ claim any client name. Per-agent *secrets* (a server-minted bearer token per cli
 within-namespace isolation) are the *credentialed* namespace mode
 (`require_client_credentials: true`).
 
-The agent then has `calm_run_command` (run a shell command locally; its output is captured
-into CALM and returned compact) and `calm_search` (retrieve captured output on demand).
+The agent then has the adapter's tool surface: `calm_run_command` (run a shell command
+locally; output captured into CALM, returned compact), `calm_read_file` / `calm_edit_file` /
+`calm_write_file` / `calm_list_dir` / `calm_grep` (file operations with the same
+capture-on-the-way-through), `calm_git_status` / `calm_git_diff` (git inspection), and
+`calm_search` (retrieve captured output on demand — ranked queries, or a queries-less
+`source` scope that rereads a capture in document order).
 `stdout` is the JSON-RPC channel, so adapter logs go to `CALM_ADAPTER_LOG_FILE` (or stderr)
 — never stdout. `CALM_ADAPTER_CALM_API_KEY` uses the secret-reference dialect
 (`[text:..]` / `[env:..]` / `[file:..]`; raw values are rejected).
@@ -211,9 +216,13 @@ behavior, add a directive to your project's `CLAUDE.md` / `AGENTS.md` (whatever 
 host reads):
 
 ```markdown
-- Use `calm_run_command` instead of the native shell/Bash tool to run shell commands — it keeps
-  raw output out of the context window and indexes it for retrieval.
-- Use `calm_search` to retrieve a command's earlier output instead of re-running the command.
+- Use the `calm_*` tool for each operation instead of the native equivalent: `calm_run_command`
+  for shell commands, `calm_read_file` / `calm_edit_file` / `calm_write_file` / `calm_list_dir` /
+  `calm_grep` for file operations, `calm_git_status` / `calm_git_diff` for git inspection — they
+  keep raw output out of the context window and index it for retrieval.
+- Use `calm_search` to retrieve earlier output instead of re-running the command: queries when
+  you know what you're looking for (ranked snippets), or `source` without queries when you need
+  the surrounding flow — it rereads the capture in document order.
 ```
 
 Without this, the agent will often fall back to its native shell tool. (A host-level hook that
@@ -231,9 +240,9 @@ binary speaks MCP correctly, run `task smoke:adapter`.
 With CALM running (`task dev:up` + `task run:calm`, `CALM_DEFAULT_KEY` exported) and the
 adapter registered as above:
 
-1. **Connect** — start the host and confirm the `calm` server lists `calm_run_command` and
-   `calm_search` (`claude mcp list` shows `✓ Connected`; `/mcp` inside a session lists the
-   tools). On connect the adapter registers its client and creates a session — both visible
+1. **Connect** — start the host and confirm the `calm` server lists the adapter tools
+   (`calm_run_command`, `calm_search`, the file and git tools; `claude mcp list` shows
+   `✓ Connected`; `/mcp` inside a session lists them). On connect the adapter registers its client and creates a session — both visible
    in `/tmp/calm-adapter.log`.
 2. **Capture** — have the agent run a command through `calm_run_command` (e.g. *"run `ls -la`
    with calm_run_command"*); it returns a compact summary plus a `source=` label.

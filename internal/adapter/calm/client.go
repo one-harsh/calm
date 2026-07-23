@@ -66,13 +66,16 @@ type SectionPreview struct {
 }
 
 type SearchInput struct {
-	Queries []string
-	Source  string
-	Limit   int
+	Queries     []string
+	Source      string
+	Limit       int
+	Offset      int
+	BudgetBytes int
 }
 
 type SearchResults struct {
-	Queries []QueryResult
+	Queries    []QueryResult
+	NextOffset *int
 }
 
 type QueryResult struct {
@@ -85,6 +88,9 @@ type Hit struct {
 	Snippet    string
 	Source     string
 	MatchLayer string
+	// Truncated marks the first chunk of a document-order page whose full
+	// text alone exceeded the byte budget: Snippet is an exact-text prefix.
+	Truncated bool
 }
 
 type EventInput struct {

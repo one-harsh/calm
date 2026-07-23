@@ -37,6 +37,78 @@ func TestFormatSearchResults_RendersHitsPerQuery(t *testing.T) {
 	}
 }
 
+func TestFormatDocumentOrder_NoAnnotationsWithContinuation(t *testing.T) {
+	next := 4
+	res := calm.SearchResults{
+		Queries: []calm.QueryResult{{Query: "", Hits: []calm.Hit{
+			{Title: "log.txt#1", Snippet: "first chunk body", Source: "calm:v1:file:read:log.txt", MatchLayer: "document"},
+			{Title: "log.txt#2", Snippet: "second chunk body", Source: "calm:v1:file:read:log.txt", MatchLayer: "document"},
+		}}},
+		NextOffset: &next,
+	}
+	out := formatDocumentOrder(res, 0)
+
+	for _, want := range []string{
+		"2 chunks in document order from offset 0:",
+		"## log.txt#1",
+		"first chunk body",
+		"## log.txt#2",
+		"second chunk body",
+		"more chunks remain — call calm_search again with source and offset: 4",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// Document order carries no ranking annotations.
+	for _, banned := range []string{"[document]", "[primary]", "[trigram]"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("unexpected %q annotation in:\n%s", banned, out)
+		}
+	}
+	// Chunk order is preserved.
+	if strings.Index(out, "log.txt#1") > strings.Index(out, "log.txt#2") {
+		t.Errorf("chunks rendered out of document order:\n%s", out)
+	}
+}
+
+func TestFormatDocumentOrder_FinalPageOmitsContinuation(t *testing.T) {
+	res := calm.SearchResults{
+		Queries: []calm.QueryResult{{Query: "", Hits: []calm.Hit{
+			{Title: "log.txt#9", Snippet: "last chunk body", Source: "calm:v1:file:read:log.txt", MatchLayer: "document"},
+		}}},
+		NextOffset: nil,
+	}
+	out := formatDocumentOrder(res, 8)
+
+	if strings.Contains(out, "more chunks remain") {
+		t.Errorf("final page must omit the continuation hint:\n%s", out)
+	}
+	if !strings.Contains(out, "from offset 8:") {
+		t.Errorf("expected the requested offset in the header:\n%s", out)
+	}
+}
+
+func TestFormatDocumentOrder_TruncatedMarker(t *testing.T) {
+	next := 1
+	res := calm.SearchResults{
+		Queries: []calm.QueryResult{{Query: "", Hits: []calm.Hit{
+			{Title: "log.txt#1", Snippet: "an exact-text prefix of a giant chunk", Source: "calm:v1:file:read:log.txt", MatchLayer: "document", Truncated: true},
+		}}},
+		NextOffset: &next,
+	}
+	out := formatDocumentOrder(res, 0)
+
+	// Literal text pinned: the marker names the budget_bytes parameter the
+	// tool exposes, so the advertised recovery is actionable.
+	if !strings.Contains(out, "[truncated — raise budget_bytes or use a ranked query for the rest]") {
+		t.Errorf("expected the truncated marker for a truncated first chunk:\n%s", out)
+	}
+	if !strings.Contains(out, "offset: 1") {
+		t.Errorf("a truncated chunk still advances next_offset:\n%s", out)
+	}
+}
+
 func TestFormatSearchResults_BoundsLength(t *testing.T) {
 	huge := strings.Repeat("x", maxSearchResultLen+1000)
 	res := calm.SearchResults{Queries: []calm.QueryResult{{

@@ -62,7 +62,7 @@ func TestSearch_ReturnsRankedSnippets(t *testing.T) {
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
-		return len(in.Queries) == 1 && in.Queries[0] == "zphlox" && in.Source == "" && in.Limit == 0
+		return len(in.Queries) == 1 && in.Queries[0] == "zphlox" && in.Source == "" && in.Limit == 0 && in.BudgetBytes == 0
 	})).Return(oneHit("zphlox"), nil).Once()
 
 	h := newHarness(t, m)
@@ -95,6 +95,152 @@ func TestSearch_ScopesToSource(t *testing.T) {
 
 	if res := callSearch(t, h, 2, map[string]any{"queries": []string{"zphlox"}, "source": src}); res.IsError {
 		t.Fatalf("unexpected isError: %+v", res)
+	}
+}
+
+func docOrderResults(next *int, hits ...calm.Hit) calm.SearchResults {
+	return calm.SearchResults{
+		Queries:    []calm.QueryResult{{Query: "", Hits: hits}},
+		NextOffset: next,
+	}
+}
+
+// A source scope with no queries selects document-order mode: CALM is called
+// with empty queries, and the output is a plain sequential reread — no ranking
+// annotations.
+func TestSearch_SourceOnly_RoutesDocumentOrder(t *testing.T) {
+	const src = "calm:v1:file:read:big.txt"
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
+		return len(in.Queries) == 0 && in.Source == src && in.Offset == 0 && in.BudgetBytes == 0
+	})).Return(docOrderResults(
+		nil,
+		calm.Hit{Title: "big.txt#1", Snippet: "first chunk body", Source: src, MatchLayer: "document"},
+		calm.Hit{Title: "big.txt#2", Snippet: "second chunk body", Source: src, MatchLayer: "document"},
+	), nil).Once()
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callSearch(t, h, 2, map[string]any{"source": src})
+	if res.IsError {
+		t.Fatalf("document-order search must not error: %+v", res)
+	}
+	text := resultText(t, res)
+	for _, want := range []string{"document order", "big.txt#1", "first chunk body", "second chunk body"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in doc-order output:\n%s", want, text)
+		}
+	}
+	for _, banned := range []string{"[document]", "[primary]", "[trigram]"} {
+		if strings.Contains(text, banned) {
+			t.Errorf("doc-order output must not carry the %q ranking annotation:\n%s", banned, text)
+		}
+	}
+}
+
+// Document-order continuation: the requested offset reaches CALM, and a present
+// next_offset renders the literal continuation hint naming the next call shape.
+func TestSearch_DocumentOrder_ForwardsOffsetAndHintsContinuation(t *testing.T) {
+	const src = "calm:v1:file:read:big.txt"
+	next := 4
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
+		return len(in.Queries) == 0 && in.Source == src && in.Offset == 2
+	})).Return(docOrderResults(
+		&next,
+		calm.Hit{Title: "big.txt#3", Snippet: "third chunk body", Source: src, MatchLayer: "document"},
+	), nil).Once()
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callSearch(t, h, 2, map[string]any{"source": src, "offset": 2})
+	if res.IsError {
+		t.Fatalf("document-order search must not error: %+v", res)
+	}
+	if got := resultText(t, res); !strings.Contains(got, "offset: 4") {
+		t.Errorf("expected continuation hint naming next offset 4; got:\n%s", got)
+	}
+}
+
+// An offset-past-end page is a healthy empty result, distinct from a
+// degradation shape — the agent can tell "nothing here" from "CALM is down".
+func TestSearch_DocumentOrder_EmptyPageIsNotError(t *testing.T) {
+	const src = "calm:v1:file:read:big.txt"
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
+		return len(in.Queries) == 0 && in.Offset == 999
+	})).Return(calm.SearchResults{}, nil).Once()
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	res := callSearch(t, h, 2, map[string]any{"source": src, "offset": 999})
+	if res.IsError {
+		t.Fatalf("offset-past-end page must not be an error: %+v", res)
+	}
+	if got := resultText(t, res); !strings.Contains(got, "no chunks at this offset") {
+		t.Errorf("text = %q; want 'no chunks at this offset'", got)
+	}
+}
+
+// Ranked mode ignores offset — it is never forwarded to CALM even when the
+// agent supplies it alongside queries.
+func TestSearch_RankedIgnoresOffset(t *testing.T) {
+	const src = "calm:v1:file:read:note.txt"
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
+		return len(in.Queries) == 1 && in.Source == src && in.Offset == 0
+	})).Return(oneHit("zphlox"), nil).Once()
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	if res := callSearch(t, h, 2, map[string]any{"queries": []string{"zphlox"}, "source": src, "offset": 5}); res.IsError {
+		t.Fatalf("ranked search with a stray offset must not error: %+v", res)
+	}
+}
+
+// budget_bytes is a wire parameter in both modes — forwarded when the agent
+// sets it, whether the call is ranked or a document-order reread. (The
+// omitted-when-unset side is pinned by the BudgetBytes == 0 matchers above.)
+func TestSearch_ForwardsBudgetBytesBothModes(t *testing.T) {
+	const src = "calm:v1:file:read:big.txt"
+	m := calm.NewMockClient(t)
+	m.EXPECT().RegisterClient(mock.Anything, "claude-code").Return(true, nil).Once()
+	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
+	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
+	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
+		return len(in.Queries) == 1 && in.BudgetBytes == 2048
+	})).Return(oneHit("zphlox"), nil).Once()
+	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
+		return len(in.Queries) == 0 && in.Source == src && in.Offset == 3 && in.BudgetBytes == 512
+	})).Return(docOrderResults(
+		nil,
+		calm.Hit{Title: "big.txt#4", Snippet: "fourth chunk body", Source: src, MatchLayer: "document"},
+	), nil).Once()
+
+	h := newHarness(t, m)
+	initSession(t, h, "claude-code")
+
+	if res := callSearch(t, h, 2, map[string]any{"queries": []string{"zphlox"}, "budget_bytes": 2048}); res.IsError {
+		t.Fatalf("ranked search with budget_bytes must not error: %+v", res)
+	}
+	if res := callSearch(t, h, 3, map[string]any{"source": src, "offset": 3, "budget_bytes": 512}); res.IsError {
+		t.Fatalf("document-order search with budget_bytes must not error: %+v", res)
 	}
 }
 
@@ -189,16 +335,23 @@ func TestSearch_SearchError_UnreachablePhrasingThenStderr(t *testing.T) {
 	}
 }
 
-func TestSearch_EmptyQueriesArrayIsArgError(t *testing.T) {
+// Neither queries nor a source selects a mode — reject locally. (Empty
+// queries with no source is the degenerate form of this.)
+func TestSearch_NeitherQueriesNorSourceIsArgError(t *testing.T) {
 	m := calm.NewMockClient(t)
 	h := newHarness(t, m)
 
 	res := callSearch(t, h, 1, map[string]any{"queries": []string{}})
 	if !res.IsError {
-		t.Fatalf("empty queries array must be an error result: %+v", res)
+		t.Fatalf("empty queries with no source must be an error result: %+v", res)
 	}
-	if got := resultText(t, res); !strings.Contains(got, "queries is required") {
-		t.Errorf("text = %q; want 'queries is required'", got)
+	if got := resultText(t, res); !strings.Contains(got, "queries or source is required") {
+		t.Errorf("text = %q; want 'queries or source is required'", got)
+	}
+
+	res = callSearch(t, h, 2, map[string]any{})
+	if got := resultText(t, res); !res.IsError || !strings.Contains(got, "queries or source is required") {
+		t.Errorf("bare call: text = %q, isError = %v; want 'queries or source is required'", got, res.IsError)
 	}
 }
 

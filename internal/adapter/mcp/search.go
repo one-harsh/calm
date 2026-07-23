@@ -26,26 +26,33 @@ const (
 	maxSearchLimit   = 50
 )
 
-const searchDescription = "Retrieve tool output already captured into CALM this session as ranked, " +
-	"verbatim snippets. Prefer this over re-running a command to see its output again. Pass one or more " +
-	"queries; optionally scope to a single source label with `source` (the label calm_run_command returns) " +
-	"and cap hits per query with `limit`."
+const searchDescription = "Retrieve tool output already captured into CALM this session, verbatim. " +
+	"Prefer this over re-running a command to see its output again. Two modes: with one or more `queries`, " +
+	"returns relevance-ranked snippets, optionally scoped to a single `source` label (the label " +
+	"calm_run_command returns) with `limit` hits per query. With a `source` and no `queries`, rereads that " +
+	"source's captured content in original document order, paginated — pass `offset` to continue from where a " +
+	"prior page ended (the output names the next offset). `budget_bytes` raises the response byte budget " +
+	"(server default 4 KB) — re-request a truncated chunk's offset with a larger budget to get it whole. " +
+	"Supply `queries`, `source`, or both."
 
 const searchSchema = `{
   "type": "object",
   "properties": {
-    "queries": {"type": "array", "items": {"type": "string"}, "description": "One or more search queries (terms or phrases)."},
-    "source": {"type": "string", "description": "Optional source label to scope the search to one identity (e.g. from calm_run_command)."},
-    "limit": {"type": "integer", "description": "Optional maximum number of hits per query."}
+    "queries": {"type": "array", "items": {"type": "string"}, "description": "One or more search queries (terms or phrases). Omit for document-order reread of a source."},
+    "source": {"type": "string", "description": "Source label to scope to one identity (e.g. from calm_run_command). Required, with queries omitted, for document-order reread."},
+    "limit": {"type": "integer", "description": "Optional maximum number of hits per query (ranked) or chunks per page (document-order)."},
+    "offset": {"type": "integer", "minimum": 0, "description": "Document-order only: zero-based chunk index to start the page from, for continuation. Ignored when queries are present."},
+    "budget_bytes": {"type": "integer", "minimum": 1, "description": "Optional response byte budget — the server defaults it (4 KB) and clamps to the operator ceiling. Raise it to recover a truncated document-order chunk (re-request the same offset with a larger budget) or to fit more ranked hits."}
   },
-  "required": ["queries"],
   "additionalProperties": false
 }`
 
 type searchArgs struct {
-	Queries []string `json:"queries"`
-	Source  string   `json:"source"`
-	Limit   int      `json:"limit"`
+	Queries     []string `json:"queries"`
+	Source      string   `json:"source"`
+	Limit       int      `json:"limit"`
+	Offset      int      `json:"offset"`
+	BudgetBytes int      `json:"budget_bytes"`
 }
 
 func (s *Server) newSearchTool() Tool {
@@ -58,24 +65,29 @@ func (s *Server) newSearchTool() Tool {
 	}
 }
 
-// TODO: support queries-empty + source-scope shape per DESIGN.md AD01
-// (sequential reread of captured content in document order). Currently
-// requires non-empty queries and forwards ranked-retrieval semantics only.
-// Blocks on the CALM-side /v1/search document-order extension.
 func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, error) {
 	var a searchArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return ToolResult{}, &ArgError{Detail: err.Error()}
 	}
-	if len(a.Queries) == 0 {
-		return ToolResult{}, &ArgError{Detail: "queries is required"}
+	if len(a.Queries) == 0 && a.Source == "" {
+		return ToolResult{}, &ArgError{Detail: "queries or source is required"}
 	}
-	if len(a.Queries) > maxSearchQueries {
-		return ToolResult{}, &ArgError{Detail: fmt.Sprintf("too many queries (max %d, got %d)", maxSearchQueries, len(a.Queries))}
-	}
-	for i, q := range a.Queries {
-		if strings.TrimSpace(q) == "" {
-			return ToolResult{}, &ArgError{Detail: fmt.Sprintf("queries[%d] is blank (all queries must be non-empty per CALM's SearchRequest schema)", i)}
+	// Queries absent + source present selects document-order mode (sequential
+	// reread); queries present is ranked retrieval, and offset is ignored.
+	documentOrder := len(a.Queries) == 0
+	if documentOrder {
+		if a.Offset < 0 {
+			return ToolResult{}, &ArgError{Detail: fmt.Sprintf("offset out of range (must be >= 0, got %d)", a.Offset)}
+		}
+	} else {
+		if len(a.Queries) > maxSearchQueries {
+			return ToolResult{}, &ArgError{Detail: fmt.Sprintf("too many queries (max %d, got %d)", maxSearchQueries, len(a.Queries))}
+		}
+		for i, q := range a.Queries {
+			if strings.TrimSpace(q) == "" {
+				return ToolResult{}, &ArgError{Detail: fmt.Sprintf("queries[%d] is blank (all queries must be non-empty per CALM's SearchRequest schema)", i)}
+			}
 		}
 	}
 	if a.Limit < 0 || a.Limit > maxSearchLimit {
@@ -112,9 +124,14 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 		calmSource = stripped
 	}
 
+	in := calm.SearchInput{Queries: a.Queries, Source: calmSource, Limit: a.Limit, BudgetBytes: a.BudgetBytes}
+	if documentOrder {
+		in.Offset = a.Offset
+	}
+
 	sctx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
-	res, err := s.calm.Search(sctx, token, calm.SearchInput{Queries: a.Queries, Source: calmSource, Limit: a.Limit})
+	res, err := s.calm.Search(sctx, token, in)
 	if err != nil {
 		if sig := s.sessionFailureSignal(ctx, token, err); sig != nil {
 			return ToolResult{IsError: true}, sig
@@ -125,6 +142,15 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 			logging.ErrorField(err),
 		)
 		return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable, Detail: err.Error()}
+	}
+
+	if documentOrder {
+		// Offset-past-end is a healthy empty page, not a degradation — keep it
+		// distinct from the calm_unreachable/session_lost error shapes.
+		if totalHits(res) == 0 {
+			return TextResult("no chunks at this offset"+sourceNote(a.Source), false), nil
+		}
+		return TextResult(formatDocumentOrder(res, a.Offset), false), nil
 	}
 
 	if totalHits(res) == 0 {
@@ -168,6 +194,37 @@ func formatSearchResults(res calm.SearchResults) string {
 		out = strings.ToValidUTF8(out[:maxSearchResultLen], "") + "…"
 	}
 	return out
+}
+
+const (
+	documentOrderTruncatedMarker  = "[truncated — raise budget_bytes or use a ranked query for the rest]"
+	documentOrderContinuationLine = "more chunks remain — call calm_search again with source and offset: "
+)
+
+// formatDocumentOrder renders a document-order page as a sequential reread: no
+// ranking annotations, each chunk its title line then full snippet text, in
+// order. Unlike ranked results this is not adapter-capped — the page is already
+// bounded by CALM's byte budget, and a local cap would sever the continuation
+// hint and truncate the exact chunk text (content-fidelity).
+func formatDocumentOrder(res calm.SearchResults, offset int) string {
+	var hits []calm.Hit
+	for _, q := range res.Queries {
+		hits = append(hits, q.Hits...)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d %s in document order from offset %d:\n",
+		len(hits), plural(len(hits), "chunk", "chunks"), offset)
+	for _, h := range hits {
+		fmt.Fprintf(&b, "\n## %s\n%s\n", h.Title, h.Snippet)
+		if h.Truncated {
+			b.WriteString(documentOrderTruncatedMarker + "\n")
+		}
+	}
+	if res.NextOffset != nil {
+		fmt.Fprintf(&b, "\n%s%d\n", documentOrderContinuationLine, *res.NextOffset)
+	}
+	return b.String()
 }
 
 func plural(n int, one, many string) string {

@@ -5,6 +5,7 @@ package calm_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -129,6 +130,42 @@ func TestGenapiSearch_MapsHits(t *testing.T) {
 	h := got.Queries[0].Hits[0]
 	if h.Title != "t" || h.Snippet != "sn" || h.Source != "src" || h.MatchLayer != "primary" {
 		t.Errorf("hit = %+v", h)
+	}
+}
+
+// Pins the request-body shape per mode: document-order omits the queries key
+// entirely (CALM selects the mode by its absence) and carries offset and
+// budget_bytes; ranked omits offset and, when unset, budget_bytes.
+func TestGenapiSearch_BodyShapePerMode(t *testing.T) {
+	var bodies []map[string]any
+	c := fakeCALM(t, func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		bodies = append(bodies, m)
+		jsonResp(w, http.StatusOK, `{"results":[],"budget_bytes":4096,"byte_budget_used":0,"budget_exceeded":false}`)
+	})
+
+	if _, err := c.Search(context.Background(), "tok", calm.SearchInput{Source: "src", Offset: 3, BudgetBytes: 512}); err != nil {
+		t.Fatalf("document-order Search: %v", err)
+	}
+	if _, err := c.Search(context.Background(), "tok", calm.SearchInput{Queries: []string{"q"}, Offset: 7}); err != nil {
+		t.Fatalf("ranked Search: %v", err)
+	}
+
+	docOrder, ranked := bodies[0], bodies[1]
+	if _, present := docOrder["queries"]; present {
+		t.Errorf("document-order body must omit the queries key; got %v", docOrder)
+	}
+	if docOrder["offset"] != float64(3) || docOrder["budget_bytes"] != float64(512) {
+		t.Errorf("document-order body = %v; want offset 3 and budget_bytes 512", docOrder)
+	}
+	if _, present := ranked["offset"]; present {
+		t.Errorf("ranked body must omit offset; got %v", ranked)
+	}
+	if _, present := ranked["budget_bytes"]; present {
+		t.Errorf("ranked body must omit budget_bytes when unset; got %v", ranked)
 	}
 }
 

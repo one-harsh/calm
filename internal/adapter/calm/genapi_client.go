@@ -119,12 +119,22 @@ func (c *genapiClient) Ingest(ctx context.Context, token string, in IngestInput)
 }
 
 func (c *genapiClient) Search(ctx context.Context, token string, in SearchInput) (SearchResults, error) {
-	body := genapi.SearchJSONRequestBody{Queries: in.Queries}
+	var body genapi.SearchJSONRequestBody
+	if len(in.Queries) > 0 {
+		body.Queries = in.Queries
+	} else if in.Offset > 0 {
+		// Document-order mode: forward offset only, never queries. Offset 0 is
+		// the server default, so it rides as an omitted field.
+		body.Offset = &in.Offset
+	}
 	if in.Source != "" {
 		body.Source = &in.Source
 	}
 	if in.Limit > 0 {
 		body.Limit = &in.Limit
+	}
+	if in.BudgetBytes > 0 {
+		body.BudgetBytes = &in.BudgetBytes
 	}
 	resp, err := c.api.SearchWithResponse(ctx, &genapi.SearchParams{XCALMSessionToken: token}, body)
 	if err != nil {
@@ -133,7 +143,7 @@ func (c *genapiClient) Search(ctx context.Context, token string, in SearchInput)
 	if resp.JSON200 == nil {
 		return SearchResults{}, statusErr("search", resp.StatusCode(), resp.Status())
 	}
-	var out SearchResults
+	out := SearchResults{NextOffset: resp.JSON200.NextOffset}
 	for _, q := range resp.JSON200.Results {
 		qr := QueryResult{Query: q.Query}
 		for _, h := range q.Hits {
@@ -142,6 +152,7 @@ func (c *genapiClient) Search(ctx context.Context, token string, in SearchInput)
 				Snippet:    h.Snippet,
 				Source:     h.Source,
 				MatchLayer: string(h.MatchLayer),
+				Truncated:  h.Truncated != nil && *h.Truncated,
 			})
 		}
 		out.Queries = append(out.Queries, qr)
