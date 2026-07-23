@@ -116,6 +116,18 @@ func TestSearchHandler_MultiQueryOrderedWithEmpty(t *testing.T) {
 	if len(res[1].Hits) != 0 {
 		t.Errorf("no-match query hits = %d; want empty", len(res[1].Hits))
 	}
+
+	// A duplicate query is a separate positional entry, not deduplicated.
+	dupResp, err := client.SearchWithResponse(context.Background(),
+		&genapi.SearchParams{XCALMSessionToken: sess.SessionToken},
+		genapi.SearchJSONRequestBody{Queries: []string{"linker", "linker"}})
+	if err != nil {
+		t.Fatalf("Search (duplicate): %v", err)
+	}
+	dup := dupResp.JSON200.Results
+	if len(dup) != 2 || dup[0].Query != "linker" || dup[1].Query != "linker" {
+		t.Fatalf("duplicate results = %+v; want two positional \"linker\" entries", dup)
+	}
 }
 
 // A session token presented to a different namespace's API key returns 404; the session is

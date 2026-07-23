@@ -56,7 +56,7 @@ type Chunk struct {
 
 type SearchInput struct {
 	SessionID int64
-	Queries   []string
+	Query     string
 	Source    string
 	Limit     int
 }
@@ -72,11 +72,11 @@ type SearchHit struct {
 	// dimension. db.SearchHit is never marshaled — the wire type genapi.SearchHit
 	// carries no such field, so this stays an internal signal.
 	SnippetFallback bool
-}
-
-type SearchResult struct {
-	Query string
-	Hits  []SearchHit
+	// Relevance (layer-native ranking signal) and MatchesAll (the DAL's
+	// AND-before-OR tier) feed budget allocation only — never copied to the
+	// wire type (SnippetFallback pattern). MatchesAll is false for trigram hits.
+	Relevance  float64
+	MatchesAll bool
 }
 
 type Event struct {

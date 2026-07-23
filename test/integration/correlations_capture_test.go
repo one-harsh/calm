@@ -88,6 +88,11 @@ func TestSearch_PersistsCorrelationOnSuccess(t *testing.T) {
 	if !hasKey(t, row.requestMeta, "hit_count") {
 		t.Errorf("request_meta = %s; want hit_count", row.requestMeta)
 	}
+	for _, k := range []string{"allocator", "budget_exceeded", "byte_budget_used", "results_omitted"} {
+		if !hasKey(t, row.requestMeta, k) {
+			t.Errorf("request_meta = %s; want key %q", row.requestMeta, k)
+		}
+	}
 	// A short chunk with a literal term match is not a fallback.
 	if got := metaInt(t, row.requestMeta, "snippet_fallbacks"); got != 0 {
 		t.Errorf("snippet_fallbacks = %d; want 0 on a clean match", got)

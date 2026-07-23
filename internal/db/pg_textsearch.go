@@ -99,7 +99,7 @@ func (pgTextsearchExtension) classCandidatesSQL(class bm25Class) string {
 			  AND ($2 = '' OR s.label = $2)
 			  AND %[4]s
 		)
-		SELECT id, title, content, content_type, label, matches_all FROM candidates
+		SELECT id, title, content, content_type, label, matches_all, score FROM candidates
 		WHERE matches_any
 		ORDER BY matches_all DESC, score ASC, id ASC
 		LIMIT $5`,

@@ -267,9 +267,19 @@ paths:
         runs against both `chunks_fts_prose` and `chunks_fts_code` and the two
         rankings are RRF-fused; results from both tokenization paths come back
         in one ranked list. Workload does not scope by content_type.
+
+        Assembly is byte-budgeted across all submitted queries: `budget_bytes`
+        (default 4096, clamped to the server ceiling) bounds the summed
+        compact-JSON size of the returned hits. The budget is strict — a hit is
+        included only when it fits, with no overshoot and no snippet truncation.
+        A per-namespace allocator distributes the budget across queries;
+        `X-CALM-Allocator-Variant` overrides it per request where the namespace
+        allows. The response reports `byte_budget_used`, `budget_exceeded`, the
+        committed `budget_bytes`, and per-query `budget_omitted`.
       tags: [search]
       parameters:
         - $ref: '#/components/parameters/SessionTokenHeader'
+        - $ref: '#/components/parameters/AllocatorVariantHeader'
       requestBody:
         required: true
         content:
@@ -517,6 +527,17 @@ components:
         when present. Distinct from the server-minted X-CALM-Correlation-Id;
         intended for the workload's own log/trace correlation. CALM does not
         interpret the value.
+    AllocatorVariantHeader:
+      in: header
+      name: X-CALM-Allocator-Variant
+      required: false
+      schema: { type: string }
+      description: |
+        Per-request override of the namespace's default budget allocator.
+        Honored only when the namespace enables allocator override; otherwise
+        silently ignored (never rejected). Recognized values: `rank-round`,
+        `score-proportional`, `knapsack-greedy`, `equal-budget`, `mmr`.
+        Unrecognized values are ignored, falling back to the namespace default.
 
   headers:
     XCALMCorrelationId:
@@ -750,6 +771,17 @@ components:
           minimum: 1
           maximum: 50
           default: 5
+        budget_bytes:
+          type: integer
+          minimum: 1
+          default: 4096
+          description: |
+            Whole-response byte budget across all submitted queries: bounds the
+            summed compact-JSON size of the returned hits. It does not count the
+            response envelope or the array separators, so the actual HTTP body is
+            slightly larger. The server clamps values above its ceiling rather
+            than rejecting them; `budget_bytes` in the response echoes the
+            committed (post-clamp) value.
 
     SearchHit:
       type: object
@@ -770,21 +802,44 @@ components:
 
     SearchResult:
       type: object
-      required: [results]
+      required: [results, byte_budget_used, budget_exceeded, budget_bytes]
       properties:
         results:
           type: array
           items: { $ref: '#/components/schemas/QuerySearchResult' }
           description: Ranked hits per query, in the order the queries were submitted.
+        byte_budget_used:
+          type: integer
+          description: |
+            Compact-JSON bytes consumed by the returned hits, summed across all
+            queries. Never exceeds `budget_bytes` — the budget is strict, with no
+            overshoot.
+        budget_exceeded:
+          type: boolean
+          description: |
+            True when at least one otherwise-returnable hit was omitted because
+            the budget could not accommodate it. When no hit fits at all, the
+            results are empty and this is true — the retry signal is to raise
+            `budget_bytes`.
+        budget_bytes:
+          type: integer
+          description: |
+            The committed budget after the server clamps to its ceiling. Compare
+            against the requested value to detect clamping.
 
     QuerySearchResult:
       type: object
-      required: [query, hits]
+      required: [query, hits, budget_omitted]
       properties:
         query: { type: string }
         hits:
           type: array
           items: { $ref: '#/components/schemas/SearchHit' }
+        budget_omitted:
+          type: integer
+          description: |
+            Count of this query's otherwise-returnable hits that were not
+            included because the budget did not accommodate them.
 
     EventInput:
       type: object

@@ -36,19 +36,15 @@ func TestSearch_MatchInContentReturnsHitWithSnippet(t *testing.T) {
 	seedSearchCorpus(t, store, "ns-a", sess.ID)
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"linker"},
+		SessionID: sess.ID, Query: "linker",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got) != 1 || got[0].Query != "linker" {
-		t.Fatalf("results = %+v; want one result for \"linker\"", got)
-	}
-	hits := got[0].Hits
-	if len(hits) == 0 {
+	if len(got) == 0 {
 		t.Fatal("want at least one hit for \"linker\"")
 	}
-	for _, h := range hits {
+	for _, h := range got {
 		if h.MatchLayer != "primary" {
 			t.Errorf("match_layer = %q; want primary", h.MatchLayer)
 		}
@@ -69,17 +65,17 @@ func TestSearch_MatchInTitleOnly(t *testing.T) {
 		[]db.Chunk{{Title: "deployment guide", Content: "step one is to provision the cluster", ContentType: "prose"}})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"deployment"},
+		SessionID: sess.ID, Query: "deployment",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 1 {
-		t.Fatalf("want one hit matched on title; got %+v", got[0].Hits)
+	if len(got) != 1 {
+		t.Fatalf("want one hit matched on title; got %+v", got)
 	}
 	// Title-only match → snippet is a leading window of the content.
-	if !strings.Contains(got[0].Hits[0].Snippet, "provision") {
-		t.Errorf("snippet %q; want a content window", got[0].Hits[0].Snippet)
+	if !strings.Contains(got[0].Snippet, "provision") {
+		t.Errorf("snippet %q; want a content window", got[0].Snippet)
 	}
 }
 
@@ -93,17 +89,17 @@ func TestSearch_SourceFilterScopes(t *testing.T) {
 	seedSearchCorpus(t, store, "ns-a", sess.ID)
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"linker"}, Source: "main.go",
+		SessionID: sess.ID, Query: "linker", Source: "main.go",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	for _, h := range got[0].Hits {
+	for _, h := range got {
 		if h.Source != "main.go" {
 			t.Errorf("hit from source %q; want only main.go", h.Source)
 		}
 	}
-	if len(got[0].Hits) == 0 {
+	if len(got) == 0 {
 		t.Error("want the main.go hit for \"linker\"")
 	}
 }
@@ -122,19 +118,20 @@ func TestSearch_LimitCapsHits(t *testing.T) {
 	seedIndexedSource(t, store, "ns-a", sess.ID, "s", chunks)
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"needle"}, Limit: 2,
+		SessionID: sess.ID, Query: "needle", Limit: 2,
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 2 {
-		t.Errorf("hits = %d; want 2 (limit)", len(got[0].Hits))
+	if len(got) != 2 {
+		t.Errorf("hits = %d; want 2 (limit)", len(got))
 	}
 }
 
-// Multiple queries return one result element per query in input order; a query with no matches
-// returns an empty hits list rather than being omitted from the response.
-func TestSearch_MultiQueryResultsPerQueryInOrder(t *testing.T) {
+// The single-query DAL returns hits for a matching query and an empty set for a
+// non-matching one; per-query grouping and submitted order are the service's job
+// (pinned by the handler integration tests).
+func TestSearch_MatchAndNoMatchPerQuery(t *testing.T) {
 	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
 	defer teardown()
@@ -142,23 +139,24 @@ func TestSearch_MultiQueryResultsPerQueryInOrder(t *testing.T) {
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 	seedSearchCorpus(t, store, "ns-a", sess.ID)
 
-	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"linker", "nonexistent-term"},
+	match, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Query: "linker",
 	})
 	if err != nil {
-		t.Fatalf("Search: %v", err)
+		t.Fatalf("Search(linker): %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("results = %d; want 2 (one per query)", len(got))
+	if len(match) == 0 {
+		t.Error("matching query should have hits")
 	}
-	if got[0].Query != "linker" || got[1].Query != "nonexistent-term" {
-		t.Errorf("query order = [%q, %q]; want [linker, nonexistent-term]", got[0].Query, got[1].Query)
+
+	none, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Query: "nonexistent-term",
+	})
+	if err != nil {
+		t.Fatalf("Search(nonexistent-term): %v", err)
 	}
-	if len(got[0].Hits) == 0 {
-		t.Error("first query should have hits")
-	}
-	if len(got[1].Hits) != 0 {
-		t.Errorf("no-match query hits = %d; want 0", len(got[1].Hits))
+	if len(none) != 0 {
+		t.Errorf("no-match query hits = %d; want 0", len(none))
 	}
 }
 
@@ -173,13 +171,13 @@ func TestSearch_CrossNamespaceIsInvisible(t *testing.T) {
 	seedSearchCorpus(t, store, "ns-a", sess.ID)
 
 	got, err := store.Sources().Search(context.Background(), "ns-b", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"linker"},
+		SessionID: sess.ID, Query: "linker",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got) != 1 || len(got[0].Hits) != 0 {
-		t.Fatalf("results = %+v; want one query result with zero hits (invisibility)", got)
+	if len(got) != 0 {
+		t.Fatalf("results = %+v; want zero hits (cross-namespace invisibility)", got)
 	}
 }
 
@@ -195,13 +193,13 @@ func TestSearch_SessionIsolationWithinNamespace(t *testing.T) {
 	seedSearchCorpus(t, store, "ns-a", sessA.ID)
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sessB.ID, Queries: []string{"linker"},
+		SessionID: sessB.ID, Query: "linker",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 0 {
-		t.Errorf("session B sees %+v; want none (session isolation)", got[0].Hits)
+	if len(got) != 0 {
+		t.Errorf("session B sees %+v; want none (session isolation)", got)
 	}
 }
 
@@ -218,16 +216,16 @@ func TestSearch_StemmedProseMatch(t *testing.T) {
 		[]db.Chunk{{Title: "perf", Content: "the lookup result was cached for later reuse", ContentType: "prose"}})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"caching"},
+		SessionID: sess.ID, Query: "caching",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 1 {
-		t.Fatalf("hits = %+v; want one stemmed match", got[0].Hits)
+	if len(got) != 1 {
+		t.Fatalf("hits = %+v; want one stemmed match", got)
 	}
-	if !strings.Contains(got[0].Hits[0].Snippet, "cached") {
-		t.Errorf("snippet = %q; want the stored form \"cached\"", got[0].Hits[0].Snippet)
+	if !strings.Contains(got[0].Snippet, "cached") {
+		t.Errorf("snippet = %q; want the stored form \"cached\"", got[0].Snippet)
 	}
 }
 
@@ -244,23 +242,30 @@ func TestSearch_CodeIdentifierWholeTokenMatch(t *testing.T) {
 	seedIndexedSource(t, store, "ns-a", sess.ID, "main.go",
 		[]db.Chunk{{Title: "handler", Content: "func handleLinkerError() { return }", ContentType: "code"}})
 
-	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"handleLinkerError", "LinkerError"},
+	whole, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Query: "handleLinkerError",
 	})
 	if err != nil {
-		t.Fatalf("Search: %v", err)
+		t.Fatalf("Search(handleLinkerError): %v", err)
 	}
-	if len(got[0].Hits) != 1 || got[0].Hits[0].MatchLayer != "primary" {
-		t.Fatalf("whole-identifier hits = %+v; want one primary hit", got[0].Hits)
+	if len(whole) != 1 || whole[0].MatchLayer != "primary" {
+		t.Fatalf("whole-identifier hits = %+v; want one primary hit", whole)
 	}
-	if !strings.Contains(got[0].Hits[0].Snippet, "handleLinkerError") {
-		t.Errorf("snippet = %q; want the identifier verbatim", got[0].Hits[0].Snippet)
+	if !strings.Contains(whole[0].Snippet, "handleLinkerError") {
+		t.Errorf("snippet = %q; want the identifier verbatim", whole[0].Snippet)
 	}
-	if len(got[1].Hits) != 1 || got[1].Hits[0].MatchLayer != "trigram" {
-		t.Fatalf("partial-identifier hits = %+v; want one trigram hit", got[1].Hits)
+
+	partial, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
+		SessionID: sess.ID, Query: "LinkerError",
+	})
+	if err != nil {
+		t.Fatalf("Search(LinkerError): %v", err)
 	}
-	if !strings.Contains(got[1].Hits[0].Snippet, "LinkerError") {
-		t.Errorf("trigram snippet = %q; want the substring verbatim", got[1].Hits[0].Snippet)
+	if len(partial) != 1 || partial[0].MatchLayer != "trigram" {
+		t.Fatalf("partial-identifier hits = %+v; want one trigram hit", partial)
+	}
+	if !strings.Contains(partial[0].Snippet, "LinkerError") {
+		t.Errorf("trigram snippet = %q; want the substring verbatim", partial[0].Snippet)
 	}
 }
 
@@ -279,16 +284,16 @@ func TestSearch_TitleMatchOutranksContentMatch(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"rollback"},
+		SessionID: sess.ID, Query: "rollback",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 2 {
-		t.Fatalf("hits = %+v; want both chunks", got[0].Hits)
+	if len(got) != 2 {
+		t.Fatalf("hits = %+v; want both chunks", got)
 	}
-	if got[0].Hits[0].Title != "rollback procedure" {
-		t.Errorf("first hit = %q; want the title match ranked above the content match", got[0].Hits[0].Title)
+	if got[0].Title != "rollback procedure" {
+		t.Errorf("first hit = %q; want the title match ranked above the content match", got[0].Title)
 	}
 }
 
@@ -306,17 +311,17 @@ func TestSearch_AllTermsMatchOutranksPartial(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"fatal linker"},
+		SessionID: sess.ID, Query: "fatal linker",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 2 {
-		t.Fatalf("hits = %+v; want the AND match plus the partial match", got[0].Hits)
+	if len(got) != 2 {
+		t.Fatalf("hits = %+v; want the AND match plus the partial match", got)
 	}
-	if got[0].Hits[0].Title != "failure" || got[0].Hits[1].Title != "warning" {
+	if got[0].Title != "failure" || got[1].Title != "warning" {
 		t.Errorf("order = [%q, %q]; want the AND tier first: [failure, warning]",
-			got[0].Hits[0].Title, got[0].Hits[1].Title)
+			got[0].Title, got[1].Title)
 	}
 }
 
@@ -332,13 +337,13 @@ func TestSearch_MixedClassFusionSingleList(t *testing.T) {
 	seedSearchCorpus(t, store, "ns-a", sess.ID)
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"linker"},
+		SessionID: sess.ID, Query: "linker",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 	sources := map[string]bool{}
-	for _, h := range got[0].Hits {
+	for _, h := range got {
 		sources[h.Source] = true
 		if h.MatchLayer != "primary" {
 			t.Errorf("match_layer = %q; want primary for both classes", h.MatchLayer)
@@ -360,17 +365,17 @@ func TestSearch_AllStopwordQueryReturnsEmpty(t *testing.T) {
 	seedSearchCorpus(t, store, "ns-a", sess.ID)
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"the of and"},
+		SessionID: sess.ID, Query: "the of and",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 0 {
-		t.Errorf("hits = %+v; want none for an all-stopword query", got[0].Hits)
+	if len(got) != 0 {
+		t.Errorf("hits = %+v; want none for an all-stopword query", got)
 	}
 }
 
-// DAL rejects nil queries, empty query strings, and negative limit before touching storage.
+// DAL rejects an empty query string and negative limit before touching storage.
 func TestSearch_ValidationErrors(t *testing.T) {
 	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
@@ -378,20 +383,15 @@ func TestSearch_ValidationErrors(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	sess := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 
+	// An empty query string is rejected at the DAL boundary, not left for HTTP
+	// validation to catch.
 	if _, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: nil,
-	}); !errors.Is(err, db.ErrQueryRequired) {
-		t.Errorf("empty queries err = %v; want ErrQueryRequired", err)
-	}
-	// An empty query string is rejected at the DAL boundary, not silently
-	// relied on HTTP validation to catch.
-	if _, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"ok", ""},
+		SessionID: sess.ID, Query: "",
 	}); !errors.Is(err, db.ErrQueryRequired) {
 		t.Errorf("empty query string err = %v; want ErrQueryRequired", err)
 	}
 	if _, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"x"}, Limit: -1,
+		SessionID: sess.ID, Query: "x", Limit: -1,
 	}); !errors.Is(err, db.ErrInvalidLimit) {
 		t.Errorf("negative limit err = %v; want ErrInvalidLimit", err)
 	}
@@ -416,15 +416,15 @@ func TestSearch_ProseSnippetSurfacesDecisiveSentenceWhole(t *testing.T) {
 		[]db.Chunk{{Title: "incident", Content: content, ContentType: "prose"}})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"migration"},
+		SessionID: sess.ID, Query: "migration",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 1 {
-		t.Fatalf("hits = %+v; want one hit", got[0].Hits)
+	if len(got) != 1 {
+		t.Fatalf("hits = %+v; want one hit", got)
 	}
-	snip := got[0].Hits[0].Snippet
+	snip := got[0].Snippet
 	if !strings.Contains(snip, decisive) {
 		t.Errorf("snippet = %q; want the decisive sentence whole", snip)
 	}
@@ -453,15 +453,15 @@ func TestSearch_CodeSnippetIsWholeLines(t *testing.T) {
 		[]db.Chunk{{Title: "handler", Content: content, ContentType: "code"}})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"handleLinkerError"},
+		SessionID: sess.ID, Query: "handleLinkerError",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 1 {
-		t.Fatalf("hits = %+v; want one hit", got[0].Hits)
+	if len(got) != 1 {
+		t.Fatalf("hits = %+v; want one hit", got)
 	}
-	snip := got[0].Hits[0].Snippet
+	snip := got[0].Snippet
 	if !strings.Contains(snip, strings.TrimRight(anchor, "\n")) {
 		t.Errorf("snippet = %q; want the anchor line whole", snip)
 	}
@@ -494,16 +494,16 @@ func TestSearch_TrigramFallbackOnPartialIdentifier(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"ProcessRequest"},
+		SessionID: sess.ID, Query: "ProcessRequest",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 1 || got[0].Hits[0].MatchLayer != "trigram" {
-		t.Fatalf("hits = %+v; want one trigram hit", got[0].Hits)
+	if len(got) != 1 || got[0].MatchLayer != "trigram" {
+		t.Fatalf("hits = %+v; want one trigram hit", got)
 	}
-	if !strings.Contains(got[0].Hits[0].Snippet, "handleProcessRequest") {
-		t.Errorf("snippet = %q; want the matched identifier verbatim", got[0].Hits[0].Snippet)
+	if !strings.Contains(got[0].Snippet, "handleProcessRequest") {
+		t.Errorf("snippet = %q; want the matched identifier verbatim", got[0].Snippet)
 	}
 }
 
@@ -528,23 +528,23 @@ func TestSearch_TrigramFallbackPerTermAND(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"ProcessRequest CommandHandler"},
+		SessionID: sess.ID, Query: "ProcessRequest CommandHandler",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 	titles := map[string]string{}
-	for _, h := range got[0].Hits {
+	for _, h := range got {
 		titles[h.Title] = h.MatchLayer
 	}
 	if titles["both"] != "trigram" {
-		t.Errorf("expected the chunk with both terms at trigram; hits = %+v", got[0].Hits)
+		t.Errorf("expected the chunk with both terms at trigram; hits = %+v", got)
 	}
 	if _, present := titles["process only"]; present {
-		t.Errorf("process-only chunk should be excluded by per-term AND; hits = %+v", got[0].Hits)
+		t.Errorf("process-only chunk should be excluded by per-term AND; hits = %+v", got)
 	}
 	if _, present := titles["command only"]; present {
-		t.Errorf("command-only chunk should be excluded by per-term AND; hits = %+v", got[0].Hits)
+		t.Errorf("command-only chunk should be excluded by per-term AND; hits = %+v", got)
 	}
 }
 
@@ -564,17 +564,17 @@ func TestSearch_TrigramFallbackPrioritizesTitleViaWeightedSimilarity(t *testing.
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"ProcessRequest"},
+		SessionID: sess.ID, Query: "ProcessRequest",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 2 {
-		t.Fatalf("hits = %+v; want both chunks", got[0].Hits)
+	if len(got) != 2 {
+		t.Fatalf("hits = %+v; want both chunks", got)
 	}
-	if got[0].Hits[0].Title != "handleProcessRequest helper" {
+	if got[0].Title != "handleProcessRequest helper" {
 		t.Errorf("first hit = %q; want the title-match ranked above the content-match",
-			got[0].Hits[0].Title)
+			got[0].Title)
 	}
 }
 
@@ -599,16 +599,16 @@ func TestSearch_TrigramFallbackRespectsCombinedLimit(t *testing.T) {
 	})
 
 	gotCapped, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"connectionPool"}, Limit: 3,
+		SessionID: sess.ID, Query: "connectionPool", Limit: 3,
 	})
 	if err != nil {
 		t.Fatalf("Search limit=3: %v", err)
 	}
-	if len(gotCapped[0].Hits) != 3 {
-		t.Fatalf("limit=3 hits = %+v; want exactly three combined", gotCapped[0].Hits)
+	if len(gotCapped) != 3 {
+		t.Fatalf("limit=3 hits = %+v; want exactly three combined", gotCapped)
 	}
 	primaryCount, trigramCount := 0, 0
-	for _, h := range gotCapped[0].Hits {
+	for _, h := range gotCapped {
 		switch h.MatchLayer {
 		case "primary":
 			primaryCount++
@@ -621,13 +621,13 @@ func TestSearch_TrigramFallbackRespectsCombinedLimit(t *testing.T) {
 	}
 
 	gotFull, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"connectionPool"}, Limit: 5,
+		SessionID: sess.ID, Query: "connectionPool", Limit: 5,
 	})
 	if err != nil {
 		t.Fatalf("Search limit=5: %v", err)
 	}
-	if len(gotFull[0].Hits) != 5 {
-		t.Errorf("limit=5 hits = %+v; want all five combined", gotFull[0].Hits)
+	if len(gotFull) != 5 {
+		t.Errorf("limit=5 hits = %+v; want all five combined", gotFull)
 	}
 }
 
@@ -648,16 +648,16 @@ func TestSearch_TrigramFallbackDeduplicatesAgainstLayer1(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"connectionPool"},
+		SessionID: sess.ID, Query: "connectionPool",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 1 {
-		t.Fatalf("hits = %+v; want one hit (no dedup leak)", got[0].Hits)
+	if len(got) != 1 {
+		t.Fatalf("hits = %+v; want one hit (no dedup leak)", got)
 	}
-	if got[0].Hits[0].MatchLayer != "primary" {
-		t.Errorf("match_layer = %q; want primary (layer 1 wins the tag)", got[0].Hits[0].MatchLayer)
+	if got[0].MatchLayer != "primary" {
+		t.Errorf("match_layer = %q; want primary (layer 1 wins the tag)", got[0].MatchLayer)
 	}
 }
 
@@ -678,15 +678,15 @@ func TestSearch_TrigramFallbackOnlyWhenLayer1Underfills(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"connectionPool"}, Limit: 2,
+		SessionID: sess.ID, Query: "connectionPool", Limit: 2,
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 2 {
-		t.Fatalf("hits = %+v; want exactly two (no fallback)", got[0].Hits)
+	if len(got) != 2 {
+		t.Fatalf("hits = %+v; want exactly two (no fallback)", got)
 	}
-	for _, h := range got[0].Hits {
+	for _, h := range got {
 		if h.MatchLayer != "primary" {
 			t.Errorf("hit %q match_layer = %q; want primary only (layer 2 should not fire)",
 				h.Title, h.MatchLayer)
@@ -709,13 +709,13 @@ func TestSearch_TrigramFallbackCrossNamespaceIsolated(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-b", db.SearchInput{
-		SessionID: sessB.ID, Queries: []string{"ProcessRequest"},
+		SessionID: sessB.ID, Query: "ProcessRequest",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 0 {
-		t.Errorf("hits = %+v; want zero (cross-namespace invisibility)", got[0].Hits)
+	if len(got) != 0 {
+		t.Errorf("hits = %+v; want zero (cross-namespace invisibility)", got)
 	}
 }
 
@@ -734,13 +734,13 @@ func TestSearch_TrigramFallbackNormalizesNoiseTerms(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{"where did the a b ProcessRequest in at it"},
+		SessionID: sess.ID, Query: "where did the a b ProcessRequest in at it",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 1 || got[0].Hits[0].MatchLayer != "trigram" {
-		t.Fatalf("hits = %+v; want one trigram hit (stopwords + short tokens normalized out)", got[0].Hits)
+	if len(got) != 1 || got[0].MatchLayer != "trigram" {
+		t.Fatalf("hits = %+v; want one trigram hit (stopwords + short tokens normalized out)", got)
 	}
 }
 
@@ -767,7 +767,7 @@ func TestSearch_TrigramFallbackBoundsExcessiveTermCount(t *testing.T) {
 	query := strings.Join(parts, " ")
 
 	if _, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sess.ID, Queries: []string{query},
+		SessionID: sess.ID, Query: query,
 	}); err != nil {
 		t.Fatalf("excessive-term query returned error: %v", err)
 	}
@@ -787,12 +787,12 @@ func TestSearch_TrigramFallbackSessionIsolated(t *testing.T) {
 	})
 
 	got, err := store.Sources().Search(context.Background(), "ns-a", db.SearchInput{
-		SessionID: sessB.ID, Queries: []string{"ProcessRequest"},
+		SessionID: sessB.ID, Query: "ProcessRequest",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(got[0].Hits) != 0 {
-		t.Errorf("hits = %+v; want zero (cross-session invisibility within namespace)", got[0].Hits)
+	if len(got) != 0 {
+		t.Errorf("hits = %+v; want zero (cross-session invisibility within namespace)", got)
 	}
 }

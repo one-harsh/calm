@@ -95,16 +95,16 @@ func trigramCandidatesSQL(termCount int) string {
 			placeholder, placeholder)
 	}
 	return fmt.Sprintf(`
-		SELECT c.id, c.title, c.content, c.content_type, s.label
+		SELECT c.id, c.title, c.content, c.content_type, s.label,
+		       2.0 * strict_word_similarity($4, c.title)
+		     + 1.0 * strict_word_similarity($4, c.content) AS relevance
 		FROM chunks c
 		JOIN sources s ON c.source_id = s.id
 		WHERE s.session_id = $1
 		  AND EXISTS (SELECT 1 FROM sessions WHERE id = $1 AND namespace = $3)
 		  AND ($2 = '' OR s.label = $2)
 		  AND c.id <> ALL($6::bigint[])%s
-		ORDER BY (2.0 * strict_word_similarity($4, c.title)
-		        + 1.0 * strict_word_similarity($4, c.content)) DESC,
-		         c.id ASC
+		ORDER BY relevance DESC, c.id ASC
 		LIMIT $5`, clauses.String())
 }
 
@@ -145,8 +145,9 @@ func (r *sourcesRepo) trigramCandidates(
 			content     string
 			contentType string
 			label       string
+			relevance   float64
 		)
-		if err := rows.Scan(&id, &title, &content, &contentType, &label); err != nil {
+		if err := rows.Scan(&id, &title, &content, &contentType, &label, &relevance); err != nil {
 			return nil, fmt.Errorf("%w: scan trigram hit for session %d in %q: %w",
 				ErrStorageBackend, sessionID, namespace, err)
 		}
@@ -157,6 +158,7 @@ func (r *sourcesRepo) trigramCandidates(
 			SnippetFallback: snip.fallback,
 			Source:          label,
 			MatchLayer:      "trigram",
+			Relevance:       relevance,
 		})
 	}
 	if err := rows.Err(); err != nil {

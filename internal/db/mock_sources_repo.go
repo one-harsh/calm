@@ -85,23 +85,23 @@ func (_c *MockSourcesRepo_List_Call) RunAndReturn(run func(context.Context, stri
 }
 
 // Search provides a mock function with given fields: ctx, namespace, in
-func (_m *MockSourcesRepo) Search(ctx context.Context, namespace string, in SearchInput) ([]SearchResult, error) {
+func (_m *MockSourcesRepo) Search(ctx context.Context, namespace string, in SearchInput) ([]SearchHit, error) {
 	ret := _m.Called(ctx, namespace, in)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Search")
 	}
 
-	var r0 []SearchResult
+	var r0 []SearchHit
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, SearchInput) ([]SearchResult, error)); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, SearchInput) ([]SearchHit, error)); ok {
 		return rf(ctx, namespace, in)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, SearchInput) []SearchResult); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, string, SearchInput) []SearchHit); ok {
 		r0 = rf(ctx, namespace, in)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]SearchResult)
+			r0 = ret.Get(0).([]SearchHit)
 		}
 	}
 
@@ -134,12 +134,12 @@ func (_c *MockSourcesRepo_Search_Call) Run(run func(ctx context.Context, namespa
 	return _c
 }
 
-func (_c *MockSourcesRepo_Search_Call) Return(_a0 []SearchResult, _a1 error) *MockSourcesRepo_Search_Call {
+func (_c *MockSourcesRepo_Search_Call) Return(_a0 []SearchHit, _a1 error) *MockSourcesRepo_Search_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockSourcesRepo_Search_Call) RunAndReturn(run func(context.Context, string, SearchInput) ([]SearchResult, error)) *MockSourcesRepo_Search_Call {
+func (_c *MockSourcesRepo_Search_Call) RunAndReturn(run func(context.Context, string, SearchInput) ([]SearchHit, error)) *MockSourcesRepo_Search_Call {
 	_c.Call.Return(run)
 	return _c
 }

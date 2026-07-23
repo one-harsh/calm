@@ -85,14 +85,13 @@ func (r *sourcesRepo) List(ctx context.Context, namespace string, sessionID int6
 	return out, nil
 }
 
-func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInput) ([]SearchResult, error) {
+// Single-query by design: the repo is tx-agnostic, so batch fan-out lives in
+// the service layer that knows it holds a concurrency-safe *sql.DB.
+func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInput) ([]SearchHit, error) {
 	if namespace == "" {
 		return nil, ErrNamespaceRequired
 	}
-	if len(in.Queries) == 0 {
-		return nil, ErrQueryRequired
-	}
-	if slices.Contains(in.Queries, "") {
+	if in.Query == "" {
 		return nil, ErrQueryRequired
 	}
 	if in.Limit < 0 {
@@ -104,18 +103,7 @@ func (r *sourcesRepo) Search(ctx context.Context, namespace string, in SearchInp
 		limit = defaultSearchLimit
 	}
 
-	// Queries run sequentially: this repo is tx-agnostic and *sql.Tx is not
-	// safe for concurrent use — fan-out belongs at a layer that knows it
-	// holds *sql.DB.
-	out := make([]SearchResult, 0, len(in.Queries))
-	for _, q := range in.Queries {
-		hits, err := r.searchOne(ctx, namespace, in.SessionID, in.Source, q, limit)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, SearchResult{Query: q, Hits: hits})
-	}
-	return out, nil
+	return r.searchOne(ctx, namespace, in.SessionID, in.Source, in.Query, limit)
 }
 
 type bm25Candidate struct {
@@ -126,6 +114,9 @@ type bm25Candidate struct {
 	label       string
 	matchesAll  bool
 	rrf         float64
+	// NEGATED BM25 (smaller = better); negated again into Relevance at hit
+	// assembly. Feeds budget allocation, never the fused sort.
+	score float64
 }
 
 // searchOne is the layer-1 query: each tokenizer class contributes its top
@@ -169,6 +160,8 @@ func (r *sourcesRepo) searchOne(ctx context.Context, namespace string, sessionID
 			SnippetFallback: snip.fallback,
 			Source:          c.label,
 			MatchLayer:      "primary",
+			Relevance:       -c.score,
+			MatchesAll:      c.matchesAll,
 		})
 	}
 
@@ -197,7 +190,7 @@ func (r *sourcesRepo) classCandidates(ctx context.Context, namespace string, cla
 	rank := 0
 	for rows.Next() {
 		var c bm25Candidate
-		if err := rows.Scan(&c.id, &c.title, &c.content, &c.contentType, &c.label, &c.matchesAll); err != nil {
+		if err := rows.Scan(&c.id, &c.title, &c.content, &c.contentType, &c.label, &c.matchesAll, &c.score); err != nil {
 			return nil, fmt.Errorf("%w: scan search hit for session %d in %q: %w", ErrStorageBackend, sessionID, namespace, err)
 		}
 		rank++
