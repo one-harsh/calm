@@ -82,9 +82,14 @@ func PlanGitStatus(inv Invocation, r ExecResult) Plan {
 // ref list and a ref+pathspec split can never alias) and resolve
 // workspace-relative — an escaping or globbing pathspec drops the whole
 // invocation to coexist.
-func PlanGitDiff(inv Invocation, r ExecResult, refs, paths []string) Plan {
+func PlanGitDiff(inv Invocation, r ExecResult, refs, paths []string, staged bool) Plan {
 	facts := typedFacts(toolNameGitDiff, "git diff", "diff", true, inv, r)
 	id := labelID{domain: domainVCS, verb: "git", context: []string{"diff"}}
+	// --staged gets its own identity segment so an index diff never aliases a
+	// worktree diff of the same refs; collision-safe since refs can't start with '-'.
+	if staged {
+		id.ident = append(id.ident, "--staged")
+	}
 	id.ident = append(id.ident, refs...)
 	if len(paths) > 0 {
 		ident, ok := relIdents(paths, inv)

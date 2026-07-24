@@ -22,7 +22,8 @@ const readFileDescription = "Read a file from the workspace, capturing its conte
 	"come back verbatim (still captured and searchable via calm_search). Larger files come back as a " +
 	"compact summary plus a source label ending in @<token>; fetch the captured content later with " +
 	"calm_search source=<label exactly as returned> rather than re-reading. Optional start_line/end_line " +
-	"limit only what is shown — the capture is always the full file. The label refers to the latest read " +
+	"limit only what is shown — a scoped range comes back verbatim (capped past a size ceiling), while the " +
+	"capture is always the full file. The label refers to the latest read " +
 	"of this file. Never append #<n> after the @<token>. In multi-workspace sessions, set " +
 	"workspace=<id> to target a non-default workspace."
 
@@ -88,9 +89,10 @@ func (s *Server) readFile(ctx context.Context, args json.RawMessage) (ToolResult
 
 	r := exec.Result{Stdout: full, Truncated: truncated}
 	return s.capturePipeline(ctx, captureSpec{
-		ingest:  full,
-		visible: visible,
-		res:     r,
+		ingest:     full,
+		visible:    visible,
+		res:        r,
+		rangedView: a.StartLine > 0 || a.EndLine > 0,
 		plan: func() (extract.Plan, error) {
 			return extract.PlanFileRead(s.invocation(b, "", b.Root), execResultOf(r), a.Path), nil
 		},

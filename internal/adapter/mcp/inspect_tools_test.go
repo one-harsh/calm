@@ -10,6 +10,7 @@ import (
 	"os"
 	stdexec "os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -101,8 +102,10 @@ func TestReadFile_SmallInlineVerbatim(t *testing.T) {
 	awaitSignal(t, eventsDone)
 }
 
-// Capture-full-present-range: the ranged view shapes visible text only — CALM
-// ingests the whole file, with the extension-keyed Format hint.
+// Capture-full-present-range: the visible text is the requested slice plus the
+// fused recall label (present at any slice size — a ranged view is a window into
+// a larger capture); CALM ingests the whole file, with the extension-keyed
+// Format hint.
 func TestReadFile_RangeCapturesFullPresentsSlice(t *testing.T) {
 	var lines []string
 	for i := 1; i <= 60; i++ {
@@ -123,9 +126,95 @@ func TestReadFile_RangeCapturesFullPresentsSlice(t *testing.T) {
 	initSession(t, h, "claude-code")
 
 	res := callTool(t, h, 2, "calm_read_file", map[string]any{"path": "data.json", "start_line": 3, "end_line": 4})
-	want := lines[2] + "\n" + lines[3] + "\n"
-	if got := resultText(t, res); got != want {
-		t.Errorf("ranged visible = %q; want lines 3-4 %q", got, want)
+	got := resultText(t, res)
+	slice := lines[2] + "\n" + lines[3] + "\n"
+	tok := regexp.MustCompile(`@([a-z2-7]{6})`).FindStringSubmatch(got)
+	if tok == nil {
+		t.Fatalf("ranged visible carries no fused token; got %q", got)
+	}
+	fused := "calm:v1:file:read:data.json@" + tok[1]
+	want := slice + fmt.Sprintf("Captured 1/1 sections under %q.\nRetrieve full output: calm_search source=%s\n", fused, fused)
+	if got != want {
+		t.Errorf("ranged visible = %q; want slice + label lines %q", got, want)
+	}
+	awaitSignal(t, eventsDone)
+}
+
+// A scoped range whose slice exceeds the inline threshold (but fits the ranged
+// cap) comes back as the exact requested lines plus the recall label — not the
+// whole-file compact summary a same-size non-ranged read would collapse to.
+func TestReadFile_RangedLargeSlicePresentsRange(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 60; i++ {
+		lines = append(lines, fmt.Sprintf("row %03d: %s", i, strings.Repeat("x", 50)))
+	}
+	full := strings.Join(lines, "\n") + "\n"
+
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
+		return in.Content == full
+	})).Return(calm.IngestSummary{
+		Source:          "calm:v1:file:read:big.txt",
+		SectionsIndexed: 1,
+		SectionsTotal:   1,
+		Sections:        []calm.SectionPreview{{Title: "section-alpha"}},
+	}, nil).Once()
+	eventsDone, _ := eventCapture(m)
+
+	ws := t.TempDir()
+	writeWorkspaceFileMCP(t, ws, "big.txt", full)
+	h := newWorkspaceHarness(t, m, ws)
+	initSession(t, h, "claude-code")
+
+	res := callTool(t, h, 2, "calm_read_file", map[string]any{"path": "big.txt", "start_line": 5, "end_line": 24})
+	slice := strings.Join(lines[4:24], "\n") + "\n"
+	got := resultText(t, res)
+	if len(slice) <= 512 {
+		t.Fatalf("test setup: slice must exceed the inline threshold; got %d bytes", len(slice))
+	}
+	if !strings.Contains(got, slice) {
+		t.Errorf("ranged view missing the verbatim slice; got:\n%s", got)
+	}
+	if !strings.Contains(got, "calm_search source=calm:v1:file:read:big.txt@") {
+		t.Errorf("ranged view missing the fused recall label; got:\n%s", got)
+	}
+	if strings.Contains(got, "section-alpha") {
+		t.Errorf("ranged view must not render compact section chrome; got:\n%s", got)
+	}
+	awaitSignal(t, eventsDone)
+}
+
+// A scoped range whose slice exceeds the ranged byte cap comes back as a rune-safe
+// prefix ending in the literal truncation marker naming both recoveries — narrow the
+// range, or reread the full capture in document order.
+func TestReadFile_RangedSliceCappedAt8KiB(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 250; i++ {
+		lines = append(lines, fmt.Sprintf("row %03d: %s", i, strings.Repeat("x", 50)))
+	}
+	full := strings.Join(lines, "\n") + "\n"
+
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
+		return in.Content == full
+	})).Return(calm.IngestSummary{
+		Source:          "calm:v1:file:read:capped.txt",
+		SectionsIndexed: 1,
+		SectionsTotal:   1,
+	}, nil).Once()
+	eventsDone, _ := eventCapture(m)
+
+	ws := t.TempDir()
+	writeWorkspaceFileMCP(t, ws, "capped.txt", full)
+	h := newWorkspaceHarness(t, m, ws)
+	initSession(t, h, "claude-code")
+
+	res := callTool(t, h, 2, "calm_read_file", map[string]any{"path": "capped.txt", "start_line": 1, "end_line": 200})
+	got := resultText(t, res)
+	if !strings.Contains(got, "ranged view capped at 8192 bytes — narrow start_line/end_line, or reread the full capture in document order with calm_search source=calm:v1:file:read:capped.txt@") {
+		t.Errorf("over-cap ranged view missing the literal truncation marker; got:\n%s", got)
 	}
 	awaitSignal(t, eventsDone)
 }
@@ -426,6 +515,23 @@ func TestGitDiff_RefGuardAndFailureCapture(t *testing.T) {
 	}
 	if !sawError {
 		t.Errorf("bad ref emitted no error_observed; got %+v", *events)
+	}
+}
+
+// git's --staged takes at most one commit, so a staged diff with more than one
+// ref is rejected before any subprocess runs.
+func TestGitDiff_StagedTwoRefsArgError(t *testing.T) {
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	h := newWorkspaceHarness(t, m, t.TempDir())
+	initSession(t, h, "claude-code")
+
+	res := callTool(t, h, 2, "calm_git_diff", map[string]any{"staged": true, "refs": []string{"HEAD~1", "HEAD"}})
+	if !res.IsError || !strings.Contains(resultText(t, res), "invalid arguments") {
+		t.Fatalf("staged + 2 refs = %+v; want ArgError result", res)
+	}
+	if !strings.Contains(resultText(t, res), "at most one ref") {
+		t.Errorf("ArgError = %q; want the at-most-one-ref detail", resultText(t, res))
 	}
 }
 

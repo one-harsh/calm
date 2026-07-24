@@ -21,6 +21,10 @@ type captureSpec struct {
 	ingest  string
 	visible string
 	res     exec.Result
+	// rangedView marks a deliberately-scoped calm_read_file slice so presentation
+	// shows the slice verbatim (capped) rather than collapsing a range the agent
+	// already narrowed into whole-file summary chrome.
+	rangedView bool
 	// plan runs only after the session pre-checks pass — the session-local
 	// seq must be allocated exactly when a capture can proceed, or history
 	// #<seq> numbering would drift on degraded calls.
@@ -73,7 +77,7 @@ func (s *Server) capturePipeline(ctx context.Context, spec captureSpec) (res Too
 		return TextResult(spec.visible, false), s.sessionFailureSignal(ctx, token, sessErr)
 	}
 	s.recordPersistedTokens(plan, outcomes)
-	res, err = s.formatCaptureOutcome(ctx, outcomes, rep, spec.visible, spec.res, plan.Token)
+	res, err = s.formatCaptureOutcome(ctx, outcomes, rep, spec.visible, spec.res, plan.Token, spec.rangedView)
 
 	// Fire-and-forget: events are pure observability and must never delay the response
 	// (never-worse) — a stalled /v1/events can't hold the tool call hostage.

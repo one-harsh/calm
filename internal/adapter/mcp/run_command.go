@@ -145,7 +145,7 @@ func isSessionLevel(err error) bool {
 // partial+failed paths — invokeTool layers the canonical phrasing prefix +
 // degraded summary fields on top. `token` is the per-call staleness suffix
 // fused into the recall-hint label.
-func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.WriteOutcome, rep *calm.IngestSummary, raw string, r exec.Result, token string) (ToolResult, error) {
+func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.WriteOutcome, rep *calm.IngestSummary, raw string, r exec.Result, token string, rangedView bool) (ToolResult, error) {
 	anyFailed := false
 	for _, o := range outcomes {
 		if !o.Persisted {
@@ -165,22 +165,29 @@ func (s *Server) formatCaptureOutcome(ctx context.Context, outcomes []extract.Wr
 			logging.BoolField(obs.KeyCaptured, true),
 			obs.SourceLabel(rep.Source),
 		)
-		return TextResult(presentCapture(ctx, *rep, raw, r, token), false), &DegradedSignal{Reason: obs.DegradedReasonCapturePartial}
+		return TextResult(presentCapture(ctx, *rep, raw, r, token, rangedView), false), &DegradedSignal{Reason: obs.DegradedReasonCapturePartial}
 	default:
 		logging.BindSummary(
 			ctx,
 			logging.BoolField(obs.KeyCaptured, true),
 			obs.SourceLabel(rep.Source),
 		)
-		return TextResult(presentCapture(ctx, *rep, raw, r, token), false), nil
+		return TextResult(presentCapture(ctx, *rep, raw, r, token, rangedView), false), nil
 	}
 }
 
-// presentCapture picks the presentation mode by raw size: at or below inlineMaxBytes
-// the raw payload wins (summary chrome would cost more context than the content);
-// above it, the compact rep + fused recall label. The source label stays on the
-// summary log in both modes.
-func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r exec.Result, token string) string {
+// presentCapture picks the presentation mode. A deliberately-scoped read always
+// presents through the ranged view regardless of slice size — ranged presentation
+// is a window into a larger capture, so the fused recall label is informative at
+// any size (DESIGN.md's presentation contract). Everything else splits by raw
+// size: at or below inlineMaxBytes the raw payload wins label-less (summary
+// chrome would cost more context than the content); above it, the compact rep +
+// fused recall label.
+func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r exec.Result, token string, rangedView bool) string {
+	if rangedView {
+		logging.BindSummary(ctx, obs.PresentationModeFieldRanged)
+		return formatRanged(sum, raw, token)
+	}
 	if len(raw) <= inlineMaxBytes {
 		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		return formatInline(raw, r)
@@ -263,6 +270,7 @@ const (
 	maxCompactSections = 5
 	maxCompactLen      = 4096
 	inlineMaxBytes     = 512
+	rangedMaxBytes     = 8192
 )
 
 // formatInline is inline mode: the raw payload verbatim with minimal framing — no
@@ -288,14 +296,48 @@ func formatInline(raw string, r exec.Result) string {
 	return b.String()
 }
 
+// fuseSource fuses the per-call staleness token into the source label per LABELING.md;
+// a token-less capture keeps the bare base label.
+func fuseSource(source, token string) string {
+	if token == "" {
+		return source
+	}
+	return source + "@" + token
+}
+
+// writeCaptureLabel emits the recall header shared by the large-output presentations,
+// so the fused source label — the agent's addressable way back to the full capture —
+// rides on every summary-family response.
+func writeCaptureLabel(b *strings.Builder, sum calm.IngestSummary, fusedSource string) {
+	fmt.Fprintf(b, "Captured %d/%d sections under %q.\n", sum.SectionsIndexed, sum.SectionsTotal, fusedSource)
+	fmt.Fprintf(b, "Retrieve full output: calm_search source=%s\n", fusedSource)
+}
+
+// formatRanged presents a deliberately-scoped calm_read_file slice: the requested
+// lines verbatim, never a summary — summarizing a range the agent already narrowed
+// would defeat the scoping (content-fidelity). The slice is capped at rangedMaxBytes;
+// past the cap a rune-safe prefix ends in a marker naming both recoveries — narrow the
+// range, or reread the full capture in document order — and the fused recall label
+// always rides along so retrieval identity survives.
+func formatRanged(sum calm.IngestSummary, raw string, token string) string {
+	var b strings.Builder
+	fusedSource := fuseSource(sum.Source, token)
+	if len(raw) > rangedMaxBytes {
+		b.WriteString(strings.ToValidUTF8(raw[:rangedMaxBytes], ""))
+		fmt.Fprintf(&b, "\n… [ranged view capped at %d bytes — narrow start_line/end_line, or reread the full capture in document order with calm_search source=%s]\n", rangedMaxBytes, fusedSource)
+	} else {
+		b.WriteString(raw)
+		if !strings.HasSuffix(raw, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	writeCaptureLabel(&b, sum, fusedSource)
+	return b.String()
+}
+
 func formatCompact(sum calm.IngestSummary, r exec.Result, token string) string {
 	var b strings.Builder
-	fusedSource := sum.Source
-	if token != "" {
-		fusedSource = sum.Source + "@" + token
-	}
-	fmt.Fprintf(&b, "Captured %d/%d sections under %q.\n", sum.SectionsIndexed, sum.SectionsTotal, fusedSource)
-	fmt.Fprintf(&b, "Retrieve full output: calm_search source=%s\n", fusedSource)
+	writeCaptureLabel(&b, sum, fuseSource(sum.Source, token))
 
 	shown := sum.Sections
 	if len(shown) > maxCompactSections {
@@ -310,9 +352,6 @@ func formatCompact(sum calm.IngestSummary, r exec.Result, token string) string {
 	}
 	if more := len(sum.Sections) - len(shown); more > 0 {
 		fmt.Fprintf(&b, "… +%d more sections\n", more)
-	}
-	if len(sum.DistinctiveTerms) > 0 {
-		fmt.Fprintf(&b, "Terms: %s\n", strings.Join(sum.DistinctiveTerms, ", "))
 	}
 
 	fmt.Fprintf(&b, "exit=%d", r.ExitCode)

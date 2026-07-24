@@ -96,6 +96,7 @@ always carry it (e.g., `calm:v1:file:read:foo.py@a3f2k6`).
 | `cat ./foo.py` | replace | `calm:v1:file:read:foo.py` | — |
 | `ls src` | replace | `calm:v1:file:list:src` | — |
 | `git diff main..feat` / `git diff HEAD` / `git diff` | dual | `calm:v1:vcs:git:diff:<refs>` | `…:diff:<refs>#<seq>` |
+| `git diff --staged` / `git diff --staged <ref>` | dual | `calm:v1:vcs:git:diff:--staged[:<ref>]` | `…:diff:--staged[:<ref>]#<seq>` |
 | `git status` | dual | `calm:v1:vcs:git:status` | `…:status#<seq>` |
 | `git show HEAD:file` | dual | `calm:v1:vcs:git:show:HEAD%3Afile` | `…:show:HEAD%3Afile#<seq>` |
 | `grep TODO src` | replace | `calm:v1:search:grep:TODO:src` | — |
@@ -216,6 +217,13 @@ normalization happens *before* the grammar is built:
   `…:diff:main:src`. A ref list and a ref+pathspec split can therefore never
   alias onto one label; without the separator, operands keep git's own
   ambiguity and flatten into one list.
+- **Staged diffs carry a `--staged` identity segment.** A staged diff (index
+  against HEAD, or against a single ref) is semantically distinct content from a
+  worktree `git diff HEAD`, so it takes its own identity —
+  `calm:v1:vcs:git:diff:--staged`, or `…:diff:--staged:<ref>` with a ref. The
+  `--staged` marker is collision-safe with ref-derived idents because a revision
+  can never start with `-` (the flag-injection guard rejects it), so no user ref
+  can produce the same segment.
 
 ## 5. Event derivation (HLD-aligned)
 

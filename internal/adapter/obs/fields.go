@@ -83,11 +83,13 @@ const (
 const (
 	PresentationModeInline  = "inline"
 	PresentationModeSummary = "summary"
+	PresentationModeRanged  = "ranged"
 )
 
 var (
 	PresentationModeFieldInline  = logging.StringField(KeyPresentationMode, PresentationModeInline)
 	PresentationModeFieldSummary = logging.StringField(KeyPresentationMode, PresentationModeSummary)
+	PresentationModeFieldRanged  = logging.StringField(KeyPresentationMode, PresentationModeRanged)
 )
 
 func ResponseVisibleBytes(n int) logging.LoggingField {

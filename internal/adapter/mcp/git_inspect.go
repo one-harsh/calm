@@ -45,8 +45,9 @@ const gitStatusSchema = `{
 const gitDiffSchema = `{
   "type": "object",
   "properties": {
-    "refs": {"type": "array", "items": {"type": "string"}, "description": "Revisions or ranges (e.g. HEAD~1, main..feat); defaults to the working tree against HEAD."},
+    "refs": {"type": "array", "items": {"type": "string"}, "description": "Revisions or ranges (e.g. HEAD~1, main..feat); with none given, diffs the working tree (staged and unstaged changes) against HEAD."},
     "paths": {"type": "array", "items": {"type": "string"}, "description": "Limit the diff to these workspace-relative paths."},
+    "staged": {"type": "boolean", "description": "Diff the index (staged changes) against HEAD, or against the single given ref."},
     "workspace": {"type": "string", "description": "Workspace ID to target; defaults to the primary workspace."}
   },
   "additionalProperties": false
@@ -59,6 +60,7 @@ type gitStatusArgs struct {
 type gitDiffArgs struct {
 	Refs      []string `json:"refs"`
 	Paths     []string `json:"paths"`
+	Staged    bool     `json:"staged"`
 	Workspace string   `json:"workspace"`
 }
 
@@ -129,21 +131,41 @@ func (s *Server) gitDiff(ctx context.Context, args json.RawMessage) (ToolResult,
 			return ToolResult{}, &ArgError{Detail: "paths entries must be non-blank"}
 		}
 	}
+	if a.Staged && len(a.Refs) > 1 {
+		return ToolResult{}, &ArgError{Detail: "staged diff takes at most one ref"}
+	}
 
 	wb, werr := s.selectWorkspace(a.Workspace)
 	if werr != nil {
 		return ToolResult{}, werr
 	}
-	argv := append([]string{"git", "diff"}, a.Refs...)
+	return s.runGitInspect(ctx, wb, gitDiffArgv(a), func(r exec.Result) func() (extract.Plan, error) {
+		return func() (extract.Plan, error) {
+			return extract.PlanGitDiff(s.invocation(wb, "", wb.Root), execResultOf(r), a.Refs, a.Paths, a.Staged), nil
+		}
+	})
+}
+
+// gitDiffArgv builds the diff subprocess argv. HEAD is injected for the no-refs
+// default at the argv layer only — PlanGitDiff maps empty refs onto the same
+// diff:HEAD identity, so the no-refs label must not carry an injected ref. A
+// staged diff takes --staged plus at most one ref (the handler rejects more).
+func gitDiffArgv(a gitDiffArgs) []string {
+	argv := []string{"git", "diff"}
+	switch {
+	case a.Staged:
+		argv = append(argv, "--staged")
+		argv = append(argv, a.Refs...)
+	case len(a.Refs) == 0:
+		argv = append(argv, "HEAD")
+	default:
+		argv = append(argv, a.Refs...)
+	}
 	if len(a.Paths) > 0 {
 		argv = append(argv, "--")
 		argv = append(argv, a.Paths...)
 	}
-	return s.runGitInspect(ctx, wb, argv, func(r exec.Result) func() (extract.Plan, error) {
-		return func() (extract.Plan, error) {
-			return extract.PlanGitDiff(s.invocation(wb, "", wb.Root), execResultOf(r), a.Refs, a.Paths), nil
-		}
-	})
+	return argv
 }
 
 // runGitInspect mirrors calm_run_command's subprocess semantics: nonzero exit

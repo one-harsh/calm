@@ -101,25 +101,25 @@ func TestPlanGitStatus_DualLabels(t *testing.T) {
 }
 
 func TestPlanGitDiff_RefsPathsAndDefault(t *testing.T) {
-	p := PlanGitDiff(structuredInv(2), ExecResult{}, nil, nil)
+	p := PlanGitDiff(structuredInv(2), ExecResult{}, nil, nil, false)
 	if p.LatestSource != "calm:v1:vcs:git:diff:HEAD" || p.HistorySource != "calm:v1:vcs:git:diff:HEAD#2" {
 		t.Errorf("default plan = %+v; want HEAD dual labels", p)
 	}
 
-	p = PlanGitDiff(structuredInv(2), ExecResult{}, []string{"main..feat"}, nil)
+	p = PlanGitDiff(structuredInv(2), ExecResult{}, []string{"main..feat"}, nil, false)
 	if p.LatestSource != "calm:v1:vcs:git:diff:main..feat" {
 		t.Errorf("refs latest = %q", p.LatestSource)
 	}
 
-	p = PlanGitDiff(structuredInv(2), ExecResult{}, []string{"HEAD~1"}, []string{"src/app.go"})
+	p = PlanGitDiff(structuredInv(2), ExecResult{}, []string{"HEAD~1"}, []string{"src/app.go"}, false)
 	if p.LatestSource != "calm:v1:vcs:git:diff:HEAD~1:--:src/app.go" {
 		t.Errorf("refs+paths latest = %q", p.LatestSource)
 	}
 
 	// The separator prevents ref/pathspec aliasing: refs=[main,src] and
 	// refs=[main]+paths=[src] are distinct identities.
-	refList := PlanGitDiff(structuredInv(2), ExecResult{}, []string{"main", "src"}, nil)
-	refPlusPath := PlanGitDiff(structuredInv(2), ExecResult{}, []string{"main"}, []string{"src"})
+	refList := PlanGitDiff(structuredInv(2), ExecResult{}, []string{"main", "src"}, nil, false)
+	refPlusPath := PlanGitDiff(structuredInv(2), ExecResult{}, []string{"main"}, []string{"src"}, false)
 	if refList.LatestSource == refPlusPath.LatestSource {
 		t.Errorf("ref list aliased with ref+pathspec: %q", refList.LatestSource)
 	}
@@ -127,8 +127,22 @@ func TestPlanGitDiff_RefsPathsAndDefault(t *testing.T) {
 		t.Errorf("ref+pathspec latest = %q; want calm:v1:vcs:git:diff:main:--:src", refPlusPath.LatestSource)
 	}
 
+	// A staged diff carries a --staged identity segment so an index diff never
+	// aliases a worktree diff of the same refs.
+	staged := PlanGitDiff(structuredInv(2), ExecResult{}, nil, nil, true)
+	if staged.LatestSource != "calm:v1:vcs:git:diff:--staged" || staged.HistorySource != "calm:v1:vcs:git:diff:--staged#2" {
+		t.Errorf("staged plan = %+v; want --staged dual labels", staged)
+	}
+	if worktree := PlanGitDiff(structuredInv(2), ExecResult{}, nil, nil, false); worktree.LatestSource == staged.LatestSource {
+		t.Errorf("staged diff aliased the worktree diff: %q", staged.LatestSource)
+	}
+	stagedRef := PlanGitDiff(structuredInv(2), ExecResult{}, []string{"HEAD~1"}, nil, true)
+	if stagedRef.LatestSource != "calm:v1:vcs:git:diff:--staged:HEAD~1" {
+		t.Errorf("staged+ref latest = %q; want calm:v1:vcs:git:diff:--staged:HEAD~1", stagedRef.LatestSource)
+	}
+
 	// Escaping pathspec → coexist under the git program bucket.
-	p = PlanGitDiff(structuredInv(5), ExecResult{}, []string{"HEAD"}, []string{"../other/repo.go"})
+	p = PlanGitDiff(structuredInv(5), ExecResult{}, []string{"HEAD"}, []string{"../other/repo.go"}, false)
 	if p.Mode != Coexist || p.HistorySource != "calm:v1:shell:git#5" {
 		t.Errorf("escape plan = %+v; want coexist shell:git#5", p)
 	}
@@ -143,7 +157,7 @@ func TestTypedPlans_EventToolNames(t *testing.T) {
 		t.Fatalf("grep events = %+v; want one tool_invocation from calm_grep", evs)
 	}
 
-	p = PlanGitDiff(structuredInv(3), ExecResult{ExitCode: 128, Stderr: "fatal: bad ref"}, []string{"nope"}, nil)
+	p = PlanGitDiff(structuredInv(3), ExecResult{ExitCode: 128, Stderr: "fatal: bad ref"}, []string{"nope"}, nil, false)
 	evs = FinalizeEvents(p, nil)
 	var types []string
 	for _, e := range evs {

@@ -110,6 +110,8 @@ Two modes:
 
 **Summary mode** returns a task-facing summary plus the fused source label in visible text. Used when the output is large enough that summary + scoped-search beats raw output. The source label is mandatory — without it, the agent has no addressable way back to the underlying captured content.
 
+A ranged file read (scoped by an explicit line range) is a summary-mode call that presents the requested slice verbatim instead of a task-facing summary — the agent already narrowed the view, so summarizing it would defeat the scoping; the slice is byte-capped past a ceiling with a truncation marker naming both recoveries (re-scope the range, or reread the full capture in document order), and the fused source label is always present.
+
 Mode-selection thresholds are implementer policy, tunable via dogfooding and benchmarks without changing the contract. The `Net context savings` invariant binds the implementer to net-saving on the median call.
 
 # 5. Lifecycle & Failure Model
@@ -187,7 +189,7 @@ The `Net context savings` invariant binds visible-text framing tight: telemetry-
 
 **OTel emission.** Adapter-resident metrics and structured logs emitted alongside CALM's OTel surface. Never reaches the MCP wire — zero context cost by construction, host-independent. Carries:
 
-- Per-call measurement: `adapter.response.visible_bytes`, `adapter.response.raw_bytes`, `adapter.call.duration_ms`, `adapter.presentation.mode` (inline vs summary distribution). Metric names follow the dotted-schema convention; the exporter converts `.` → `_` at emission.
+- Per-call measurement: `adapter.response.visible_bytes`, `adapter.response.raw_bytes`, `adapter.call.duration_ms`, `adapter.presentation.mode` (inline / summary / ranged distribution). Metric names follow the dotted-schema convention; the exporter converts `.` → `_` at emission.
 - Structured forms of the same per-call facts that surface in visible-text degradation phrasing — `captured` (boolean), `degraded` (boolean), `degraded_reason` (closed enum matching the visible-text values), source identity, and CALM's `correlation_id` for joining adapter output to CALM-side logs.
 
 Operator slicing keys on the `client` identifier the adapter registers at startup per HLD's integration contract. Granularity — per agent host, per developer, per team installation — is operator policy.

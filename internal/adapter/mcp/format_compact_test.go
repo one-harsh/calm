@@ -30,7 +30,7 @@ func TestFormatCompact_EmitsFusedSourceWhenTokenPresent(t *testing.T) {
 	}
 }
 
-func TestFormatCompact_IncludesHandleSectionsTermsAndExit(t *testing.T) {
+func TestFormatCompact_IncludesHandleSectionsAndExit(t *testing.T) {
 	sum := calm.IngestSummary{
 		Source:          "calm:v1:file:read:foo.go",
 		SectionsIndexed: 2,
@@ -47,12 +47,16 @@ func TestFormatCompact_IncludesHandleSectionsTermsAndExit(t *testing.T) {
 		"calm_search source=calm:v1:file:read:foo.go",
 		"- func main: entry point",
 		"- imports",
-		"Terms: goroutine, channel",
 		"exit=0",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compact rep missing %q; got:\n%s", want, out)
 		}
+	}
+	// DistinctiveTerms stays parsed on the summary but is never rendered into the
+	// compact presentation — the recall label carries retrieval, not a term dump.
+	if strings.Contains(out, "Terms:") || strings.Contains(out, "goroutine") {
+		t.Errorf("compact rep must not render a Terms line; got:\n%s", out)
 	}
 }
 

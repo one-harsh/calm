@@ -65,6 +65,7 @@ func TestPresentationModeValues_StableEnum(t *testing.T) {
 	}{
 		{PresentationModeInline, "inline"},
 		{PresentationModeSummary, "summary"},
+		{PresentationModeRanged, "ranged"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
