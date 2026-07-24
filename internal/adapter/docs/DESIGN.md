@@ -3,43 +3,157 @@ Copyright 2026 The CALM Authors
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# MCP Adapter - Design Contract
+# CALM Adapter — Design Contract
 
-This is CALM's MCP adapter contract. It sits between `LABELING.md` (source-label grammar and event extraction) and the HLD (workload-agnostic, no MCP-specific surface). Read it after the HLD when implementing or evolving the MCP adapter.
+This is the design contract for CALM's adapter — one capture engine and its shells. Part I specifies the engine: the capture semantics every integration consumes whole. Part II specifies the MCP shell (`calm-adapter`); Part III the capture shell (`calm-capture`). The contract sits between `LABELING.md` (source-label grammar and event extraction) and the HLD (workload-agnostic, no adapter-specific surface); settled decisions live in `DECISIONS.md` under stable `ADnn` anchors. Read it after the HLD when implementing or evolving any part of the adapter.
+
+# Part I — Capture Engine
 
 # 1. Purpose & Boundary
 
-The adapter turns local coding-agent actions into CALM-managed context. An MCP host calls one of the adapter's tools; the adapter runs the underlying local action (file read, shell command, git operation, edit), captures the output to a CALM session, and returns task-facing text. The agent later searches the captured material through the same surface.
+The adapter turns local coding-agent actions into CALM-managed context. An agent's action — a shell command, a file read, an edit — runs locally; the full output is captured into a CALM session under a stable source label; the agent receives compact task-facing text in place of the raw output; the captured material stays retrievable on demand. "The adapter" names this whole subsystem — one engine and its shells.
 
-This is one CALM workload, not the universal shape of CALM integration. Server-side workloads — Slackbots, debugging agents, eval harnesses — sit closer to their own tool-call boundary and integrate more thinly through CALM's HTTP API directly. The adapter solves the hardest case: a coding-agent host where CALM cannot see the host's native tools, so the adapter has to expose its own.
+This is one CALM workload, not the universal shape of CALM integration. Server-side workloads — Slackbots, debugging agents, eval harnesses — sit closer to their own tool-call boundary and integrate more thinly through CALM's HTTP API directly. The adapter solves the coding-agent case: a harness whose tool traffic CALM does not otherwise see.
 
-The adapter owns the MCP protocol surface, local action execution, capture identity, response presentation, degraded-state signaling, and event emission for coding-agent sessions.
+**The engine is the product surface.** The capture engine owns the semantics that make capture worth having, independent of how any agent reaches them: shell-command extraction and the labeling handoff (`LABELING.md`), local execution, ingest orchestration, presentation policy, source-registry and staleness semantics, session-lifecycle semantics, degraded-reason classification, and event derivation. Every integration consumes the engine whole; no integration forks it.
 
-It does not own CALM's namespace/session security model, indexing semantics, feedback model, or storage lifecycle — those live in the HLD. It does not sandbox local execution either; commands run on the developer's machine with that process's ordinary permissions (see DL02).
+**A shell is a delivery mechanism.** A shell puts the engine on an agent's tool path and owns exactly three things: its transport, its session-state strategy, and its degradation surface — how the engine's degraded-reason classification renders to its consumer. Two shells exist:
 
-Shell command capture is the long-tail substrate, not the core surface. High-frequency coding-agent actions get structured tools; shell wrapping is the fallback for everything else.
+- The **MCP shell** (`calm-adapter`) is a stdio MCP server exposing structured `calm_*` tools. Utilization is discretionary — the agent must choose these tools over the harness's native ones. In exchange, the structured surface captures action classes the native execution path doesn't expose to interception: file reads, searches, listings, edits, git inspection, each with typed arguments that feed labeling without shell-string parsing.
+
+- The **capture shell** (`calm-capture`) is a CLI invoked through harness-native hooks that rewrite native tool calls to pass through it. Utilization is structural — the rewrite fires on every native shell execution, with no agent cooperation. Coverage is bounded by what the harness's hooks expose to interception.
+
+**The tool surface is contingent; the engine is not.** Every agent-initiated operation the MCP tools carry — retrieval, outcome feedback — is equally expressible as a `calm-capture` invocation through the harness's own shell tool; the hook recognizes the binary and passes it through unwrapped. What cannot be removed is what the tools route to: the labeling grammar, capture and presentation policy, and the CALM call orchestration. A dedicated tool therefore earns its slot on measured ergonomics and utilization, never on necessity. Outcome feedback is the strongest candidate for a retained tool — it is inherently agent-discretionary, so a tool description that teaches the affordance may outperform a CLI hint — but that is an ergonomics call, not an architectural dependency. Which shell earns continued investment is decided by measured context economics, not by architecture.
+
+**Dependency rule.** Shells depend on the engine; the engine depends on no shell; shells never depend on each other. The rule is enforced mechanically. Its consequence is deliberate: retiring a shell is a deletion, not a refactor.
+
+The adapter does not own CALM's namespace/session security model, indexing semantics, feedback model, or storage lifecycle — those live in the HLD. It does not sandbox local execution either; commands run on the developer's machine with that process's ordinary permissions (see DL02).
 
 # 2. Design Invariants
 
-Seven rules. A new tool, response-shape change, lifecycle change, or host integration may pick its own mechanics — these properties hold across them.
+Seven rules. A new tool or command, response-shape change, lifecycle change, or shell may pick its own mechanics — these properties hold across them.
 
-**1. Never worse for local actions** (`never-worse`). CALM unavailable? The local result still returns. CALM slow? Same. CALM rejecting? Same. Worst case is lost capture and higher context cost, never a blocked tool call.
+**1. Never worse for local actions** (`never-worse`). CALM unavailable? The local result still returns. CALM slow? Same. CALM rejecting? Same. Worst case is lost capture and higher context cost, never a blocked action.
 
 **2. Stable capture identity** (`idempotent-indexing`). Captured outputs need identities that avoid silent collision between semantically distinct content. Two captures of distinct content under the same source label silently destroy history; `LABELING.md` owns the grammar that prevents it.
 
-**3. Session and namespace isolation in-process** (`namespace-isolation`, `session-isolation`). Every CALM session's credentials and capture state are isolated within the MCP process. Session tokens never appear in logs, tool text, or metadata. Capture handles, derived events, and search results never cross session or namespace boundaries.
+**3. Session and namespace isolation, in process and at rest** (`namespace-isolation`, `session-isolation`). Every CALM session's credentials and capture state are isolated within the integration process, and at rest wherever a shell persists them — state files are owner-only. Session tokens never appear in logs, visible text, capture labels, event payloads, or world-readable paths; a shell's owner-only state file is the token's only at-rest home. Capture handles, derived events, and search results never cross session or namespace boundaries.
 
 **4. Honest capture continuity.** The adapter does not imply that prior captures remain searchable after their CALM session boundary is gone. Continuity breaks surface reactively — when the agent reaches for content from the prior session, it gets a clear staleness signal, not empty results from the new session.
 
-**5. Honest mutation surfacing.** The tool surface honestly conveys each tool's mutation intent: tools that make a non-mutating promise signal as such; tools that may mutate signal explicitly; tools whose mutation status depends entirely on agent-supplied inputs make no read/mutate promise. This is a declarative consumer-trust contract about adapter INTENT, not a sandboxing claim — local execution remains unsandboxed, and developer-configured hooks, aliases, or extensions that mutate the workspace through nominally-inspection commands are outside what the adapter can detect or enforce against.
+**5. Honest mutation surfacing.** The tool surface honestly conveys each tool's mutation intent: tools that make a non-mutating promise signal as such; tools that may mutate signal explicitly; tools whose mutation status depends entirely on agent-supplied inputs make no read/mutate promise. This is a declarative consumer-trust contract about adapter INTENT, not a sandboxing claim — local execution remains unsandboxed, and developer-configured hooks, aliases, or extensions that mutate the workspace through nominally-inspection commands are outside what the adapter can detect or enforce against. The MCP shell expresses this through tool names, descriptions, and annotations; the capture shell inherits its mutation posture from the harness — the command it wraps was already presented to the harness's own permission surface, so the shell re-declares nothing.
 
 **6. Response-first events** (`never-worse`). Event derivation and emission are best-effort. They never determine or delay the user-visible tool result.
 
 **7. Net context savings.** When the adapter returns a local action's output to the agent, the response net-reduces context cost relative to the raw output on the median call. Telemetry-class additions never belong in visible text — they belong in OTel emission.
 
-# 3. Tool Surface
+# 3. Capture & Presentation
 
-The adapter exposes tools at the level of agent intent, not local implementation mechanics. A tool earns its slot when the action is common in coding-agent work, has a stable enough capture identity, benefits from search later, and would lose useful intent if forced through a generic shell command.
+## Identities
+
+The adapter uses two identities. Don't blur them.
+
+**Source label.** CALM's server-side source identity, fused with a per-call staleness suffix. Format `<base>[#<seq>]@<token>` per `LABELING.md` — e.g., `calm:v1:file:read:foo.go@a3f2k6`. The base portion (`calm:v1:file:read:foo.go`) is the CALM-side addressing key, operator-visible. The `@<token>` suffix is a session-scoped local-validation marker minted per invocation. Stale or cross-session tokens return a clear staleness signal rather than empty results from the current session. See AD02.
+
+**Feedback ref.** The outcome-reporting handle; each shell exposes its own reporting affordance that accepts it (the MCP shell's `calm_report_outcome` tool). Resolves to a CALM correlation ID. Opaque to the agent; subject to the feedback window enforced by CALM.
+
+## Presentation
+
+Two modes:
+
+**Inline mode** returns the captured content itself in visible text, with minimal framing. Used when the output is small enough that summary + scoped-search would be a net cost.
+
+**Summary mode** returns a task-facing summary plus the fused source label in visible text. Used when the output is large enough that summary + scoped-search beats raw output. The source label is mandatory — without it, the agent has no addressable way back to the underlying captured content.
+
+A ranged file read (scoped by an explicit line range) is a summary-mode call that presents the requested slice verbatim instead of a task-facing summary — the agent already narrowed the view, so summarizing it would defeat the scoping; the slice is byte-capped past a ceiling with a truncation marker naming both recoveries (re-scope the range, or reread the full capture in document order), and the fused source label is always present.
+
+Mode-selection thresholds are implementer policy, tunable via dogfooding and benchmarks without changing the contract. The `Net context savings` invariant binds the implementer to net-saving on the median call.
+
+# 4. Session Lifecycle & Failure Model
+
+Two lifecycles run in parallel: the **integration lifetime** — shell-owned: the stdio process for the MCP shell, the harness conversation for the capture shell — and the **CALM session** used for capture, search, events, and correlation.
+
+**Session state.** The engine defines five items of per-session state; every shell holds them durably for its integration lifetime, in a store of its choosing: the session token (the credential — secret, never logged), the monotonic capture sequence (allocates history labels; never reused, continues across session replacement), the token registry (validates label suffixes per AD02), the auth latch (set on credential rejection; terminal for the latch scope), and the epoch (increments on each session replacement; tags deferred work so output belonging to a replaced session is discardable, never delivered as current). What increments, latches, or resets is engine semantics, identical across shells; only the storage differs — the MCP shell holds these in process memory, the capture shell persists them (Part III).
+
+A session is established on demand by the first capture. Capture is the only establishment trigger — retrieval and feedback have nothing to find before the first capture, so they fail with their unavailability signal rather than creating sessions. Establishment is throttled so a down CALM taxes at most one call per interval with the create timeout. Client registration is re-attempted first whenever it has not yet landed — a create for an unregistered client is a guaranteed rejection, which must not read as a credential verdict. Any local outputs produced before establishment were not captured; the establishing call is captured normally, so the transition into capture-active state surfaces visibly. A create rejected by CALM latches the credential failure exactly as AD03's recovery create does.
+
+If an established CALM session is lost, expired, or deleted, the adapter creates a replacement session — see AD03. Prior captures are not searchable from the new session unless explicitly re-captured. Retrieval against a source label from the prior session fails clearly, never returning empty results from the current session — the per-call validation suffix per `LABELING.md` is what makes this detection local.
+
+## Failure Behavior
+
+Failure shape depends on operation class.
+
+**Action/capture operations** return the local result when local work succeeds but CALM capture fails. Visible text states the degraded capture state and reason in agent-readable phrasing; OTel emission records the same facts for operator slicing.
+
+**Retrieval-only operations** cannot produce correct search results without CALM state. They return a visible degraded error when the CALM backend is unavailable. Stale-source-label behavior is governed by AD02; session loss by AD03.
+
+**Event emission** is best-effort and off the response path.
+
+## Workspace Binding
+
+Workspaces are discovered at capture time since the non-working directories that agentic sessions touch cannot be known at the time of start of the session. A path's workspace is its **project anchor**: the deepest ancestor directory carrying a version-control marker, or — only when no VCS ancestor exists, which is the dependency-store case — the deepest ancestor carrying a recognized project manifest. A VCS marker directly at the user's home directory or the filesystem root is ignored as an anchor (a home-level repository is a dotfiles setup, not a project boundary). Paths with no anchor fall back to `coexist` mode per `LABELING.md`'s escape-path rule.
+
+The **primary workspace** is the anchor of the directory the adapter was launched in (or that directory itself when unmarked). Its captures label bare — no WorkspaceID segment — so the common single-repository session stays clean. Every other workspace, whenever discovered, labels its captures with its WorkspaceID segment. Discovery is monotonic within a session: new workspaces are added on first touch and existing labels never change meaning; the workspace set only grows.
+
+Tool calls select a workspace explicitly by its ID (structured tools), implicitly by the path's or cwd's own project anchor — which registers the workspace on first touch — or default to the primary. Anchor resolution is per-path, so a nested anchor (a submodule inside an already-known repository) is its own workspace regardless of which was touched first.
+
+# 5. Labeling & Events
+
+`LABELING.md` is the canonical source-label and event-extraction contract. This document owns the broader adapter surface; `LABELING.md` owns the grammar that maps adapter actions to CALM sources and event records.
+
+The broader adapter surface changes how labels are produced, not why they exist. Structured tools feed labeling from typed arguments — file path, directory path, grep pattern and scope, Git operation and ref selection. They don't round-trip through shell-string parsing to recover intent the tool already knows.
+
+Shell-substrate execution — `calm_run_command` in the MCP shell, `calm-capture exec` in the capture shell — uses best-effort shell-command extraction for the long tail. When extraction finds a stable semantic identity, it captures latest or latest-plus-history per the labeling contract. When it can't, it preserves invocation history rather than overwriting a misleading latest source.
+
+Events derive from the same action facts as labels, finalized once ingest outcomes are known. Cross-links point only at sources that actually persisted. Event emission is best-effort and response-first — failed or slow event writes don't change the tool result.
+
+Keeping labeling separate from any shell is what makes the engine portable: the durable parts — stable source labels, latest/history policy, event cross-links — live in the engine; shell mechanics — stdio lifecycle, tool descriptions, hook payload parsing — live outside it.
+
+# 6. Observability & Context Health
+
+Context health is an operational fact, not an autonomous judgement about whether the model has enough context. The adapter reports what it can know: whether capture was active, whether a response was degraded, whether a retrieval result came from the current session, whether events were derived or queued, whether a result can accept feedback.
+
+## Output Surface Structure
+
+The adapter's output splits into two surfaces — visible text the agent reads (and the harness renders in its UI), and OTel emission the operator consumes (harness-independent, zero context cost).
+
+**Visible text.** What the agent reads and the harness renders. Always in model context. Carries:
+
+- Task-facing summaries (summary mode) or captured content (inline mode).
+- The fused source label for captured output, in the recall hint — addressable by the agent in a follow-up retrieval call.
+- `feedback_ref` when the call backed a CALM feedback-eligible operation — addressable by the agent in a follow-up outcome report.
+- Degradation phrasing when the call ran in a degraded state. Phrasing is stable and reason-specific so the agent can branch on the reason:
+  - `CALM degraded — calm_unreachable. Capture and search may fail; local result is shown.`
+  - `CALM degraded — auth_failed. CALM credentials rejected; capture and feedback are disabled for this conversation.`
+  - `CALM degraded — session_lost. The prior session expired or was replaced; references to prior captures will fail.`
+  - `CALM degraded — capture_failed. Local action ran; CALM did not index the output.`
+  - `CALM degraded — capture_partial. Some captured sources were indexed; others were not.`
+  - `CALM degraded — feedback_window_expired. The feedback window for this reference has closed.`
+
+  Each phrasing keeps the cost bounded (one short sentence per call) while giving the agent enough specificity to choose a next move that differs by reason. The reason enum and the canonical phrasing are engine-owned; a shell chooses only where the sentence renders — tool-result text for the MCP shell, terminal output for the capture shell — so agent-visible degradation is identical across shells. New degradation reasons get added as additional modes are characterized; each addition is a deliberate change, not a silent extension.
+
+The `Net context savings` invariant binds visible-text framing tight: telemetry-class facts (per-call byte counters, timings, mode-decision distribution) never appear here.
+
+**OTel emission.** Adapter-resident metrics and structured logs emitted alongside CALM's OTel surface. Never reaches visible text — zero context cost by construction, harness-independent. Carries:
+
+- Per-call measurement: `adapter.response.visible_bytes`, `adapter.response.raw_bytes`, `adapter.call.duration_ms`, `adapter.presentation.mode` (inline / summary / ranged distribution). Metric names follow the dotted-schema convention; the exporter converts `.` → `_` at emission.
+- Structured forms of the same per-call facts that surface in visible-text degradation phrasing — `captured` (boolean), `degraded` (boolean), `degraded_reason` (closed enum matching the visible-text values), source identity, and CALM's `correlation_id` for joining adapter output to CALM-side logs.
+
+Operator slicing keys on the `client` identifier the adapter registers at startup per HLD's integration contract. Granularity — per harness, per developer, per team installation — is operator policy.
+
+This is the surface that makes the `Net context savings` invariant operationally checkable. Without OTel emission, the invariant would either be unenforceable (no measurement) or self-defeating (measurement riding in visible text adds to the cost it's measuring).
+
+## Feedback & Outcome Reporting
+
+CALM owns the feedback API and the long-term interpretation of those signals. The adapter owns the integration surface: when a CALM value-producing call has a correlation id, the adapter exposes an opaque `feedback_ref` the agent can later pass to its shell's reporting affordance. The affordance accepts only bounded outcomes — `success`, `retry`, or `degraded`. No free-form explanation field. The agent decides whether and when to submit feedback against any exposed `feedback_ref`; the adapter doesn't steer or gate.
+
+The adapter doesn't infer human intent from the mere fact that outcome reporting was invoked. Richer provenance modeling — distinguishing whether a feedback signal is model-declared, user-authored, user-approved, harness-verified, or externally-verified — is a CALM-side concern. Without CALM accepting, persisting, and interpreting provenance, the adapter can't meaningfully expose it; it records only the bounded outcome against a known result handle.
+
+# Part II — MCP Shell
+
+# 7. Tool Surface
+
+The MCP shell exposes tools at the level of agent intent, not local implementation mechanics. A tool earns its slot when the action is common in coding-agent work, has a stable enough capture identity, benefits from search later, and would lose useful intent if forced through a generic shell command.
 
 Five groups in the durable surface. Mutation intent reaches hosts and agents through MCP tool descriptions and host-supported annotations (e.g., `readOnlyHint`). The adapter signals; hosts and users own the trust decisions that follow.
 
@@ -92,208 +206,62 @@ The adapter takes CALM's per-namespace default allocator (per HLD) and does not 
 
 Any adapter result backed by a CALM value-producing call may expose a feedback ref; the agent chooses whether to submit feedback for any such call.
 
-# 4. Capture & Presentation
+# 8. Process Lifecycle & Degradation Surface
 
-## Identities
+The MCP shell's integration lifetime is the stdio child process the host binds as an MCP server. MCP initialize succeeds whenever the adapter can serve local tool semantics. CALM registration and session creation are attempted during initialize, but CALM availability does not decide whether the host can bind the adapter's local tools.
 
-The adapter uses two identities. Don't blur them.
+**Session-state strategy.** The engine's per-session state (Part I) lives in process memory: it costs nothing while the process lives and dies with it. A host that respawns the process starts a fresh CALM session; continuity across process death is the capture shell's territory, not this shell's.
 
-**Source label.** CALM's server-side source identity, fused with a per-call staleness suffix. Format `<base>[#<seq>]@<token>` per `LABELING.md` — e.g., `calm:v1:file:read:foo.go@a3f2k6`. The base portion (`calm:v1:file:read:foo.go`) is the CALM-side addressing key, operator-visible. The `@<token>` suffix is a session-scoped local-validation marker minted per invocation. Stale or cross-session tokens return a clear staleness signal rather than empty results from the current session. See AD02.
+**Degradation surface.** The engine's canonical degradation phrasing renders as one sentence inside the tool-result text, where it reaches both the agent and the host UI.
 
-**Feedback ref.** The adapter-facing outcome handle for `calm_report_outcome`. Resolves to a CALM correlation ID. Opaque to the agent; subject to the feedback window enforced by CALM.
-
-## Presentation
-
-Two modes:
-
-**Inline mode** returns the captured content itself in visible text, with minimal framing. Used when the output is small enough that summary + scoped-search would be a net cost.
-
-**Summary mode** returns a task-facing summary plus the fused source label in visible text. Used when the output is large enough that summary + scoped-search beats raw output. The source label is mandatory — without it, the agent has no addressable way back to the underlying captured content.
-
-A ranged file read (scoped by an explicit line range) is a summary-mode call that presents the requested slice verbatim instead of a task-facing summary — the agent already narrowed the view, so summarizing it would defeat the scoping; the slice is byte-capped past a ceiling with a truncation marker naming both recoveries (re-scope the range, or reread the full capture in document order), and the fused source label is always present.
-
-Mode-selection thresholds are implementer policy, tunable via dogfooding and benchmarks without changing the contract. The `Net context savings` invariant binds the implementer to net-saving on the median call.
-
-# 5. Lifecycle & Failure Model
-
-Two lifecycles run in parallel:
-
-**MCP process lifecycle.** The stdio child process the host binds as an MCP server.
-
-**CALM session lifecycle.** The logical CALM session used for capture, search, events, and correlation.
-
-MCP initialize succeeds whenever the adapter can serve local tool semantics. CALM registration and session creation are attempted during initialize, but CALM availability does not decide whether the host can bind the adapter's local tools.
-
-If no CALM session has ever existed in the live process, the adapter creates one on demand: a capture tool call attempts session creation before declaring the call degraded, throttled so a down CALM taxes at most one call per interval with the create timeout. Client registration is re-attempted first whenever it has not yet landed — a create for an unregistered client is a guaranteed rejection, which must not read as a credential verdict. Capture tools are the only establishment trigger — a process that never had a session has no captures for retrieval to find, so `calm_search` keeps failing with its unavailability signal until a capture establishes the session. Any local outputs produced before establishment were not captured; the establishing call is captured normally, so the transition into capture-active state surfaces visibly. A create rejected by CALM latches the credential failure exactly as AD03's recovery create does.
-
-If an established CALM session is lost, expired, or deleted, the adapter creates a replacement session — see AD03. Prior captures are not searchable from the new session unless explicitly re-captured. `calm_search` against a source label from the prior session fails clearly, never returning empty results from the current session — the per-call validation suffix per `LABELING.md` is what makes this detection local.
-
-## Failure Behavior
-
-Failure shape depends on tool class.
-
-**Action/capture tools** return the local result when local work succeeds but CALM capture fails. Visible text states the degraded capture state and reason in agent-readable phrasing; OTel emission records the same facts for operator slicing.
-
-**Retrieval-only tools** cannot produce correct search results without CALM state. They return a visible degraded error when the CALM backend is unavailable. Stale-source-label behavior is governed by AD02; session loss by AD03.
-
-**Event emission** is best-effort and off the response path.
+**Capability discovery.** Capability discovery starts at the tool boundary. Tool names, descriptions, and schemas make mutation intent, capture behavior, retrieval behavior, and feedback support clear enough for a host, model, or user to reason about allow-listing and approval.
 
 Host-side process death is outside the adapter's full control. If the stdio MCP child dies, most hosts give that dead process no protocol-level way to rebind tools inside the already-running conversation. The adapter is responsible for making live-process CALM degradation visible and recoverable; host process rebinding is not portable unless the host exposes that lifecycle.
 
 Cross-process detection — distinguishing a freshly-bound adapter from a continuation of a prior one — is not surfaced as a first-class signal. The per-call degradation phrasing plus stale-source-label errors on source-scoped `calm_search` cover the actionable cases: a fresh process with no prior context degrades retrieval cleanly; new captures succeed normally.
 
-## Workspace Binding
+# Part III — Capture Shell (`calm-capture`)
 
-Workspaces are discovered at capture time since the non-working directories that agentic sessions touch cannot be known at the time of start of the session. A path's workspace is its **project anchor**: the deepest ancestor directory carrying a version-control marker, or — only when no VCS ancestor exists, which is the dependency-store case — the deepest ancestor carrying a recognized project manifest. A VCS marker directly at the user's home directory or the filesystem root is ignored as an anchor (a home-level repository is a dotfiles setup, not a project boundary). Paths with no anchor fall back to `coexist` mode per `LABELING.md`'s escape-path rule.
+# 9. Purpose & Command Surface
 
-The **primary workspace** is the anchor of the directory the adapter was launched in (or that directory itself when unmarked). Its captures label bare — no WorkspaceID segment — so the common single-repository session stays clean. Every other workspace, whenever discovered, labels its captures with its WorkspaceID segment. Discovery is monotonic within a session: new workspaces are added on first touch and existing labels never change meaning; the workspace set only grows.
+`calm-capture` is a single-invocation CLI: a harness-native hook rewrites the harness's shell tool call to run through `calm-capture exec`, which executes the command, captures the full output into the CALM session, and prints the engine's presentation to stdout in place of the raw output. Utilization is structural — the hook fires on every native shell execution, steering nothing about the agent's behavior. Coverage is equally structural: what the harness's hooks intercept is captured; actions they don't expose (native file reads, searches, edits) stay native and uncaptured. Each invocation is a fresh process — all cross-invocation continuity lives in the on-disk session state, keyed by the harness's conversation identity.
 
-Tool calls select a workspace explicitly by its ID (structured tools), implicitly by the path's or cwd's own project anchor — which registers the workspace on first touch — or default to the primary. Anchor resolution is per-path, so a nested anchor (a submodule inside an already-known repository) is its own workspace regardless of which was touched first.
+Only `search` and `feedback` are model-facing — the inherently discretionary operations; `exec` is invoked by the rewrite, `hook` by the harness, `init` by the operator.
 
-# 6. Labeling & Events
+| Command | Role | Contract |
+|---|---|---|
+| `exec -- <argv>` | The capture path; the only form hooks rewrite to. | Runs the command, captures, prints the engine presentation to stdout. The wrapped command's own execution is untouched: its exit code propagates verbatim, and pipes or substitutions inside its argv see its raw streams — the wrap exists only at the harness tool-call boundary. On capture failure the presented stdout is the raw output verbatim (`never-worse`). |
+| `search` | Retrieval — the same primitive as the MCP shell's `calm_search` (queries, source scope, document-order reread). | Results to stdout; exit 0. Nonzero with the engine's degradation phrasing on stderr when retrieval cannot be served. |
+| `feedback <ref> <outcome>` | Outcome reporting against a feedback ref. | CALM's bounded outcomes only. Exit 0 on acceptance; nonzero plus phrasing otherwise. |
+| `init` | Install and registration: writes the hook configuration for a harness (`--harness=…`), validates connectivity and credentials; `--reset` clears a persisted auth latch. | Idempotent — re-running converges and never installs a second hook layer (AD07). |
+| `hook` | The harness-facing adapter: reads a hook payload on stdin, emits the rewrite response on stdout. | Parses every supported harness payload shape. On any parse or rewrite failure it emits the pass-through response and exits 0 — the native call proceeds unwrapped, and the hook binary never signals failure to the harness (`never-worse`). |
 
-`LABELING.md` is the canonical source-label and event-extraction contract. This document owns the broader MCP surface; `LABELING.md` owns the grammar that maps adapter actions to CALM sources and event records.
+The engine's recall hint is shell-parameterized: each shell supplies its retrieval affordance's name, so a capture presented by this shell points at `calm-capture search source=<label>` exactly where the MCP shell's points at `calm_search`. Degradation renders inside the presented stdout for `exec` — the surface the agent reads — and on stderr for the agent-initiated commands. The canonical degradation sentence is the only addition capture may make to a presented result; degradation never alters the wrapped command's exit code.
 
-The broader adapter surface changes how labels are produced, not why they exist. Structured tools feed labeling from typed arguments — file path, directory path, grep pattern and scope, Git operation and ref selection. They don't round-trip through shell-string parsing to recover intent the tool already knows.
+**Retrieval discovery.** Capture utilization is structural; retrieval remains agent-discretionary in every shell — what varies is how the affordance is taught. This shell teaches it in three layers: the per-capture recall hint (a copy-pasteable command, no prior knowledge needed); a one-time capability card appended to the presentation of the session's first capture — the persisted sequence makes "first" knowable — covering query discovery, source-scoped reread, and the label's verbatim-only handling; and, where the harness supports session-start context injection, the same card injected before any capture exists. Whether these channels match a tool description's effectiveness is a measured question, not an assumed one.
 
-`calm_run_command` uses best-effort shell-command extraction for the long tail. When extraction finds a stable semantic identity, it captures latest or latest-plus-history per the labeling contract. When it can't, it preserves invocation history rather than overwriting a misleading latest source.
+**Configuration.** `calm-capture` reads the same adapter configuration as the MCP shell — endpoint, namespace credential via secret refs (`[env:…]`, `[file:…]`), client identity. One pairing rule is contractual: the credential source this shell presents and the source the operator's CALM resolves must be one durable location; `init` validates the pairing and reports a mismatch as a credential failure at install time, before any hook fires.
 
-Events derive from the same action facts as labels, finalized once ingest outcomes are known. Cross-links point only at sources that actually persisted. Event emission is best-effort and response-first — failed or slow event writes don't change the tool result.
+# 10. Session State on Disk
 
-Keeping labeling separate from the MCP surface lets another integration reuse the durable parts (stable source labels, latest/history policy, event cross-links) without copying MCP-specific mechanics (stdio lifecycle, tool descriptions, shell-command parsing).
+State lives under `$CALM_HOME` (default `~/.calm`), one directory per harness conversation: `sessions/<sanitized session id>/` holding `state.json` (the engine's session state per Part I, plus this shell's recovery counter and derived idempotency base), a dedicated lock file, and the event spool. Directories and files are owner-only — the state file holds the session token. Writes are atomic: temp file, flush, rename; a crash mid-write leaves the prior state intact, and the worst case — a lost registry record for the last capture — surfaces later as an honest staleness signal, never as corruption.
 
-# 7. Observability & Context Health
+**The state file is authoritative for the session token.** CALM's create idempotency is a bounded per-pod cache — it collapses racing creates; it is not identity. The derived idempotency base (a hash of the session id) covers same-conversation races; recovery creates extend it with the persisted recovery counter so a replacement can never collide with the original.
 
-Context health is an operational fact, not an autonomous judgement about whether the model has enough context. The adapter reports what it can know: whether capture was active, whether a response was degraded, whether a retrieval result came from the current session, whether events were derived or queued, whether a result can accept feedback.
+**Lock protocol.** One exclusive advisory lock (OS-native, kernel-released on crash; network filesystems unsupported; Windows in scope with equivalent exclusive semantics) guards every read-modify-write. Two phases per capture: before the action — acquire, check the latch, reuse or create the session (the only establish-time network call under lock, single-flighting concurrent first invocations), allocate the sequence, save, release; ingest runs outside the lock. After ingest — acquire, record fused tokens, save; a 404 triggers the one-attempt recovery create under lock (registry resets, epoch increments, sequence continues); a credential rejection sets the latch per AD03. The latch is persisted per harness conversation; it clears only with a new conversation or `init --reset`.
 
-## Output Surface Structure
+**Reclamation.** Session directories idle beyond a multiple of the longest session TTL are reaped, with orphaned temp and in-flight files; reclamation runs opportunistically from a sampled fraction of invocations and needs no daemon (AD05).
 
-The adapter's output splits into two surfaces — visible text the agent reads (and the host renders in UI), and OTel emission the operator consumes (host-independent, zero context cost).
+# 11. Event Spool
 
-**Visible text.** What the agent reads and the host renders. Always in model context. Carries:
+Events are response-first and the process is gone milliseconds after responding, so deferred delivery must survive the invocation. Synchronous delivery inside the call would tie loss probability to capture size — the heaviest captures run the longest ingests against the busiest CALM, so drops would cluster on exactly the calls attribution most needs. Each capture appends one spool line — epoch- and token-tagged — under the post-ingest lock; the invocation then attempts an immediate bounded flush after the response is emitted, deleting on success. Any later invocation drains leftovers: claim by rename, deliver, delete. Delivery is at-most-once (AD06): stale claims are deleted, never re-delivered; lines from a superseded epoch are skipped; a 404 on delivery drops the batch and never triggers session recovery. The accepted residual is tail loss — a conversation's final events are lost iff that invocation's flush fails.
 
-- Task-facing summaries (summary mode) or captured content (inline mode).
-- The fused source label for captured output, in the recall hint — addressable by the agent in a follow-up `calm_search`.
-- `feedback_ref` when the call backed a CALM feedback-eligible operation — addressable by the agent in a follow-up `calm_report_outcome`.
-- Degradation phrasing when the call ran in a degraded state. Phrasing is stable and reason-specific so the agent can branch on the reason:
-  - `CALM degraded — calm_unreachable. Capture and search may fail; local result is shown.`
-  - `CALM degraded — auth_failed. CALM credentials rejected; capture and feedback are disabled for this conversation.`
-  - `CALM degraded — session_lost. The prior session expired or was replaced; references to prior captures will fail.`
-  - `CALM degraded — capture_failed. Local action ran; CALM did not index the output.`
-  - `CALM degraded — capture_partial. Some captured sources were indexed; others were not.`
-  - `CALM degraded — feedback_window_expired. The feedback window for this reference has closed.`
+# 12. Hook Integration & Distribution
 
-  Each phrasing keeps the cost bounded (one short sentence per call) while giving the agent enough specificity to choose a next move that differs by reason. New degradation reasons get added as additional modes are characterized; each addition is a deliberate change, not a silent extension.
+The rewrite is the integration: a pre-execution hook receives the harness's shell tool call and rewrites its input to `calm-capture exec -- <original command>`; the harness executes the rewritten form natively. The hook's response rewrites input only — it never supplies a permission decision. What the permission surface then sees — the original command or the rewritten form — is harness-specific, so permission-outcome equivalence is verified per harness, never assumed. One gate is contractual: the rewrite must not weaken the permission surface — if a harness's rewrite semantics implicitly approve the call, or rules that bound the original command no longer bind the rewritten form, that harness does not ship the rewrite. Two guards make the wrap idempotent under stacked hook layers (AD07): the hook passes through inputs already wrapped or invoking `calm-capture` itself, and `exec` sets an environment sentinel so nested shell executions inside a wrapped command pass through untouched. `init` installs exactly one hook layer per harness and warns when it detects another capture layer.
 
-The `Net context savings` invariant binds visible-text framing tight: telemetry-class facts (per-call byte counters, timings, mode-decision distribution) never appear here.
+Per harness: **Claude Code** — a plugin carrying the hook set; the session-start hook injects the retrieval capability card and triggers reclamation. **Codex** — a configuration-layer install; the harness requires a one-time interactive review to trust installed hooks, which the installer documents rather than works around. **Cursor** — a plugin; its rewrite and session-start behavior are verified live before its installer ships. Each installer ships allow-rule guidance matched to its harness's verified permission behavior.
 
-**OTel emission.** Adapter-resident metrics and structured logs emitted alongside CALM's OTel surface. Never reaches the MCP wire — zero context cost by construction, host-independent. Carries:
+# Adapter Decision Log
 
-- Per-call measurement: `adapter.response.visible_bytes`, `adapter.response.raw_bytes`, `adapter.call.duration_ms`, `adapter.presentation.mode` (inline / summary / ranged distribution). Metric names follow the dotted-schema convention; the exporter converts `.` → `_` at emission.
-- Structured forms of the same per-call facts that surface in visible-text degradation phrasing — `captured` (boolean), `degraded` (boolean), `degraded_reason` (closed enum matching the visible-text values), source identity, and CALM's `correlation_id` for joining adapter output to CALM-side logs.
-
-Operator slicing keys on the `client` identifier the adapter registers at startup per HLD's integration contract. Granularity — per agent host, per developer, per team installation — is operator policy.
-
-This is the surface that makes the `Net context savings` invariant operationally checkable. Without OTel emission, the invariant would either be unenforceable (no measurement) or self-defeating (measurement riding in visible text adds to the cost it's measuring).
-
-## Capability Discovery
-
-Capability discovery starts at the tool boundary. Tool names, descriptions, and schemas make mutation intent, capture behavior, retrieval behavior, and feedback support clear enough for a host, model, or user to reason about allow-listing and approval. Visible-text degradation phrasing carries per-call diagnosis the agent acts on; OTel emission carries the structured forms operators slice on.
-
-## Feedback & Outcome Reporting
-
-CALM owns the feedback API and the long-term interpretation of those signals. The adapter owns the integration surface: when a CALM value-producing call has a correlation id, the adapter exposes an opaque `feedback_ref` the host can later pass to `calm_report_outcome`. The report tool accepts only bounded outcomes — `success`, `retry`, or `degraded`. No free-form explanation field. The agent decides whether and when to submit feedback against any exposed `feedback_ref`; the adapter doesn't steer or gate.
-
-The adapter doesn't infer human intent from the mere fact that `calm_report_outcome` was invoked. Richer provenance modeling — distinguishing whether a feedback signal is model-declared, user-authored, user-approved, host-verified, or externally-verified — is a CALM-side concern. Without CALM accepting, persisting, and interpreting provenance, the adapter can't meaningfully expose it; it records only the bounded outcome against a known result handle.
-
-# 8. Adapter Decision Log
-
-Settled adapter decisions and the reasoning behind them. Captured here so the design isn't relitigated.
-
-### AD01
-
-**No Dedicated Recall Tool**
-
-`calm_search` is the single retrieval primitive. No dedicated recall tool. Historical lookup of captured content goes through source-scoped `calm_search`; code-state historical lookup goes through the existing git inspection tools (`calm_git_diff` and related).
-
-Three reasons no recall tool is needed.
-
-Shell-command output, build logs, test results, and other non-locally-re-readable captures — the strongest case for a recall-like primitive — are served by source-scoped `calm_search` in two modes: ranked retrieval when the agent has a query (specific errors, values, lines), and document-order chunks when the agent wants sequential reread (the failure context around line 200 of a 500-line log, in flow). One tool, two access patterns. This is a new capability CALM enables; pre-CALM, large captured output was take-it-or-lose-it at capture time.
-
-Code-state historical lookup — comparing a file's current state to an earlier version — is already a dedicated affordance in the coding-agent surface via `calm_git_diff` and related git inspection tools. Agents reach for git when they need historical code state, not for a generic "what did I see earlier" primitive.
-
-Generic historical lookup — "show me the full content I captured at turn 3, exactly as it was at turn 3" — doesn't exist as a workflow primitive in current coding-agent implementations. Agents rely on their context window for recent observations, git for code history, re-execution for idempotent sources. A general-purpose historical-recall tool would be a new affordance agents aren't trained to reach for.
-
-Removing the recall primitive also makes the `Net context savings` invariant structurally enforced across the tool surface. Action and capture tools are bounded by the invariant directly; `calm_search` is bounded at the API layer by `limit` and `budget_bytes`. No primitive in the surface can return unbounded content by design — the invariant becomes a structural property, not a per-tool discipline.
-
-Two alternatives were considered and rejected.
-
-Blind recall — local re-read of the source on demand, with opportunistic re-ingest — can't serve shell-substrate captures (commands may have side effects, may not be safely re-runnable, may be impossible to re-run) and produces silent semantic drift when the source changes between capture and re-read (agent reasoning gets invalidated without any tool-level signal). For idempotent sources, it collapses into a duplicate of the structured-read primitives (`calm_read_file` and others), violating the tool-surface earn-its-slot discipline.
-
-Full-content recall via a new CALM-side endpoint carries substantial CALM-side cost (new endpoint, storage-model decision between raw-storage and lossless-reconstruction from chunks, read-after-write consistency guarantee) for a use case agents have not been observed to need. Chunked source-scoped `calm_search` covers the documented painpoints — the right fix was to teach the search-with-scoping affordance, not add a new primitive.
-
-### AD02
-
-**Source Labels Carry Per-Call Staleness Suffixes**
-
-Source labels are CALM's server-side identity inside one CALM session and serve as the addressing key for source-scoped `calm_search`. The adapter additionally fuses a per-call validation suffix into each emitted label: format `<base>[#<seq>]@<token>` per `LABELING.md` — e.g., `calm:v1:file:read:foo.go@a3f2k6`. The token is a session-scoped local-validation marker; the adapter validates it without a CALM round-trip. Mismatch returns a clear staleness signal rather than empty results from the current session.
-
-This gives the agent a per-call staleness mechanism without inventing a second handle. LLM state-tracking across many turns is unreliable; a per-call validation that fires on stale references is a more direct signal than expecting the agent to maintain "session was lost N turns ago" in working memory.
-
-One fused handle, two semantic axes:
-
-- The **base** portion (`<base>[#<seq>]`) addresses content identity. For a latest source, the base follows the newest content as later captures replace earlier states. For a history source (`base#<seq>`), the base addresses a specific preserved invocation.
-- The **suffix** (`@<token>`) addresses the specific capture moment. For a latest source, only the current token validates — a stale token signals that later captures have replaced the content under that base. For a history source, any token once-current within the session validates, because the invocation's content is immutable. Cross-session tokens reject in both cases.
-
-Agents asking "current foo.go" use the latest-source form; agents asking "foo.go as I saw it earlier" use a history-source form. Both fail clearly across session replacements; the latest form additionally fails clearly when later captures have replaced the content under that base.
-
-A non-fused base-only label (`<base>` without `@<token>`) remains valid as an input — it forwards to CALM without staleness checking. This keeps shell-substrate references and programmatic clients working, while the recall-hint path (which always emits the fused form) gives the agent staleness protection by default.
-
-A two-handle alternative — separate `source_label` and opaque `capture_ref` — was considered and rejected. Cost: two distinct identities in every recall hint, doubled visible-text footprint, and the agent has to choose which to pass. Fused form collapses into one canonical identity with the same semantic axes available as parse-time properties of one string.
-
-### AD03
-
-**Replace The CALM Session On Loss**
-
-Coding-agent conversations are long-lived and need capture continuity across operational disruptions that drop or invalidate the underlying CALM session — transient connectivity loss between CALM and the adapter, session TTL expiry, or other lifecycle events. Without replacement, capture would die on the first such disruption mid-conversation, breaking the workload the adapter exists to serve.
-
-In steady operation, TTL expiry is the rarest of these. Every adapter tool call hits CALM (capture, search, events), refreshing `last_activity` and pushing the TTL forward. Session loss most commonly triggers on connectivity disruption (network blip between adapter and CALM) or explicit operator-side cleanup (`DELETE /v1/sessions` via management API). TTL fires only when the agent does extended local-only reasoning between tool calls — possible but uncommon.
-
-When an established CALM session is lost, expired, or deleted, the adapter creates a replacement session and resumes capture for future work. Replacement doesn't preserve logical continuity with prior captures: source labels minted against the prior session become stale, and references to them fail clearly rather than resolving against the new session.
-
-The trigger is 404 on a session-touching call. CALM returns 404 when the presented session token references a session that no longer exists (deleted, TTL-expired, or never issued). 404 is also CALM's response to cross-namespace mismatch — invisibility, not denial — so a stale or rotated namespace API key surfaces the same status code as a lost session. The adapter can't distinguish the two failure modes from the response alone.
-
-A direct 401/403 on a session-touching call is not ambiguous and gets no recovery attempt: CALM rejects credentials before resolving the session, so a recreate would prove nothing. The adapter maps it to `auth_failed` directly, with the same terminal semantics as a rejected recovery create. CALM itself emits only 401; 403 is accepted defensively for edge-gated deployments.
-
-The recovery path resolves the 404 ambiguity without a dedicated validation call. On 404 against a session token this process minted, the adapter attempts `POST /v1/sessions` with its current namespace API key. If the create succeeds, credentials are good and the new session is the replacement; the prior session's captures are declared stale. If the create is rejected (4xx), the credentials are the problem — the adapter surfaces `auth_failed` as the degradation reason, stops all CALM traffic for the remainder of the process, and does NOT loop; recovery from rejected credentials is operator action plus an adapter restart. If the create fails transiently (network failure, 5xx, timeout), nothing is yet learned about the credentials — the original call surfaces `calm_unreachable` and the next 404 re-attempts recovery. The recovery attempt itself is the credential validation.
-
-The cost is one extra round-trip per session-loss event before recovery is confirmed. Bounded — one per session loss, not per request — and the adapter's first call after a session-lost trigger pays this latency once. Other failure responses do NOT trigger replacement: 5xx and timeouts are transient and recovered via retry or fall-through to the local result per the `Never worse for local actions` invariant. Recreation handles one specific failure mode and explicitly doesn't paper over the others.
-
-This chooses useful recovery with honest discontinuity. The adapter keeps local tools available and resumes capturing new work, but it doesn't pretend old session data remains searchable from the new session. The cost is real: captures from the prior session are unrecoverable, not merely re-categorized. Shell command output, build logs, test results, and other non-locally-re-readable content are gone from the moment of session loss until the agent re-runs the producing action (where possible).
-
-This cost is bounded by what CALM uniquely provides. Pre-CALM, no agent had cross-turn access to historical shell output, build logs, or test results at all — that material entered the LLM context once and was either retained or evicted, never searchable. Session loss removes a capability CALM created; it doesn't lose data any other toolset could have recovered. Content with independent durability — files (re-readable), git history (`calm_git_diff` and related), the workspace itself — is unaffected.
-
-The benefit: a long-running MCP process can recover from CALM lifecycle loss without silently mixing old and new capture worlds.
-
-### AD04
-
-**Mandate Adapter Write Surface**
-
-The adapter exposes write tools (`calm_edit_file`, `calm_write_file`) as a hard requirement, not a nice-to-have. The forcing function: when the adapter is the canonical read surface (per host-side dogfood discipline encoded in CLAUDE.md), host-native write tools that depend on a host-native read precondition become unusable.
-
-**Concrete evidence.** This design contract itself was authored through the prototype adapter. Reading files for design verification went through `calm_run_command`'s shell pipes (grep/sed). When edits to milestone tracking and design files were applied via Claude Code's native Edit tool, the tool rejected with "File has not been read yet" because no native Read of the target file existed in the conversation — the precondition was unmet because reads had been routed through the adapter. The same workflow surface that makes the adapter coherent for reads breaks coherence for writes unless the adapter also owns writes.
-
-**Two tools.**
-
-- **`calm_edit_file`** — partial-file edits via `old_string`/`new_string` exact-match. Self-documenting (the old_string is the location reference, no line numbers to drift), prevents hallucinated patches (mismatch fails clearly), matches the most ergonomically-familiar shape across current coding agents.
-- **`calm_write_file`** — full-file write for new files and total rewrites. Ground-floor primitive.
-
-**Capture model.** Both tools follow `LABELING.md`'s **dual mode** capture policy: re-ingest the post-edit file under `calm:v1:file:read:<path>` (latest, replace) so subsequent reads see the current content, AND ingest under `calm:v1:file:edit:<path>#<seq>` per invocation (history, coexist) so each edit's resulting content state remains searchable. Ingest is full-content per edit — the adapter has the post-edit bytes in hand from applying the edit itself, no separate re-read needed. A `file_touched` event with operation + diff payload is emitted alongside, cross-linking to both source labels per `LABELING.md`'s event-derivation contract.
-
-The same model handles file creation (`calm_write_file` to a path that didn't previously exist) uniformly: replace-mode ingest under `calm:v1:file:read:<path>` establishes the latest source — a vacuous replace, since there's no prior version — and the history source is created on the first invocation just as it would be for any later edit. No special-case code path per operation type; create / write / edit all execute the same capture sequence.
-
-**Storage cost.** Dual mode means per-file DB usage grows linearly with edit count × file size during a session. A 20KB file edited 10 times costs ~220KB of session-scoped storage — one 20KB latest source (replaced each edit, retains only the final state) plus ten 20KB history sources (one per invocation, preserved). Long sessions with many edits scale accordingly. Bounded by session lifecycle — explicit close or TTL clears the session and its history sources. Operator controls per-session TTL to size this against their workload's peak concurrency. Per-file bounded-history mechanisms (keep last N states, time-bounded eviction) are deliberately deferred — premature optimization without real workload data. Partial / delta ingest is also deferred — it would require CALM-side partial-update semantics (HLD-touching) with significant complexity, and its own per-delta metadata overhead may exceed the bytes saved for small edits.
-
-**Why no `apply_patch` / unified-diff tool.** Unified diff is token-efficient for multi-hunk changes but fragile (line numbers drift between read and patch; hallucinated patches parse but don't apply). Doesn't earn a slot under the structured-tool earn-its-slot test today; deferred until multi-hunk workflows demonstrate the need.
-
-**Compete-on-ergonomics, not exclusivity.** The adapter ships these tools knowing the agent has fallback to host-native Edit/Write. If the adapter's tools are clunkier than native, agents will route around them and the `file_touched` coverage problem returns. Ergonomics is the load-bearing property here, not the existence of the tool. Hook-based capture of host-native edits (per `LABELING.md`'s extensibility section) remains an optional, host-specific enhancement — supplements but doesn't replace the structured tools.
+Settled adapter decisions live in `DECISIONS.md` — append-only entries with stable `ADnn` anchors (`AD01`, `AD03`, …), cited directly from this document.
