@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/exec"
 	"github.com/one-harsh/calm/internal/adapter/extract"
 )
@@ -103,9 +104,9 @@ func (s *Server) gitStatus(ctx context.Context, args json.RawMessage) (ToolResul
 	if werr != nil {
 		return ToolResult{}, werr
 	}
-	return s.runGitInspect(ctx, wb, []string{"git", "status"}, func(r exec.Result) func() (extract.Plan, error) {
-		return func() (extract.Plan, error) {
-			return extract.PlanGitStatus(s.invocation(wb, "", wb.Root), execResultOf(r)), nil
+	return s.runGitInspect(ctx, wb, []string{"git", "status"}, func(r exec.Result) func(int64) (extract.Plan, error) {
+		return func(seq int64) (extract.Plan, error) {
+			return extract.PlanGitStatus(s.invocation(seq, wb, "", wb.Root), execResultOf(r)), nil
 		}
 	})
 }
@@ -139,9 +140,9 @@ func (s *Server) gitDiff(ctx context.Context, args json.RawMessage) (ToolResult,
 	if werr != nil {
 		return ToolResult{}, werr
 	}
-	return s.runGitInspect(ctx, wb, gitDiffArgv(a), func(r exec.Result) func() (extract.Plan, error) {
-		return func() (extract.Plan, error) {
-			return extract.PlanGitDiff(s.invocation(wb, "", wb.Root), execResultOf(r), a.Refs, a.Paths, a.Staged), nil
+	return s.runGitInspect(ctx, wb, gitDiffArgv(a), func(r exec.Result) func(int64) (extract.Plan, error) {
+		return func(seq int64) (extract.Plan, error) {
+			return extract.PlanGitDiff(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Refs, a.Paths, a.Staged), nil
 		}
 	})
 }
@@ -170,13 +171,13 @@ func gitDiffArgv(a gitDiffArgs) []string {
 
 // runGitInspect mirrors calm_run_command's subprocess semantics: nonzero exit
 // (not a repo, bad ref) still captures the output under the derived labels.
-func (s *Server) runGitInspect(ctx context.Context, wb WorkspaceBinding, argv []string, planFor func(exec.Result) func() (extract.Plan, error)) (ToolResult, error) {
+func (s *Server) runGitInspect(ctx context.Context, wb WorkspaceBinding, argv []string, planFor func(exec.Result) func(int64) (extract.Plan, error)) (ToolResult, error) {
 	ectx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
 	r, runErr := exec.RunArgv(ectx, argv, wb.Root)
 	if runErr != nil {
 		return TextResult("failed to run git: "+runErr.Error(), true), nil
 	}
-	raw := commandPayload(r)
-	return s.capturePipeline(ctx, captureSpec{ingest: raw, visible: raw, res: r, plan: planFor(r)})
+	raw := capture.CommandPayload(r)
+	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{Ingest: raw, Visible: raw, Res: r, Plan: planFor(r)}))
 }

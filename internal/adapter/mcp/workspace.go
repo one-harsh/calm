@@ -234,8 +234,8 @@ func (s *Server) workspaceForCwd(cwd string) (WorkspaceBinding, string) {
 // WorkspaceID is populated only for non-primary workspaces, so primary labels
 // stay bare regardless of how many workspaces the session has discovered
 // (LABELING.md §2 — late discovery never mutates existing label meaning).
-func (s *Server) invocation(b WorkspaceBinding, command, cwd string) extract.Invocation {
-	inv := extract.Invocation{Seq: s.seq.Add(1), Command: command, Cwd: cwd, WorkspaceRoot: b.Root}
+func (s *Server) invocation(seq int64, b WorkspaceBinding, command, cwd string) extract.Invocation {
+	inv := extract.Invocation{Seq: seq, Command: command, Cwd: cwd, WorkspaceRoot: b.Root}
 	if b.Root != s.workspaces.primary().Root {
 		inv.WorkspaceID = b.ID
 	}

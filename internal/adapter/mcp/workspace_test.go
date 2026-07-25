@@ -259,14 +259,14 @@ func TestInvocation_PrimaryBare(t *testing.T) {
 	repob := gitRepoWS(t, base, "repob")
 	s := NewServer(Config{Logger: logging.Nop(), SessionTTLMinutes: 60, LaunchDir: repoa})
 
-	if inv := s.invocation(s.workspaces.primary(), "", repoa); inv.WorkspaceID != "" {
+	if inv := s.invocation(s.seq.Add(1), s.workspaces.primary(), "", repoa); inv.WorkspaceID != "" {
 		t.Errorf("primary inv WorkspaceID = %q; want empty before discovery", inv.WorkspaceID)
 	}
 	b := s.workspaces.byPathOrDiscover(filepath.Join(repob, "f.go"))
-	if inv := s.invocation(b, "", repob); inv.WorkspaceID != "repob" {
+	if inv := s.invocation(s.seq.Add(1), b, "", repob); inv.WorkspaceID != "repob" {
 		t.Errorf("discovered inv WorkspaceID = %q; want repob", inv.WorkspaceID)
 	}
-	if inv := s.invocation(s.workspaces.primary(), "", repoa); inv.WorkspaceID != "" {
+	if inv := s.invocation(s.seq.Add(1), s.workspaces.primary(), "", repoa); inv.WorkspaceID != "" {
 		t.Errorf("primary inv WorkspaceID = %q; want bare even after discovery", inv.WorkspaceID)
 	}
 }

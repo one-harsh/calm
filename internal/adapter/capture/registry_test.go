@@ -1,7 +1,7 @@
 // Copyright 2026 The CALM Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package mcp
+package capture
 
 import (
 	"strconv"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestRegistry_LatestCurrentValidates(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 	r.Record("calm:v1:file:read:foo.go", "a3f2k6")
 
 	calmLabel, ok := r.ValidateAndStrip("calm:v1:file:read:foo.go@a3f2k6")
@@ -25,7 +25,7 @@ func TestRegistry_LatestCurrentValidates(t *testing.T) {
 }
 
 func TestRegistry_LatestStaleAfterReplace(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 	r.Record("calm:v1:file:read:foo.go", "tokold") // invocation 1
 	r.Record("calm:v1:file:read:foo.go", "toknew") // invocation 2 replaces
 
@@ -40,7 +40,7 @@ func TestRegistry_LatestStaleAfterReplace(t *testing.T) {
 }
 
 func TestRegistry_HistoryStableAcrossInvocations(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 	r.Record("calm:v1:vcs:git:diff:HEAD#3", "aaa222")
 	r.Record("calm:v1:vcs:git:diff:HEAD#5", "bbb333")
 
@@ -59,7 +59,7 @@ func TestRegistry_HistoryStableAcrossInvocations(t *testing.T) {
 }
 
 func TestRegistry_ResetInvalidatesAll(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 	r.Record("calm:v1:file:read:foo.go", "a3f2k6")
 	r.Record("calm:v1:vcs:git:diff:HEAD#3", "aaa222")
 
@@ -74,7 +74,7 @@ func TestRegistry_ResetInvalidatesAll(t *testing.T) {
 }
 
 func TestRegistry_BaseOnlyForwardsUnchanged(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 
 	cases := []string{
 		"calm:v1:file:read:foo.go",
@@ -94,7 +94,7 @@ func TestRegistry_BaseOnlyForwardsUnchanged(t *testing.T) {
 }
 
 func TestRegistry_MalformedSuffixRejected(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 
 	// The `@` is present but the tail isn't a valid 6-char base32 token.
 	// Forwarding this to CALM would send a `@`-bearing label CALM's grammar
@@ -119,7 +119,7 @@ func TestRegistry_MalformedSuffixRejected(t *testing.T) {
 // reject even when that token is current for both the base and the history
 // source; the canonical `<base>#<n>@<token>` ordering validates.
 func TestRegistry_SeqAppendedAfterTokenRejected(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 	r.Record("calm:v1:vcs:git:diff:HEAD", "a3f2k6")
 	r.Record("calm:v1:vcs:git:diff:HEAD#1", "a3f2k6")
 
@@ -136,7 +136,7 @@ func TestRegistry_SeqAppendedAfterTokenRejected(t *testing.T) {
 }
 
 func TestRegistry_UnregisteredValidTokenRejected(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 	// A structurally valid token that was never recorded — the classic
 	// stale-across-session case.
 	if _, ok := r.ValidateAndStrip("calm:v1:file:read:foo.go@abcdef"); ok {
@@ -146,7 +146,7 @@ func TestRegistry_UnregisteredValidTokenRejected(t *testing.T) {
 
 // Concurrent Record + Validate must not race (run with -race).
 func TestRegistry_ConcurrentRecordValidate(t *testing.T) {
-	r := newTokenRegistry()
+	r := NewRegistry()
 
 	var wg sync.WaitGroup
 	for i := range 50 {
@@ -164,4 +164,34 @@ func TestRegistry_ConcurrentRecordValidate(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// Snapshot copies live registry state for a shell that persists it across
+// process death; Load restores it so previously fused labels validate again.
+// Snapshot is a copy — mutating it never disturbs live state; Load replaces
+// contents wholesale.
+func TestRegistry_SnapshotLoadRoundTrip(t *testing.T) {
+	r := NewRegistry()
+	r.Record("calm:v1:file:read:foo.go", "a3f2k6")
+	r.Record("calm:v1:vcs:git:diff:HEAD#3", "aaa222")
+
+	snap := r.Snapshot()
+	snap["calm:v1:file:read:foo.go"] = "tampered" // mutate the copy
+	if _, ok := r.ValidateAndStrip("calm:v1:file:read:foo.go@a3f2k6"); !ok {
+		t.Errorf("mutating the snapshot leaked into live registry state")
+	}
+
+	got := NewRegistry()
+	got.Load(r.Snapshot())
+	if _, ok := got.ValidateAndStrip("calm:v1:file:read:foo.go@a3f2k6"); !ok {
+		t.Errorf("loaded latest token failed to validate")
+	}
+	if _, ok := got.ValidateAndStrip("calm:v1:vcs:git:diff:HEAD#3@aaa222"); !ok {
+		t.Errorf("loaded history token failed to validate")
+	}
+
+	got.Load(nil)
+	if _, ok := got.ValidateAndStrip("calm:v1:file:read:foo.go@a3f2k6"); ok {
+		t.Errorf("Load(nil) must clear the registry")
+	}
 }

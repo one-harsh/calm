@@ -6,6 +6,7 @@ package mcp
 import (
 	logging "github.com/one-harsh/context-logging"
 
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
@@ -26,6 +27,16 @@ type DegradedSignal struct {
 
 func (d *DegradedSignal) Error() string {
 	return "degraded: " + d.Reason
+}
+
+// toCapture adapts an mcp DegradedSignal into the engine's shell-agnostic
+// capture.Signal so session-seam methods can hand degradation back to the
+// engine. A nil signal (no session-level failure) maps to nil.
+func (d *DegradedSignal) toCapture() *capture.Signal {
+	if d == nil {
+		return nil
+	}
+	return &capture.Signal{Reason: d.Reason, Detail: d.Detail}
 }
 
 // ArgError is the sentinel handlers return when tool arguments are invalid

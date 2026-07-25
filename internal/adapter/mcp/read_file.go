@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/exec"
 	"github.com/one-harsh/calm/internal/adapter/extract"
 )
@@ -88,15 +89,15 @@ func (s *Server) readFile(ctx context.Context, args json.RawMessage) (ToolResult
 	}
 
 	r := exec.Result{Stdout: full, Truncated: truncated}
-	return s.capturePipeline(ctx, captureSpec{
-		ingest:     full,
-		visible:    visible,
-		res:        r,
-		rangedView: a.StartLine > 0 || a.EndLine > 0,
-		plan: func() (extract.Plan, error) {
-			return extract.PlanFileRead(s.invocation(b, "", b.Root), execResultOf(r), a.Path), nil
+	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+		Ingest:     full,
+		Visible:    visible,
+		Res:        r,
+		RangedView: a.StartLine > 0 || a.EndLine > 0,
+		Plan: func(seq int64) (extract.Plan, error) {
+			return extract.PlanFileRead(s.invocation(seq, b, "", b.Root), execResultOf(r), a.Path), nil
 		},
-	})
+	}))
 }
 
 // readCapped reads at most exec.MaxOutputBytes — the shared cap keeps native

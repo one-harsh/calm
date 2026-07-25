@@ -1,7 +1,7 @@
 // Copyright 2026 The CALM Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package mcp
+package capture
 
 import (
 	"testing"
@@ -48,8 +48,8 @@ func TestCommandPayload(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := commandPayload(c.r); got != c.want {
-				t.Errorf("commandPayload = %q; want %q", got, c.want)
+			if got := CommandPayload(c.r); got != c.want {
+				t.Errorf("CommandPayload = %q; want %q", got, c.want)
 			}
 		})
 	}

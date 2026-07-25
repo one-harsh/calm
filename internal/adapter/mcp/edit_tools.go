@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/exec"
 	"github.com/one-harsh/calm/internal/adapter/extract"
 )
@@ -144,14 +145,14 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 	}
 
 	r := exec.Result{Stdout: newContent}
-	return s.capturePipeline(ctx, captureSpec{
-		ingest:  newContent,
-		visible: newContent,
-		res:     r,
-		plan: func() (extract.Plan, error) {
-			return extract.PlanFileEdit(s.invocation(wb, "", wb.Root), execResultOf(r), a.Path, old, newContent), nil
+	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+		Ingest:  newContent,
+		Visible: newContent,
+		Res:     r,
+		Plan: func(seq int64) (extract.Plan, error) {
+			return extract.PlanFileEdit(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Path, old, newContent), nil
 		},
-	})
+	}))
 }
 
 func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResult, error) {
@@ -195,14 +196,14 @@ func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResul
 	}
 
 	r := exec.Result{Stdout: a.Content}
-	return s.capturePipeline(ctx, captureSpec{
-		ingest:  a.Content,
-		visible: a.Content,
-		res:     r,
-		plan: func() (extract.Plan, error) {
-			return extract.PlanFileWrite(s.invocation(wb, "", wb.Root), execResultOf(r), a.Path, op, old, a.Content), nil
+	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+		Ingest:  a.Content,
+		Visible: a.Content,
+		Res:     r,
+		Plan: func(seq int64) (extract.Plan, error) {
+			return extract.PlanFileWrite(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Path, op, old, a.Content), nil
 		},
-	})
+	}))
 }
 
 // readFull reads the whole file with the oversize refusal: the capture cap is

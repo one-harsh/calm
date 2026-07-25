@@ -16,6 +16,7 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
@@ -87,7 +88,11 @@ type Server struct {
 	// LABELING.md §2. Its own internal mutex covers reads/writes; there's no
 	// coupling with s.mu (which protects the session token above). recoverSession
 	// invokes registry.Reset so every prior fused label rejects as stale.
-	registry *tokenRegistry
+	registry *capture.Registry
+
+	// engine is the shell-agnostic capture pipeline; the Server presents itself
+	// as its capture.Session and maps each capture.Outcome onto MCP tool results.
+	engine *capture.Engine
 }
 
 func NewServer(cfg Config) *Server {
@@ -101,9 +106,11 @@ func NewServer(cfg Config) *Server {
 		ttlMinutes:    cfg.SessionTTLMinutes,
 		idemKey:       cfg.SessionIdempotencyKey,
 		workspaces:    newWorkspaceSet(cfg.LaunchDir),
-		registry:      newTokenRegistry(),
+		registry:      capture.NewRegistry(),
 		grepEngine:    probeGrepEngine(),
 	}
+	// The MCP shell fuses calm_search — its retrieval tool — into recall hints.
+	s.engine = capture.NewEngine(cfg.Calm, cfg.Logger, toolNameSearch)
 	for _, t := range cfg.Tools {
 		s.addTool(t)
 	}

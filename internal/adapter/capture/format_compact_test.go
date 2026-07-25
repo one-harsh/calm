@@ -1,7 +1,7 @@
 // Copyright 2026 The CALM Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package mcp
+package capture
 
 import (
 	"strings"
@@ -19,6 +19,7 @@ func TestFormatCompact_EmitsFusedSourceWhenTokenPresent(t *testing.T) {
 		calm.IngestSummary{Source: "calm:v1:file:read:foo.go", SectionsIndexed: 1, SectionsTotal: 1},
 		exec.Result{ExitCode: 0},
 		"a3f2k6",
+		"calm_search",
 	)
 	for _, want := range []string{
 		"calm_search source=calm:v1:file:read:foo.go@a3f2k6",
@@ -41,7 +42,7 @@ func TestFormatCompact_IncludesHandleSectionsAndExit(t *testing.T) {
 		},
 		DistinctiveTerms: []string{"goroutine", "channel"},
 	}
-	out := formatCompact(sum, exec.Result{ExitCode: 0}, "")
+	out := formatCompact(sum, exec.Result{ExitCode: 0}, "", "calm_search")
 
 	for _, want := range []string{
 		"calm_search source=calm:v1:file:read:foo.go",
@@ -65,14 +66,14 @@ func TestFormatCompact_CapsSectionsAndNotesOverflow(t *testing.T) {
 	for i := 0; i < maxCompactSections+3; i++ {
 		sections = append(sections, calm.SectionPreview{Title: "s"})
 	}
-	out := formatCompact(calm.IngestSummary{Source: "s", Sections: sections}, exec.Result{}, "")
+	out := formatCompact(calm.IngestSummary{Source: "s", Sections: sections}, exec.Result{}, "", "calm_search")
 	if !strings.Contains(out, "+3 more sections") {
 		t.Errorf("expected overflow note for capped sections; got:\n%s", out)
 	}
 }
 
 func TestFormatCompact_NotesTimedOutAndTruncated(t *testing.T) {
-	out := formatCompact(calm.IngestSummary{Source: "s"}, exec.Result{ExitCode: -1, TimedOut: true, Truncated: true}, "")
+	out := formatCompact(calm.IngestSummary{Source: "s"}, exec.Result{ExitCode: -1, TimedOut: true, Truncated: true}, "", "calm_search")
 	if !strings.Contains(out, "(timed out)") || !strings.Contains(out, "(output truncated)") {
 		t.Errorf("expected timed-out and truncated notes; got:\n%s", out)
 	}
@@ -83,7 +84,7 @@ func TestFormatCompact_BoundsTotalLength(t *testing.T) {
 	out := formatCompact(calm.IngestSummary{
 		Source:   "s",
 		Sections: []calm.SectionPreview{{Title: "big", Preview: huge}},
-	}, exec.Result{}, "")
+	}, exec.Result{}, "", "calm_search")
 	if !strings.HasSuffix(out, "…") {
 		t.Errorf("over-length rep should end with an ellipsis; got tail %q", tail(out, 8))
 	}

@@ -1,11 +1,10 @@
 // Copyright 2026 The CALM Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package mcp
+package capture
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -72,12 +71,12 @@ func TestPresentCapture_ThresholdBoundary(t *testing.T) {
 	ctx := context.Background()
 
 	at := strings.Repeat("a", inlineMaxBytes)
-	if got := presentCapture(ctx, sum, at, r, "a3f2k6", false); got != at {
+	if got := presentCapture(ctx, sum, at, r, "a3f2k6", false, "calm_search"); got != at {
 		t.Errorf("raw at threshold must present inline; got %q", got)
 	}
 
 	over := strings.Repeat("a", inlineMaxBytes+1)
-	got := presentCapture(ctx, sum, over, r, "a3f2k6", false)
+	got := presentCapture(ctx, sum, over, r, "a3f2k6", false, "calm_search")
 	if !strings.Contains(got, "Captured 1/1 sections under") {
 		t.Errorf("raw over threshold must present the compact rep; got %q", got)
 	}
@@ -101,14 +100,14 @@ func TestPresentCapture_RangedView(t *testing.T) {
 	wantSmall := small +
 		"Captured 3/3 sections under \"calm:v1:file:read:data.json@a3f2k6\".\n" +
 		"Retrieve full output: calm_search source=calm:v1:file:read:data.json@a3f2k6\n"
-	if got := presentCapture(ctx, sum, small, r, "a3f2k6", true); got != wantSmall {
+	if got := presentCapture(ctx, sum, small, r, "a3f2k6", true, "calm_search"); got != wantSmall {
 		t.Errorf("small ranged view = %q; want slice + label lines %q", got, wantSmall)
 	}
 
 	// Over the inline threshold, under the ranged cap: slice verbatim + label line,
 	// no compact section chrome.
 	slice := strings.Repeat("line\n", 200) // 1000 bytes: > inlineMaxBytes, < rangedMaxBytes
-	got := presentCapture(ctx, sum, slice, r, "a3f2k6", true)
+	got := presentCapture(ctx, sum, slice, r, "a3f2k6", true, "calm_search")
 	if !strings.Contains(got, slice) {
 		t.Errorf("ranged view must present the slice verbatim; got:\n%s", got)
 	}
@@ -120,7 +119,7 @@ func TestPresentCapture_RangedView(t *testing.T) {
 	// Over the ranged cap: rune-safe prefix + the literal truncation marker naming
 	// both recoveries.
 	over := strings.Repeat("z", rangedMaxBytes+500)
-	got = presentCapture(ctx, sum, over, r, "a3f2k6", true)
+	got = presentCapture(ctx, sum, over, r, "a3f2k6", true, "calm_search")
 	if !strings.Contains(got, "ranged view capped at 8192 bytes — narrow start_line/end_line, or reread the full capture in document order with calm_search source=calm:v1:file:read:data.json@a3f2k6") {
 		t.Errorf("over-cap ranged view must carry the literal truncation marker; got:\n%s", got)
 	}
@@ -133,20 +132,22 @@ func TestPresentCapture_RangedView(t *testing.T) {
 // verbatim, no label in visible text) while still signaling capture_partial —
 // degradation and presentation are orthogonal dimensions.
 func TestFormatCaptureOutcome_SmallPartial_InlineWithSignal(t *testing.T) {
-	s := NewServer(Config{Logger: logging.Nop(), SessionTTLMinutes: 60})
+	e := NewEngine(nil, logging.Nop(), "calm_search")
 	outcomes := []extract.WriteOutcome{
 		{Source: "calm:v1:vcs:git:status#1", Persisted: true},
 		{Source: "calm:v1:vcs:git:status", Persisted: false},
 	}
 	rep := &calm.IngestSummary{Source: "calm:v1:vcs:git:status#1", SectionsIndexed: 1, SectionsTotal: 1}
 
-	res, err := s.formatCaptureOutcome(context.Background(), outcomes, rep, "tiny status\n", exec.Result{}, "a3f2k6", false)
+	out := e.formatCaptureOutcome(context.Background(), outcomes, rep, "tiny status\n", exec.Result{}, "a3f2k6", false)
 
-	var deg *DegradedSignal
-	if !errors.As(err, &deg) || deg.Reason != obs.DegradedReasonCapturePartial {
-		t.Fatalf("err = %v; want capture_partial DegradedSignal", err)
+	if out.Reason != obs.DegradedReasonCapturePartial {
+		t.Fatalf("reason = %q; want capture_partial", out.Reason)
 	}
-	if got := res.Content[0].Text; got != "tiny status\n" {
-		t.Errorf("text = %q; want raw verbatim (inline-partial)", got)
+	if out.Visible != "tiny status\n" {
+		t.Errorf("visible = %q; want raw verbatim (inline-partial)", out.Visible)
+	}
+	if !out.Captured || out.Source != "calm:v1:vcs:git:status#1" {
+		t.Errorf("captured=%v source=%q; want captured under the persisted history source", out.Captured, out.Source)
 	}
 }

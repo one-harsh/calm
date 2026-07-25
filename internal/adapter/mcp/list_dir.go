@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/exec"
 	"github.com/one-harsh/calm/internal/adapter/extract"
 )
@@ -76,12 +77,12 @@ func (s *Server) listDir(ctx context.Context, args json.RawMessage) (ToolResult,
 	listing := b.String()
 
 	r := exec.Result{Stdout: listing}
-	return s.capturePipeline(ctx, captureSpec{
-		ingest:  listing,
-		visible: listing,
-		res:     r,
-		plan: func() (extract.Plan, error) {
-			return extract.PlanListDir(s.invocation(wb, "", wb.Root), execResultOf(r), a.Path), nil
+	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+		Ingest:  listing,
+		Visible: listing,
+		Res:     r,
+		Plan: func(seq int64) (extract.Plan, error) {
+			return extract.PlanListDir(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Path), nil
 		},
-	})
+	}))
 }

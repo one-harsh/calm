@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/exec"
 	"github.com/one-harsh/calm/internal/adapter/extract"
 )
@@ -118,15 +119,15 @@ func (s *Server) grep(ctx context.Context, args json.RawMessage) (ToolResult, er
 		r = exec.Result{Stdout: "(no matches)\n"}
 	}
 
-	raw := commandPayload(r)
-	return s.capturePipeline(ctx, captureSpec{
-		ingest:  raw,
-		visible: raw,
-		res:     r,
-		plan: func() (extract.Plan, error) {
-			return extract.PlanGrep(s.invocation(wb, "", wb.Root), execResultOf(r), a.Pattern, paths), nil
+	raw := capture.CommandPayload(r)
+	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+		Ingest:  raw,
+		Visible: raw,
+		Res:     r,
+		Plan: func(seq int64) (extract.Plan, error) {
+			return extract.PlanGrep(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Pattern, paths), nil
 		},
-	})
+	}))
 }
 
 // grepArgv builds the engine invocation. All engines emit path:line:text;
