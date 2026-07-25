@@ -244,7 +244,7 @@ The engine's recall hint is shell-parameterized: each shell supplies its retriev
 
 # 10. Session State on Disk
 
-State lives under `$CALM_HOME` (default `~/.calm`), one directory per harness conversation: `sessions/<sanitized session id>/` holding `state.json` (the engine's session state per Part I, plus this shell's recovery counter and derived idempotency base), a dedicated lock file, and the event spool. Directories and files are owner-only — the state file holds the session token. Writes are atomic: temp file, flush, rename; a crash mid-write leaves the prior state intact, and the worst case — a lost registry record for the last capture — surfaces later as an honest staleness signal, never as corruption.
+State lives under `$CALM_HOME` (default `~/.calm`), one directory per harness conversation: `sessions/<sanitized session id>/` holding `state.json` (the engine's session state per Part I, plus this shell's recovery counter, derived idempotency base, and establishment-throttle stamp), a dedicated lock file, and the event spool. Directories and files are owner-only — the state file holds the session token. Writes are atomic: temp file, flush, rename; a crash mid-write leaves the prior state intact, and the worst case — a lost registry record for the last capture — surfaces later as an honest staleness signal, never as corruption.
 
 **The state file is authoritative for the session token.** CALM's create idempotency is a bounded per-pod cache — it collapses racing creates; it is not identity. The derived idempotency base (a hash of the session id) covers same-conversation races; recovery creates extend it with the persisted recovery counter so a replacement can never collide with the original.
 

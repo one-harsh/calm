@@ -70,7 +70,8 @@ func TestAdapterDependencyDirection(t *testing.T) {
 	// Each shell is its internal package(s) plus its cmd binary. A new shell
 	// adds its roots here and the cross-import rules cover it for free.
 	shells := map[string][]string{
-		"mcp": {"internal/adapter/mcp", "cmd/calm-adapter"},
+		"mcp":         {"internal/adapter/mcp", "cmd/calm-adapter"},
+		"capture-cli": {"internal/adapter/session", "cmd/calm-capture"},
 	}
 
 	under := func(rel string, roots ...string) bool {
