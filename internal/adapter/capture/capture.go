@@ -31,10 +31,20 @@ type Session interface {
 	OnCallError(ctx context.Context, failedToken string, err error) *Signal
 	// Record hands the shell the capture's persisted delta: each source label
 	// paired with the staleness token that validates its later retrieval.
-	// Called at most once per capture, with the full delta, so a shell that
-	// persists synchronously pays one storage round-trip. Storage and its
-	// locking are shell-owned; the engine only reports the delta.
-	Record(ctx context.Context, delta []SourceToken)
+	// token names the session generation that captured — a shell discards a
+	// delta whose session has since been replaced, so dead-generation labels
+	// surface as staleness later, never as valid refs into the new session
+	// (honest capture continuity). Called at most once per capture, with the
+	// full delta. Storage and its locking are shell-owned.
+	Record(ctx context.Context, token string, delta []SourceToken)
+	// Emit enqueues this capture's finalized events for delivery by the shell's
+	// strategy. It must return without blocking on network — the engine calls
+	// it in-call, so delivery never delays the response (never-worse); queue
+	// durability is shell-owned (the MCP shell's queue is its process lifetime,
+	// the capture shell's is the on-disk spool). token names the generation
+	// that captured: a shell rejects a replaced generation's events before
+	// enqueue. Called at most once per capture, with a non-empty batch.
+	Emit(ctx context.Context, token string, events []calm.EventInput)
 }
 
 // EnsureResult is the per-capture slice of session state Ensure hands the
@@ -153,13 +163,14 @@ func (e *Engine) Capture(ctx context.Context, sess Session, spec Spec) (out Outc
 		}
 		return Outcome{Visible: spec.Visible, Reason: reason, Detail: detail}
 	}
-	e.recordPersistedTokens(ctx, sess, plan, outcomes)
+	e.recordPersistedTokens(ctx, sess, res.Token, plan, outcomes)
 	out = e.formatCaptureOutcome(ctx, outcomes, rep, spec.Visible, spec.Res, plan.Token, spec.RangedView)
 
-	// Fire-and-forget: events are pure observability and must never delay the response
-	// (never-worse) — a stalled /v1/events can't hold the tool call hostage.
+	// Events are pure observability: the engine finalizes them and hands them
+	// to the shell's delivery seam. The strategy (fire-and-forget or spool) is
+	// shell-owned and must never delay the response (never-worse).
 	if ev := extract.FinalizeEvents(plan, outcomes); len(ev) > 0 {
-		e.emitEvents(ctx, res.Token, ev)
+		sess.Emit(ctx, res.Token, ev)
 	}
 
 	return

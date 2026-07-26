@@ -12,6 +12,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -133,10 +134,10 @@ func (m *Manager) Ensure(ctx context.Context) (capture.EnsureResult, *capture.Si
 }
 
 // Record merges the capture's persisted delta into the on-disk registry
-// (Phase 2): reload under the lock, merge, save. Best-effort — a failed save
+// (the post-ingest phase): reload under the lock, merge, save. Best-effort — a failed save
 // logs WARN and never propagates, since a lost registry entry surfaces later as
 // an honest staleness signal, never corruption.
-func (m *Manager) Record(ctx context.Context, delta []capture.SourceToken) {
+func (m *Manager) Record(ctx context.Context, token string, delta []capture.SourceToken) {
 	if len(delta) == 0 {
 		return
 	}
@@ -153,6 +154,18 @@ func (m *Manager) Record(ctx context.Context, delta []capture.SourceToken) {
 	}
 	if st == nil {
 		m.log.WithContext(ctx).Warn("no session state to record delta into")
+		return
+	}
+	if err := m.ownedState(st); err != nil {
+		m.log.WithContext(ctx).Warn("record refused", logging.ErrorField(err))
+		return
+	}
+	if st.SessionToken != token {
+		// The session was replaced between this capture's ingest and its
+		// record; the delta's labels died with the captured generation and
+		// must fail with staleness later, never validate against the new
+		// session (honest capture continuity).
+		m.log.WithContext(ctx).Debug("registry delta from replaced session discarded")
 		return
 	}
 	for _, d := range delta {
@@ -194,6 +207,9 @@ func (m *Manager) Reset(_ context.Context) error {
 	if err != nil || st == nil {
 		return err
 	}
+	if err := m.ownedState(st); err != nil {
+		return err
+	}
 	st.AuthFailed = false
 	st.SessionToken = ""
 	st.NextAttemptAt = time.Time{}
@@ -208,12 +224,26 @@ func (m *Manager) load(ctx context.Context) (*state, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := m.ownedState(st); err != nil {
+		return nil, err
+	}
 	if st == nil {
 		st = newState(m.sessionID, m.client, time.Now())
 		m.log.WithContext(ctx).Debug("seeded fresh session state",
 			logging.StringField("idempotency_base", st.IdempotencyBase))
 	}
 	return st, nil
+}
+
+// ownedState guards against a routing bug or a copied directory handing this
+// conversation another conversation's record — cross-writing would send this
+// conversation's captures into that conversation's CALM session (the shell-side
+// face of session-isolation). Refusal degrades honestly; it never rewrites.
+func (m *Manager) ownedState(st *state) error {
+	if st != nil && st.SessionID != m.sessionID {
+		return fmt.Errorf("state belongs to session %q, not %q", st.SessionID, m.sessionID)
+	}
+	return nil
 }
 
 func (m *Manager) establish(ctx context.Context, st *state, key string) *capture.Signal {
@@ -371,6 +401,9 @@ func (m *Manager) View(ctx context.Context) (View, error) {
 	defer unlock()
 	st, err := m.store.load()
 	if err != nil {
+		return View{}, err
+	}
+	if err := m.ownedState(st); err != nil {
 		return View{}, err
 	}
 	reg := capture.NewRegistry()

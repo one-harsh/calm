@@ -16,10 +16,7 @@ import (
 	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
-const (
-	ingestTimeout = 10 * time.Second
-	eventTimeout  = 5 * time.Second
-)
+const ingestTimeout = 10 * time.Second
 
 // dualWriteIngest runs the preservation-first dual-write per LABELING.md
 // (history first, then latest), recording per-source persisted outcomes and
@@ -115,7 +112,7 @@ func (e *Engine) formatCaptureOutcome(ctx context.Context, outcomes []extract.Wr
 // would resolve to nothing on the CALM side anyway, so admitting the token would
 // only surface a misleading empty result instead of the honest session_lost
 // signal (or plain failure).
-func (e *Engine) recordPersistedTokens(ctx context.Context, sess Session, plan extract.Plan, outcomes []extract.WriteOutcome) {
+func (e *Engine) recordPersistedTokens(ctx context.Context, sess Session, token string, plan extract.Plan, outcomes []extract.WriteOutcome) {
 	var delta []SourceToken
 	for _, o := range outcomes {
 		if !o.Persisted {
@@ -127,28 +124,8 @@ func (e *Engine) recordPersistedTokens(ctx context.Context, sess Session, plan e
 		}
 	}
 	if len(delta) > 0 {
-		sess.Record(ctx, delta)
+		sess.Record(ctx, token, delta)
 	}
-}
-
-func (e *Engine) emitEvents(ctx context.Context, token string, ev []calm.EventInput) {
-	ectx := context.WithoutCancel(ctx)
-	go func() {
-		defer func() {
-			if p := recover(); p != nil {
-				e.log.WithContext(ectx).Warn("event emission panicked", logging.AnyField("panic", p))
-			}
-		}()
-		wctx, cancel := context.WithTimeout(ectx, eventTimeout)
-		defer cancel()
-		// AD03: no recovery trigger here — every event write follows an ingest
-		// on the same token, so either that ingest already recovered or the
-		// next tool call will; recovering from this goroutine would add
-		// concurrency surface for no visible benefit.
-		if err := e.calm.WriteEvents(wctx, token, ev); err != nil {
-			e.log.WithContext(wctx).Warn("write events failed", logging.ErrorField(err))
-		}
-	}()
 }
 
 func (e *Engine) ingest(ctx context.Context, token, source, content string, plan extract.Plan) (calm.IngestSummary, error) {

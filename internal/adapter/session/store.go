@@ -18,7 +18,6 @@ import (
 const (
 	stateVersion      = 1
 	stateFileName     = "state.json"
-	lockFileName      = "state.lock"
 	idempotencyPrefix = "harness-"
 )
 
@@ -58,7 +57,12 @@ func newStore(root, sessionID string) *store {
 }
 
 func (s *store) statePath() string { return filepath.Join(s.dir, stateFileName) }
-func (s *store) lockPath() string  { return filepath.Join(s.dir, lockFileName) }
+
+// lockPath is a sibling of the session directory, never inside it: reclamation
+// can hold the lock through the directory's removal on every platform, and the
+// lock file itself is never deleted, so a held lock can never be unlinked out
+// from under its holder.
+func (s *store) lockPath() string { return s.dir + ".lock" }
 
 // load returns the persisted state, or nil when none exists yet.
 func (s *store) load() (*state, error) {

@@ -115,3 +115,26 @@ func SourceLabel(label string) logging.LoggingField {
 func WorkloadRequestID(id string) logging.LoggingField {
 	return logging.StringField(KeyWorkloadRequestID, id)
 }
+
+const (
+	KeySpoolDrainDelivered       = "adapter.spool.drain.delivered"
+	KeySpoolDrainStaleDropped    = "adapter.spool.drain.stale_dropped"
+	KeySpoolDrainNotFoundDropped = "adapter.spool.drain.not_found_dropped"
+	KeySpoolReapStale            = "adapter.spool.reap.stale"
+)
+
+func SpoolDrainDelivered(n int) logging.LoggingField {
+	return logging.IntField(KeySpoolDrainDelivered, n)
+}
+
+func SpoolDrainStaleDropped(n int) logging.LoggingField {
+	return logging.IntField(KeySpoolDrainStaleDropped, n)
+}
+
+func SpoolDrainNotFoundDropped(n int) logging.LoggingField {
+	return logging.IntField(KeySpoolDrainNotFoundDropped, n)
+}
+
+func SpoolReapStale(n int) logging.LoggingField {
+	return logging.IntField(KeySpoolReapStale, n)
+}

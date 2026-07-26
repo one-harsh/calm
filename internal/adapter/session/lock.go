@@ -4,42 +4,46 @@
 package session
 
 import (
-	"errors"
 	"os"
+	"path/filepath"
 )
 
-// acquire opens the dedicated lock file and takes the exclusive advisory lock,
-// re-acquiring on a fresh inode when a concurrent GC reap unlinked the file
-// mid-acquisition — a lock held on an orphaned inode excludes nobody. Bounded
-// retries: persistent staleness means the directory is being reaped and
-// recreated under us, which the caller's load then surfaces honestly.
+// acquire opens the conversation's sibling lock file and takes the exclusive
+// advisory lock. The lock file is never deleted (see lockPath), so the classic
+// unlink pathology — a lock held on an orphaned inode excluding nobody — cannot
+// occur and acquisition needs no inode revalidation.
 func acquire(path string, block bool) (unlock func(), acquired bool, err error) {
-	for attempt := 0; attempt < 4; attempt++ {
-		//nolint:gosec // path is the adapter's own state-lock file under $CALM_HOME, not attacker-controlled
-		f, oerr := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-		if oerr != nil {
-			return nil, false, oerr
-		}
-		ok, lerr := lockFile(f, block)
-		if lerr != nil {
-			_ = f.Close()
-			return nil, false, lerr
-		}
-		if !ok {
-			_ = f.Close()
-			return nil, false, nil
-		}
-		if lockStale(f, path) {
-			unlockFile(f)
-			continue
-		}
-		return func() { unlockFile(f) }, true, nil
+	//nolint:gosec // path is the adapter's own state-lock file under $CALM_HOME, not attacker-controlled
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, false, err
 	}
-	return nil, false, errors.New("lock file repeatedly replaced during acquisition")
+	ok, lerr := lockFile(f, block)
+	if lerr != nil {
+		_ = f.Close()
+		return nil, false, lerr
+	}
+	if !ok {
+		_ = f.Close()
+		return nil, false, nil
+	}
+	return func() { unlockFile(f) }, true, nil
 }
 
 func (s *store) lock() (func(), error) {
+	// The sessions parent is created outside the lock — it is never reaped.
+	// The conversation directory itself is created only while HOLDING the
+	// sibling lock, so creation can never interleave with a reap's RemoveAll:
+	// a waiting invocation recreates the directory strictly after the reap.
+	if err := os.MkdirAll(filepath.Dir(s.dir), 0o700); err != nil {
+		return nil, err
+	}
+	unlock, _, err := acquire(s.lockPath(), true)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		unlock()
 		return nil, err
 	}
 	// MkdirAll leaves a pre-existing directory's broader mode untouched, so
@@ -50,8 +54,7 @@ func (s *store) lock() (func(), error) {
 	_ = os.Chmod(s.dir, 0o700) //nolint:gosec // 0700 is owner-only for a directory; the execute bit is traversal, not a wider grant
 
 	// Network filesystems are unsupported: advisory locks over NFS are unreliable.
-	unlock, _, err := acquire(s.lockPath(), true)
-	return unlock, err
+	return unlock, nil
 }
 
 // tryLock acquires without blocking; ok=false means another process holds the

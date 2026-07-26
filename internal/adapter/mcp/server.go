@@ -124,7 +124,7 @@ func (s *Server) addTool(t Tool) {
 }
 
 func (s *Server) registerBuiltins() {
-	// TODO: register the context-health tool per DESIGN.md §3:
+	// TODO: register the context-health tool:
 	// calm_report_outcome (calls /v1/feedback).
 	s.addToolIfAbsent(s.newRunCommandTool())
 	s.addToolIfAbsent(s.newSearchTool())

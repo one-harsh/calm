@@ -119,8 +119,8 @@ func TestCapture_ParallelIngestsDoNotSerializeOnLock(t *testing.T) {
 	if _, sig := b.Ensure(ctx); sig != nil {
 		t.Fatalf("b.Ensure degraded: %+v", sig)
 	}
-	a.Record(ctx, []capture.SourceToken{{Source: "calm:v1:file:read:a.go", Token: "ta"}})
-	b.Record(ctx, []capture.SourceToken{{Source: "calm:v1:file:read:b.go", Token: "tb"}})
+	a.Record(ctx, "tok1", []capture.SourceToken{{Source: "calm:v1:file:read:a.go", Token: "ta"}})
+	b.Record(ctx, "tok1", []capture.SourceToken{{Source: "calm:v1:file:read:b.go", Token: "tb"}})
 
 	reg := loadState(t, a).Registry
 	if reg["calm:v1:file:read:a.go"] != "ta" || reg["calm:v1:file:read:b.go"] != "tb" {
@@ -128,8 +128,6 @@ func TestCapture_ParallelIngestsDoNotSerializeOnLock(t *testing.T) {
 	}
 }
 
-// Concurrent writers each allocate a sequence under the lock; the final count
-// is exact with no lost updates and no torn read of the atomically-written file.
 func TestState_ConcurrentWriters_FinalSeqExact_NoTornRead(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -191,8 +189,8 @@ func TestRecord_ReloadMergeNoLostUpdate(t *testing.T) {
 		t.Fatalf("establish degraded: %+v", sig)
 	}
 
-	a.Record(ctx, []capture.SourceToken{{Source: "s1", Token: "t1"}})
-	b.Record(ctx, []capture.SourceToken{{Source: "s2", Token: "t2"}})
+	a.Record(ctx, "tok1", []capture.SourceToken{{Source: "s1", Token: "t1"}})
+	b.Record(ctx, "tok1", []capture.SourceToken{{Source: "s2", Token: "t2"}})
 
 	reg := loadState(t, a).Registry
 	if reg["s1"] != "t1" || reg["s2"] != "t2" {
@@ -200,8 +198,6 @@ func TestRecord_ReloadMergeNoLostUpdate(t *testing.T) {
 	}
 }
 
-// The auth latch survives a process restart (a fresh manager over the same
-// conversation stays disabled) and clears only on an explicit reset.
 func TestAuthLatch_PersistsThenResetClears(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -235,7 +231,6 @@ func TestAuthLatch_PersistsThenResetClears(t *testing.T) {
 	}
 }
 
-// The latch is scoped to one conversation: a different session id starts clean.
 func TestAuthLatch_NewSessionIdStartsClean(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -257,8 +252,6 @@ func TestAuthLatch_NewSessionIdStartsClean(t *testing.T) {
 	}
 }
 
-// A lost session (404) is replaced by exactly one create; DeleteSession is
-// never called anywhere — teardown is CALM-side TTL reclaim.
 func TestSessionManager_NeverCallsDeleteSession(t *testing.T) {
 	c := calm.NewMockClient(t) // strict: any DeleteSession call fails the test
 	expectRegister(c)
@@ -272,7 +265,7 @@ func TestSessionManager_NeverCallsDeleteSession(t *testing.T) {
 	if _, sig := m.Ensure(ctx); sig != nil {
 		t.Fatalf("establish degraded: %+v", sig)
 	}
-	m.Record(ctx, []capture.SourceToken{{Source: "s1", Token: "t1"}})
+	m.Record(ctx, "tok1", []capture.SourceToken{{Source: "s1", Token: "t1"}})
 	if sig := m.OnCallError(ctx, "tok1", status(404)); sig == nil || sig.Reason != "session_lost" {
 		t.Fatalf("recovery signal = %+v; want session_lost", sig)
 	}
@@ -284,8 +277,6 @@ func TestSessionManager_NeverCallsDeleteSession(t *testing.T) {
 	}
 }
 
-// The sequence is monotonic across invocations and continues (never resets)
-// across a session replacement; the epoch bumps only on replacement.
 func TestSeq_MonotonicAcrossInvocationsAndRecovery(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -319,8 +310,8 @@ func TestSeq_MonotonicAcrossInvocationsAndRecovery(t *testing.T) {
 	}
 }
 
-// V7: recovery's replacement create uses the same client identity the manager
-// was constructed with, so a lost session can never leak across the credential
+// Recovery's replacement create uses the same client identity the manager was
+// constructed with, so a lost session can never leak across the credential
 // boundary. The mock's fixed client matcher enforces it on both creates.
 func TestRecovery_UsesConstructedClientIdentity(t *testing.T) {
 	c := calm.NewMockClient(t)

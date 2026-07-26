@@ -20,7 +20,6 @@ import (
 	"github.com/one-harsh/calm/internal/adapter/capture"
 )
 
-// A create rejected 4xx latches auth_failed and the latch persists to disk.
 func TestEstablish_CreateRejected_LatchesAuthAndPersists(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -36,8 +35,6 @@ func TestEstablish_CreateRejected_LatchesAuthAndPersists(t *testing.T) {
 	}
 }
 
-// A transient create failure degrades to calm_unreachable and persists no token,
-// so the next capture retries establishment.
 func TestEstablish_CreateTransient_Degrades(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -50,7 +47,6 @@ func TestEstablish_CreateTransient_Degrades(t *testing.T) {
 	}
 }
 
-// A rejected client registration latches auth_failed before any create.
 func TestRegister_Rejected_LatchesAuth(t *testing.T) {
 	c := calm.NewMockClient(t)
 	c.EXPECT().RegisterClient(mock.Anything, testClient).Return(false, status(401)).Once()
@@ -61,7 +57,6 @@ func TestRegister_Rejected_LatchesAuth(t *testing.T) {
 	}
 }
 
-// A transient registration failure defers the create with calm_unreachable.
 func TestRegister_Transient_Degrades(t *testing.T) {
 	c := calm.NewMockClient(t)
 	c.EXPECT().RegisterClient(mock.Anything, testClient).Return(false, errors.New("timeout")).Once()
@@ -72,7 +67,6 @@ func TestRegister_Transient_Degrades(t *testing.T) {
 	}
 }
 
-// A 4xx on the replacement create latches auth_failed.
 func TestRecover_Rejected_LatchesAuth(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -121,8 +115,6 @@ func TestRecover_Transient_KeepsDeadTokenAndCounter(t *testing.T) {
 	}
 }
 
-// When another process already replaced the session, a stale failed token is
-// classified session_lost without a second create.
 func TestRecover_AlreadyReplaced_NoSecondCreate(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -154,10 +146,9 @@ func TestStoreUnwritable_EnsureCaptureFailed_RecordNoOp(t *testing.T) {
 		t.Fatalf("ensure = %+v; want capture_failed", sig)
 	}
 	// Best-effort: Record cannot lock the unwritable store, logs WARN, and never panics.
-	m.Record(ctx, []capture.SourceToken{{Source: "s1", Token: "t1"}})
+	m.Record(ctx, "tok1", []capture.SourceToken{{Source: "s1", Token: "t1"}})
 }
 
-// A corrupt state.json degrades Ensure to capture_failed rather than crashing.
 func TestEnsure_CorruptState_CaptureFailed(t *testing.T) {
 	root := t.TempDir()
 	s := newStore(root, "conv-1")
@@ -173,8 +164,6 @@ func TestEnsure_CorruptState_CaptureFailed(t *testing.T) {
 	}
 }
 
-// GC tolerates a missing sessions root and reaps a stateless idle directory by
-// its own mtime.
 func TestGC_MissingRootAndStatelessIdleDir(t *testing.T) {
 	if err := GC(t.TempDir(), time.Hour); err != nil {
 		t.Fatalf("GC on empty root: %v", err)
@@ -197,7 +186,6 @@ func TestGC_MissingRootAndStatelessIdleDir(t *testing.T) {
 	}
 }
 
-// resolveRoot falls back to ~/.calm when neither an override nor $CALM_HOME is set.
 func TestResolveRoot_FallsBackToHome(t *testing.T) {
 	t.Setenv("CALM_HOME", "")
 	home, err := os.UserHomeDir()
@@ -286,7 +274,6 @@ func TestEstablish_Transient_ThrottlePersistsAcrossInvocations(t *testing.T) {
 	}
 }
 
-// An elapsed throttle stamp permits the next attempt, and success clears it.
 func TestEstablish_ThrottleElapsed_RetriesAndClears(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
@@ -380,6 +367,61 @@ func TestReset_AdvancesRecoveryCounterAndEpoch(t *testing.T) {
 	}
 }
 
+// A record from a replaced generation is discarded: its labels died with the
+// captured session and must fail with staleness later, never validate against
+// the replacement (honest capture continuity). The same-generation record
+// after recovery still lands.
+func TestRecord_DiscardsDeltaFromReplacedSession(t *testing.T) {
+	c := calm.NewMockClient(t)
+	expectRegister(c)
+	c.EXPECT().CreateSession(mock.Anything, testClient, testTTL, mock.Anything).Return("tok1", nil).Once()
+	c.EXPECT().CreateSession(mock.Anything, testClient, testTTL, mock.Anything).Return("tok2", nil).Once()
+
+	root := t.TempDir()
+	ctx := context.Background()
+	m := newTestManager(t, root, "conv-1", c)
+	if _, sig := m.Ensure(ctx); sig != nil {
+		t.Fatalf("establish degraded: %+v", sig)
+	}
+	if sig := m.OnCallError(ctx, "tok1", status(404)); sig == nil || sig.Reason != "session_lost" {
+		t.Fatalf("recovery = %+v; want session_lost", sig)
+	}
+
+	m.Record(ctx, "tok1", []capture.SourceToken{{Source: "dead", Token: "td"}})
+	if reg := loadState(t, m).Registry; reg["dead"] != "" {
+		t.Errorf("dead-generation delta recorded: %v", reg)
+	}
+	m.Record(ctx, "tok2", []capture.SourceToken{{Source: "live", Token: "tl"}})
+	if reg := loadState(t, m).Registry; reg["live"] != "tl" {
+		t.Errorf("current-generation delta lost: %v", reg)
+	}
+}
+
+// A state record belonging to a different conversation is refused, never
+// rewritten — a routing bug or copied directory must not send this
+// conversation's captures into another conversation's CALM session.
+func TestState_ForeignStateRefused(t *testing.T) {
+	c := calm.NewMockClient(t) // strict: refusal must happen before any CALM traffic
+	root := t.TempDir()
+	s := newStore(root, "conv-1")
+	saveFixture(t, s, func(st *state) {
+		st.SessionID = "conv-other"
+		st.SessionToken = "tok-foreign"
+	})
+
+	m := newTestManager(t, root, "conv-1", c)
+	ctx := context.Background()
+	if _, sig := m.Ensure(ctx); sig == nil || sig.Reason != "capture_failed" {
+		t.Fatalf("ensure = %+v; want capture_failed refusal", sig)
+	}
+	if _, err := m.View(ctx); err == nil {
+		t.Errorf("view of foreign state succeeded; want refusal")
+	}
+	if st := loadState(t, m); st.SessionID != "conv-other" || st.SessionToken != "tok-foreign" {
+		t.Errorf("foreign state was rewritten: %+v", st)
+	}
+}
+
 // GC must not reap a conversation another process is actively using: advisory
 // locks do not prevent deletion, so the reap try-locks the directory and skips
 // when the lock is held.
@@ -401,6 +443,79 @@ func TestGC_SkipsDirHeldByLiveProcess(t *testing.T) {
 	}
 	if _, err := os.Stat(s.statePath()); err != nil {
 		t.Errorf("live (locked) dir was reaped")
+	}
+}
+
+// The orphan sweep must not race a live conversation: it runs under the
+// conversation's lock and skips a busy directory outright — an unlocked sweep
+// could unlink a spool right after a live Emit appended to it.
+func TestGC_SweepSkipsBusyDir(t *testing.T) {
+	root := t.TempDir()
+	s := newStore(root, "conv-1")
+	saveFixture(t, s, func(st *state) { st.SessionToken = "tok" })
+	spool := s.spoolPath()
+	if err := os.WriteFile(spool, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-72 * time.Hour)
+	for _, p := range []string{s.statePath(), spool} {
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unlock, err := s.lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if err := GC(root, time.Hour); err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if _, err := os.Stat(spool); err != nil {
+		t.Errorf("busy dir's spool was swept: %v", err)
+	}
+}
+
+// GC sweeps a live (not whole-reaped) directory: stale inflight event claims
+// past the 10-minute window and aged spools/temps past the idle cutoff are
+// removed, while the fresh session and a young (mid-delivery) claim survive.
+// Inflight claims are deleted unread — the same delete-not-replay guarantee
+// Drain applies (AD06).
+func TestGC_SweepsStaleInflightAndSpoolInLiveDir(t *testing.T) {
+	root := t.TempDir()
+	s := &store{dir: filepath.Join(root, "sessions", "conv-1")}
+	saveFixture(t, s, func(st *state) { st.SessionToken = "tok" }) // fresh state → dir not whole-reaped
+
+	staleInflightFile := s.inflightPath(4242)
+	agedSpool := s.spoolPath()
+	orphanTemp := s.statePath() + ".tmp.99999"
+	freshInflight := s.inflightPath(1234) // young claim: mid-delivery, must survive
+	for _, p := range []string{staleInflightFile, agedSpool, orphanTemp, freshInflight} {
+		if err := os.WriteFile(p, []byte("{}\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", filepath.Base(p), err)
+		}
+	}
+	old := time.Now().Add(-72 * time.Hour)
+	for _, p := range []string{staleInflightFile, agedSpool, orphanTemp} {
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatalf("age %s: %v", filepath.Base(p), err)
+		}
+	}
+
+	if err := GC(root, time.Hour); err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+
+	if _, err := os.Stat(s.statePath()); err != nil {
+		t.Errorf("live session dir must survive the sweep: %v", err)
+	}
+	for _, p := range []string{staleInflightFile, agedSpool, orphanTemp} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("stale leftover not swept: %s (err=%v)", filepath.Base(p), err)
+		}
+	}
+	if _, err := os.Stat(freshInflight); err != nil {
+		t.Errorf("a young inflight claim (mid-delivery) must survive the sweep: %v", err)
 	}
 }
 

@@ -28,8 +28,6 @@ func saveFixture(t *testing.T, s *store, mutate func(*state)) {
 	}
 }
 
-// A crash between temp-write and rename leaves the prior state.json fully
-// intact; the orphaned temp file never corrupts a load.
 func TestState_PartialWriteLeavesPriorIntact(t *testing.T) {
 	s := newStore(t.TempDir(), "conv-1")
 	saveFixture(t, s, func(st *state) { st.Seq = 5 })
@@ -76,8 +74,6 @@ func TestState_FilePermissionsOwnerOnly(t *testing.T) {
 	}
 }
 
-// The store root honors $CALM_HOME (and an explicit override beats it), and a
-// hostile session id is sanitized to a safe name that cannot escape the root.
 func TestStateDir_HonorsCalmHomeAndSanitizesSessionID(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CALM_HOME", home)
@@ -186,9 +182,6 @@ func TestIdempotencyBase_BoundedAndPrefixed(t *testing.T) {
 	}
 }
 
-// GC reaps a conversation directory idle beyond the threshold and sweeps a
-// crashed writer's orphaned temp file from a directory still in use, leaving
-// the live directory intact.
 func TestGC_ReapsIdleDirsAndSweepsOrphanTmp(t *testing.T) {
 	root := t.TempDir()
 	sessions := filepath.Join(root, "sessions")

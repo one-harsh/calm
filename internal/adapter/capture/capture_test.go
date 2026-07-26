@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/mock"
 
@@ -30,6 +29,8 @@ type stubSession struct {
 	token     string
 	ensureSig *Signal
 	onCallSig *Signal
+	emitToken string
+	emitted   [][]calm.EventInput
 }
 
 func (s *stubSession) Ensure(context.Context) (EnsureResult, *Signal) {
@@ -40,10 +41,20 @@ func (s *stubSession) Ensure(context.Context) (EnsureResult, *Signal) {
 }
 func (s *stubSession) OnCallError(context.Context, string, error) *Signal { return s.onCallSig }
 
-func (s *stubSession) Record(_ context.Context, delta []SourceToken) {
+func (s *stubSession) Record(_ context.Context, token string, delta []SourceToken) {
+	if token != s.token {
+		return
+	}
 	for _, st := range delta {
 		s.reg.Record(st.Source, st.Token)
 	}
+}
+
+// Emit records the delivery-seam handoff so tests assert the engine finalized
+// and handed events to the shell — delivery itself is shell-owned.
+func (s *stubSession) Emit(_ context.Context, token string, events []calm.EventInput) {
+	s.emitToken = token
+	s.emitted = append(s.emitted, events)
 }
 
 func planFor(command, raw string) func(int64) (extract.Plan, error) {
@@ -52,25 +63,6 @@ func planFor(command, raw string) func(int64) (extract.Plan, error) {
 			extract.Invocation{Seq: seq, Command: command},
 			extract.ExecResult{Stdout: raw},
 		)
-	}
-}
-
-func writeEventsOnce(m *calm.MockClient) <-chan struct{} {
-	done := make(chan struct{})
-	m.EXPECT().WriteEvents(mock.Anything, mock.Anything, mock.Anything).
-		RunAndReturn(func(context.Context, string, []calm.EventInput) error {
-			close(done)
-			return nil
-		}).Once()
-	return done
-}
-
-func awaitEvents(t *testing.T, done <-chan struct{}) {
-	t.Helper()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("WriteEvents was not invoked")
 	}
 }
 
@@ -87,7 +79,6 @@ func TestCapture_Happy_DualWriteRecordsAndEmits(t *testing.T) {
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
 		return in.Source == "calm:v1:vcs:git:status"
 	})).Return(calm.IngestSummary{Source: "calm:v1:vcs:git:status", SectionsIndexed: 1, SectionsTotal: 1}, nil).Once()
-	done := writeEventsOnce(m)
 
 	sess := &stubSession{reg: NewRegistry(), token: "tok-1"}
 	e := NewEngine(m, logging.Nop(), "calm_search")
@@ -107,7 +98,11 @@ func TestCapture_Happy_DualWriteRecordsAndEmits(t *testing.T) {
 	if snap["calm:v1:vcs:git:status"] == "" || snap["calm:v1:vcs:git:status#1"] == "" {
 		t.Errorf("both persisted sources must be recorded; snapshot = %v", snap)
 	}
-	awaitEvents(t, done)
+	// Delivery is shell-owned: the engine finalizes events and hands one batch
+	// to the seam under the capture's token — it never writes them itself.
+	if len(sess.emitted) != 1 || sess.emitToken != "tok-1" {
+		t.Errorf("emitted = %d batch(es) under token %q; want 1 under tok-1", len(sess.emitted), sess.emitToken)
+	}
 }
 
 // The load-bearing Outcome mapping: an Ensure degradation returns the raw
@@ -156,7 +151,6 @@ func TestCapture_IngestFailure_CaptureFailed(t *testing.T) {
 	m := calm.NewMockClient(t)
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.IngestSummary{}, errors.New("boom")).Once()
-	done := writeEventsOnce(m)
 	sess := &stubSession{reg: NewRegistry(), token: "tok-1"}
 	e := NewEngine(m, logging.Nop(), "calm_search")
 
@@ -168,7 +162,10 @@ func TestCapture_IngestFailure_CaptureFailed(t *testing.T) {
 	if out.Captured {
 		t.Errorf("captured must be false when nothing persisted")
 	}
-	awaitEvents(t, done)
+	// The best-effort tool event still hands off to the delivery seam.
+	if len(sess.emitted) != 1 {
+		t.Errorf("emitted = %d batch(es); want the best-effort event handed to the seam", len(sess.emitted))
+	}
 }
 
 // A plan-derivation failure (untranslatable command) degrades to capture_failed
