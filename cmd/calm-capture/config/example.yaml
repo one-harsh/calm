@@ -1,0 +1,24 @@
+# Annotated calm-capture config. Load via CALM_ADAPTER_CONFIG_FILE; a file is
+# optional (defaults + CALM_ADAPTER_-prefixed env overrides apply without one).
+# calm-capture reads the same configuration surface as calm-adapter — one
+# config works for both. Hook-spawned invocations only see the harness's shell
+# environment, so the env var (or full env-var config) must be present there.
+calm:
+  # Base URL of the CALM service calm-capture calls.
+  url: http://localhost:8080
+  # Namespace API key. Use a bracketed [env:VAR] reference so no secret is
+  # committed; leave empty for a local CALM running without auth.
+  api_key: "[env:CALM_DEFAULT_KEY]"
+  # CALM client identifier for sessions this shell opens.
+  client: calm-capture
+  # Inactivity TTL for the conversation's CALM session (clamped to the
+  # operator ceiling). Also drives on-disk state reclamation age.
+  session_ttl_minutes: 120
+  # Reclamation runs on roughly 1-in-N exec invocations; 0 disables sampling.
+  gc_sample_rate: 20
+log:
+  level: info # debug | info | warn | error
+  format: json # json | console
+  # Path to a log file; empty = $CALM_HOME/logs/calm-capture.log. The process
+  # never logs to stdout/stderr — both are capture surfaces the agent reads.
+  file: ""

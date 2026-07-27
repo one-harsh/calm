@@ -1,0 +1,15 @@
+# Dev config for calm-capture. Point the binary at it via:
+#   export CALM_ADAPTER_CONFIG_FILE=cmd/calm-capture/config/dev.yaml
+# The api_key resolves CALM_DEFAULT_KEY at startup; no secrets are committed.
+# Any field can also be overridden by a CALM_ADAPTER_-prefixed env var
+# (e.g. CALM_ADAPTER_CALM_URL) — the same surface calm-adapter reads.
+calm:
+  url: http://localhost:8080
+  api_key: "[env:CALM_DEFAULT_KEY]"
+  client: calm-capture
+  session_ttl_minutes: 4320 # 3 days
+  gc_sample_rate: 20 # reclamation on ~1-in-N exec invocations; 0 disables
+log:
+  level: info
+  format: json
+  file: "" # empty = $CALM_HOME/logs/calm-capture.log (stdout/stderr are capture surfaces)
