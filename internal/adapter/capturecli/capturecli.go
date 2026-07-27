@@ -15,7 +15,9 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/config"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 	"github.com/one-harsh/calm/internal/adapter/session"
 )
 
@@ -23,6 +25,8 @@ const (
 	CaptureActiveEnv string = "CALM_CAPTURE_ACTIVE"
 	recallCommand    string = "calm-capture search"
 	defaultSessionID string = "default"
+
+	opTimeout = 10 * time.Second
 )
 
 type Deps struct {
@@ -42,6 +46,12 @@ func Dispatch(ctx context.Context, d Deps, args []string) int {
 	switch args[0] {
 	case "exec":
 		return d.execCmd(ctx, args[1:])
+	case "search":
+		return d.searchCmd(ctx, args[1:])
+	case "feedback":
+		return d.feedbackCmd(ctx, args[1:])
+	case "init":
+		return d.initCmd(ctx, args[1:])
 	default:
 		_, _ = fmt.Fprintf(d.Stderr, "calm-capture: unknown command %q\n", args[0])
 		return 2
@@ -78,6 +88,20 @@ func sessionIDOr(v string) string {
 		return defaultSessionID
 	}
 	return v
+}
+
+func (d Deps) degradedStderr(reason string) int {
+	_, _ = fmt.Fprintln(d.Stderr, obs.DegradedPhrase(reason))
+	return 1
+}
+
+func (d Deps) degradedSig(sig *capture.Signal) int {
+	line := obs.DegradedPhrase(sig.Reason)
+	if sig.Detail != "" {
+		line += "\n" + sig.Detail
+	}
+	_, _ = fmt.Fprintln(d.Stderr, line)
+	return 1
 }
 
 func (d Deps) gcSample() bool {
