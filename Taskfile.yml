@@ -4,6 +4,7 @@ vars:
   BIN_DIR: "{{.ROOT_DIR}}/bin"
   CALM_BIN: "{{.BIN_DIR}}/calm"
   ADAPTER_BIN: "{{.BIN_DIR}}/calm-adapter"
+  CAPTURE_BIN: "{{.BIN_DIR}}/calm-capture"
   TEST_TAGS: "mocks"
   LDFLAGS: "-s -w"
 
@@ -68,13 +69,13 @@ tasks:
     cmds:
       - gofumpt -w .
       - goimports -local github.com/one-harsh/calm -w .
-      - addlicense -c "The CALM Authors" -s=only -l apache -ignore '**/*.yaml' -ignore '**/*.yml' -ignore '**/*.sql' -ignore '**/Dockerfile' -ignore '**/*.gen.go' -ignore '**/mock_*.go' -ignore 'bin/**' -ignore '.task/**' .
+      - addlicense -c "The CALM Authors" -s=only -l apache -ignore '**/*.yaml' -ignore '**/*.yml' -ignore '**/*.sql' -ignore '**/Dockerfile*' -ignore '**/*.gen.go' -ignore '**/mock_*.go' -ignore 'bin/**' -ignore '.task/**' .
 
   lint:
     desc: Run golangci-lint and verify SPDX headers
     cmds:
       - golangci-lint run ./...
-      - addlicense -check -c "The CALM Authors" -s=only -l apache -ignore '**/*.yaml' -ignore '**/*.yml' -ignore '**/*.sql' -ignore '**/Dockerfile' -ignore '**/*.gen.go' -ignore '**/mock_*.go' -ignore 'bin/**' -ignore '.task/**' .
+      - addlicense -check -c "The CALM Authors" -s=only -l apache -ignore '**/*.yaml' -ignore '**/*.yml' -ignore '**/*.sql' -ignore '**/Dockerfile*' -ignore '**/*.gen.go' -ignore '**/mock_*.go' -ignore 'bin/**' -ignore '.task/**' .
 
   gen:api:
     desc: Regenerate API types/server/client from docs/api/openapi.yaml
@@ -135,8 +136,8 @@ tasks:
         fi
 
   build:
-    desc: Build both binaries (static, no CGO)
-    deps: [build:calm, build:adapter]
+    desc: Build all binaries (static, no CGO)
+    deps: [build:calm, build:adapter, build:capture]
 
   build:all:
     desc: Compile-check every OS/arch in parallel (no artifacts) — packages and all test files
@@ -195,6 +196,21 @@ tasks:
       - go.sum
     generates:
       - "{{.ADAPTER_BIN}}"
+
+  build:capture:
+    desc: Build the capture-shell CLI binary (CGO_ENABLED=0 — static-binary invariant)
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.CAPTURE_BIN}} ./cmd/calm-capture
+    sources:
+      - cmd/calm-capture/**/*.go
+      - internal/**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.CAPTURE_BIN}}"
 
   closeout:
     desc: Refresh bin/calm-adapter and remind the user to reload the MCP host
@@ -435,9 +451,14 @@ tasks:
       - docker compose down
 
   docker:build:
-    desc: Build the CALM Docker image
+    desc: Build the CALM service Docker image
     cmds:
-      - docker build -t calm:dev .
+      - docker build --target calm -t calm:dev .
+
+  docker:build:capture:
+    desc: Build the calm-capture CLI Docker image
+    cmds:
+      - docker build -f Dockerfile.capture -t calm-capture:dev .
 
   clean:
     desc: Remove build artifacts

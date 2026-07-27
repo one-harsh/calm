@@ -24,6 +24,7 @@ type CalmConfig struct {
 	APIKey            secrets.Secret `mapstructure:"api_key"`
 	Client            string         `mapstructure:"client"`
 	SessionTTLMinutes int            `mapstructure:"session_ttl_minutes"`
+	GCSampleRate      int            `mapstructure:"gc_sample_rate"`
 }
 
 type LogConfig struct {
@@ -62,6 +63,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("calm.api_key", "")
 	v.SetDefault("calm.client", "calm-adapter")
 	v.SetDefault("calm.session_ttl_minutes", 120)
+	v.SetDefault("calm.gc_sample_rate", 20)
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.file", "")
@@ -73,6 +75,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Calm.SessionTTLMinutes <= 0 {
 		return fmt.Errorf("calm.session_ttl_minutes must be > 0; got %d", cfg.Calm.SessionTTLMinutes)
+	}
+	if cfg.Calm.GCSampleRate < 0 {
+		return fmt.Errorf("calm.gc_sample_rate must be >= 0 (0 disables reclamation sampling); got %d", cfg.Calm.GCSampleRate)
 	}
 	return nil
 }

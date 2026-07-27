@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	osexec "os/exec"
 	"time"
 )
@@ -25,24 +26,30 @@ type Result struct {
 	Truncated bool
 }
 
-func Run(ctx context.Context, command, dir string) (Result, error) {
+func Run(ctx context.Context, command, dir string, extraEnv ...string) (Result, error) {
 	argv := shellArgv(command)
 	//nolint:gosec // DL02: local exec is an adapter capability; CALM the service never runs code
 	cmd := osexec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	return runCmd(ctx, cmd)
 }
 
 // RunArgv executes argv directly — no shell. Typed tool arguments must never
 // be spliced into a shell string, so this is the only sanctioned exec entry
 // for structured tools.
-func RunArgv(ctx context.Context, argv []string, dir string) (Result, error) {
+func RunArgv(ctx context.Context, argv []string, dir string, extraEnv ...string) (Result, error) {
 	if len(argv) == 0 {
 		return Result{}, errors.New("exec: empty argv")
 	}
 	//nolint:gosec // DL02: local exec is an adapter capability; CALM the service never runs code
 	cmd := osexec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	return runCmd(ctx, cmd)
 }
 

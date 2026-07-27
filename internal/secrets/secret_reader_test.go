@@ -236,6 +236,26 @@ func TestSecret_String(t *testing.T) {
 	}
 }
 
+// Resolve is the non-fatal sibling of ReadSecret: it returns the error rather
+// than calling Fatal, so a degradation-not-abort caller (the capture shell's
+// never-worse path) can keep going. It delegates to resolve, so one success
+// and one failure case pin the wrapper without re-covering the scheme matrix.
+func TestResolve_NonFatalContract(t *testing.T) {
+	t.Setenv("CALM_TEST_RESOLVE_PUBLIC", "public-value")
+
+	got, err := Resolve("[env:CALM_TEST_RESOLVE_PUBLIC]")
+	if err != nil {
+		t.Fatalf("Resolve of a valid ref: unexpected error %v", err)
+	}
+	if got != "public-value" {
+		t.Errorf("Resolve = %q; want public-value", got)
+	}
+
+	if _, err := Resolve("not-a-bracketed-reference"); err == nil {
+		t.Error("Resolve of a malformed ref must return an error, not Fatal")
+	}
+}
+
 // ---------- ReadSecret Fatal-path coverage (subprocess) ----------
 
 // Pattern: each Fatal-path test re-executes this test binary with

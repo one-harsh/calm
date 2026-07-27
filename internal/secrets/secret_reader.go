@@ -65,6 +65,15 @@ func (s *secretReader) ReadSecret(ctx context.Context, secret Secret) string {
 	return val
 }
 
+// Resolve resolves a secret reference without ReadSecret's fail-fast policy.
+// Services keep ReadSecret — fail at the earliest spot, before taking traffic.
+// Resolve is for callers whose failure answer is degradation, not abort: the
+// capture shell's exec path must run the wrapped command even when the secret
+// cannot be resolved (never-worse), so it needs the error, not an exit.
+func Resolve(secret Secret) (string, error) {
+	return resolve(string(secret))
+}
+
 func resolve(ref string) (string, error) {
 	match := secretReaderRegex.FindStringSubmatch(ref)
 	if match == nil {

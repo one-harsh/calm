@@ -47,32 +47,21 @@ type Session interface {
 	Emit(ctx context.Context, token string, events []calm.EventInput)
 }
 
-// EnsureResult is the per-capture slice of session state Ensure hands the
-// engine: the session token and this capture's allocated sequence.
 type EnsureResult struct {
-	Token string
+	Token string // Session token
 	Seq   int64
 }
 
-// SourceToken pairs a persisted source label with the staleness token that
-// validates it on the shell's retrieval path.
 type SourceToken struct {
 	Source string
 	Token  string
 }
 
-// Signal is the engine's degraded-state classification for one call: the closed
-// obs.DegradedReason* value plus optional operator-facing detail (e.g. the CALM
-// error text carried on calm_unreachable). Shells own how it renders.
 type Signal struct {
 	Reason string // obs.DegradedReason* value
 	Detail string // optional; surfaced by the shell after the canonical phrasing
 }
 
-// Outcome is the engine's per-call result the shell maps onto its transport:
-// the visible text, whether capture landed and under which source (for the
-// operator surface), and the degraded classification (Reason empty when the
-// call was not degraded; Detail accompanies Reason).
 type Outcome struct {
 	Visible  string
 	Captured bool
@@ -86,32 +75,32 @@ type Outcome struct {
 // (capture-full-present-range per DESIGN.md §3); every other tool passes the
 // same payload for both.
 type Spec struct {
-	Ingest  string
-	Visible string
-	Res     exec.Result
-	// RangedView marks a deliberately-scoped calm_read_file slice so presentation
-	// shows the slice verbatim (capped) rather than collapsing a range the agent
-	// already narrowed into whole-file summary chrome.
+	Ingest     string
+	Visible    string
+	Res        exec.Result
 	RangedView bool
-	// Plan runs only after the session pre-checks pass — it receives the
-	// engine-allocated capture sequence so history #<seq> numbering stays
-	// exactly aligned with the calls that could proceed.
-	Plan func(seq int64) (extract.Plan, error)
+	Plan       func(seq int64) (extract.Plan, error)
 }
 
-// Engine holds the CALM client, logger, and the shell's retrieval-affordance
-// name (threaded into recall hints so a capture points back at the shell's own
-// retrieval command).
 type Engine struct {
-	calm   calm.Client
-	log    *logging.Logger
-	recall string
+	calm          calm.Client
+	log           *logging.Logger
+	recall        string
+	discoveryCard bool
 }
 
-// NewEngine builds the capture engine. recall is the shell's retrieval command
-// name (the MCP shell passes calm_search) fused into recall hints.
-func NewEngine(c calm.Client, log *logging.Logger, recall string) *Engine {
-	return &Engine{calm: c, log: log, recall: recall}
+type Option func(*Engine)
+
+func WithDiscoveryCard() Option {
+	return func(e *Engine) { e.discoveryCard = true }
+}
+
+func NewEngine(c calm.Client, log *logging.Logger, recall string, opts ...Option) *Engine {
+	e := &Engine{calm: c, log: log, recall: recall}
+	for _, o := range opts {
+		o(e)
+	}
+	return e
 }
 
 // Capture is the tool-agnostic back half every capture tool shares: session
@@ -131,10 +120,6 @@ func (e *Engine) Capture(ctx context.Context, sess Session, spec Spec) (out Outc
 		}
 	}()
 
-	// Capture is the only establishment trigger by design: a process that
-	// never had a session has no captures for search to find, so search's
-	// calm_unreachable error stays more honest than a fresh session's
-	// "no matches".
 	res, sig := sess.Ensure(ctx)
 	if sig != nil {
 		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
@@ -166,9 +151,14 @@ func (e *Engine) Capture(ctx context.Context, sess Session, spec Spec) (out Outc
 	e.recordPersistedTokens(ctx, sess, res.Token, plan, outcomes)
 	out = e.formatCaptureOutcome(ctx, outcomes, rep, spec.Visible, spec.Res, plan.Token, spec.RangedView)
 
-	// Events are pure observability: the engine finalizes them and hands them
-	// to the shell's delivery seam. The strategy (fire-and-forget or spool) is
-	// shell-owned and must never delay the response (never-worse).
+	// The retrieval-discovery card rides the session's first captured
+	// presentation once; the persisted sequence makes "first" knowable.
+	// Off for the MCP shell, so its output is unchanged.
+	if e.discoveryCard && res.Seq == 1 && out.Captured {
+		out.Visible = withDiscoveryCard(out.Visible, e.recall)
+	}
+
+	// Events are pure observability: either fire-and-forget or spool.
 	if ev := extract.FinalizeEvents(plan, outcomes); len(ev) > 0 {
 		sess.Emit(ctx, res.Token, ev)
 	}
