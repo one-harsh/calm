@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
@@ -253,5 +255,58 @@ func TestGenapiCreateSession_EmptyKeyOmitsHeader(t *testing.T) {
 	}
 	if sawHeader {
 		t.Error("Idempotency-Key header sent despite empty key")
+	}
+}
+
+const testCorrelationID = "018f0000-0000-7000-8000-000000000000"
+
+// Feedback posts the parsed correlation id and outcome under the session token
+// and treats 204 as acceptance.
+func TestGenapiFeedback_PostsAndAccepts(t *testing.T) {
+	var gotToken, gotBody string
+	c := fakeCALM(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/feedback" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		gotToken = r.Header.Get("X-CALM-Session-Token")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	if err := c.Feedback(context.Background(), "sess-tok", testCorrelationID, "success"); err != nil {
+		t.Fatalf("Feedback: %v", err)
+	}
+	if gotToken != "sess-tok" {
+		t.Errorf("X-CALM-Session-Token = %q; want sess-tok", gotToken)
+	}
+	if !strings.Contains(gotBody, testCorrelationID) || !strings.Contains(gotBody, "success") {
+		t.Errorf("request body = %q; want correlation id + outcome", gotBody)
+	}
+}
+
+// A malformed ref is rejected as a 400 StatusError without a round-trip.
+func TestGenapiFeedback_MalformedRefNoRoundTrip(t *testing.T) {
+	c := fakeCALM(t, func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("CALM must not be called for a malformed feedback ref")
+	})
+	err := c.Feedback(context.Background(), "sess-tok", "not-a-uuid", "success")
+	var se *calm.StatusError
+	if !errors.As(err, &se) || se.Code != http.StatusBadRequest {
+		t.Fatalf("err = %v; want *StatusError code 400", err)
+	}
+}
+
+// Rejection statuses surface as *StatusError carrying the code so the shell can
+// phrase 409/410 distinctly.
+func TestGenapiFeedback_StatusErrors(t *testing.T) {
+	for _, code := range []int{http.StatusConflict, http.StatusGone} {
+		c := fakeCALM(t, func(w http.ResponseWriter, _ *http.Request) {
+			jsonResp(w, code, `{"error":"nope"}`)
+		})
+		err := c.Feedback(context.Background(), "sess-tok", testCorrelationID, "retry")
+		var se *calm.StatusError
+		if !errors.As(err, &se) || se.Code != code {
+			t.Errorf("code %d: err = %v; want *StatusError code %d", code, err, code)
+		}
 	}
 }

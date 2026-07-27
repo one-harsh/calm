@@ -130,6 +130,55 @@ func (_c *MockClient_DeleteSession_Call) RunAndReturn(run func(context.Context, 
 	return _c
 }
 
+// Feedback provides a mock function with given fields: ctx, sessionToken, correlationID, outcome
+func (_m *MockClient) Feedback(ctx context.Context, sessionToken string, correlationID string, outcome string) error {
+	ret := _m.Called(ctx, sessionToken, correlationID, outcome)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Feedback")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) error); ok {
+		r0 = rf(ctx, sessionToken, correlationID, outcome)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockClient_Feedback_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Feedback'
+type MockClient_Feedback_Call struct {
+	*mock.Call
+}
+
+// Feedback is a helper method to define mock.On call
+//   - ctx context.Context
+//   - sessionToken string
+//   - correlationID string
+//   - outcome string
+func (_e *MockClient_Expecter) Feedback(ctx interface{}, sessionToken interface{}, correlationID interface{}, outcome interface{}) *MockClient_Feedback_Call {
+	return &MockClient_Feedback_Call{Call: _e.mock.On("Feedback", ctx, sessionToken, correlationID, outcome)}
+}
+
+func (_c *MockClient_Feedback_Call) Run(run func(ctx context.Context, sessionToken string, correlationID string, outcome string)) *MockClient_Feedback_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_Feedback_Call) Return(_a0 error) *MockClient_Feedback_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockClient_Feedback_Call) RunAndReturn(run func(context.Context, string, string, string) error) *MockClient_Feedback_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Ingest provides a mock function with given fields: ctx, sessionToken, in
 func (_m *MockClient) Ingest(ctx context.Context, sessionToken string, in IngestInput) (IngestSummary, error) {
 	ret := _m.Called(ctx, sessionToken, in)

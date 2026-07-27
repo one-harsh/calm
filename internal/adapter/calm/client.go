@@ -10,18 +10,6 @@ package calm
 
 import "context"
 
-// Client is the adapter's port onto CALM. Methods are stateless — the session
-// token is supplied per call by the caller (the MCP server owns session state).
-// Non-2xx responses surface as *StatusError; match status classes via
-// errors.Is against ErrSessionNotFound / ErrAuthRejected.
-//
-// CreateSession's idempotencyKey is per call: a retried initialize create may
-// reuse its key to get the same session back, while a recovery create must
-// present a fresh key so CALM's dedup window can't replay the dead session.
-// Empty key sends no Idempotency-Key header.
-//
-// TODO: add Feedback method (POST /v1/feedback) — required by
-// calm_report_outcome tool.
 type Client interface {
 	RegisterClient(ctx context.Context, name string) (created bool, err error)
 	CreateSession(ctx context.Context, client string, ttlMinutes int, idempotencyKey string) (sessionToken string, err error)
@@ -29,6 +17,7 @@ type Client interface {
 	Ingest(ctx context.Context, sessionToken string, in IngestInput) (IngestSummary, error)
 	Search(ctx context.Context, sessionToken string, in SearchInput) (SearchResults, error)
 	WriteEvents(ctx context.Context, sessionToken string, events []EventInput) error
+	Feedback(ctx context.Context, sessionToken, correlationID, outcome string) error
 }
 
 type Format string

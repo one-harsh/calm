@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/google/uuid"
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
@@ -177,4 +178,23 @@ func (c *genapiClient) WriteEvents(ctx context.Context, token string, events []E
 		return statusErr("write events", resp.StatusCode(), resp.Status())
 	}
 	return nil
+}
+
+func (c *genapiClient) Feedback(ctx context.Context, token, correlationID, outcome string) error {
+	id, perr := uuid.Parse(correlationID)
+	if perr != nil {
+		return &StatusError{Op: "feedback", Code: http.StatusBadRequest, Status: "400 malformed feedback reference"}
+	}
+	resp, err := c.api.FeedbackWithResponse(
+		ctx,
+		&genapi.FeedbackParams{XCALMSessionToken: token},
+		genapi.FeedbackJSONRequestBody{CorrelationId: id, Outcome: genapi.FeedbackRequestOutcome(outcome)},
+	)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode() == http.StatusNoContent {
+		return nil
+	}
+	return statusErr("feedback", resp.StatusCode(), resp.Status())
 }
