@@ -41,6 +41,30 @@ func TestExec_Happy_PresentationToStdoutStderrPure(t *testing.T) {
 	}
 }
 
+// A non-degraded capture — even a small inline one that prints no summary line —
+// carries a trailer with the fused source label (recall) and the feedback ref
+// (outcome reporting), resolving F1.
+func TestExec_Trailer_LabelAndFeedbackRef(t *testing.T) {
+	c := calm.NewMockClient(t)
+	c.EXPECT().RegisterClient(mock.Anything, mock.Anything).Return(true, nil).Maybe()
+	c.EXPECT().CreateSession(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("tok1", nil).Once()
+	c.EXPECT().Ingest(mock.Anything, "tok1", mock.Anything).
+		Return(calm.IngestSummary{Source: "calm:v1:test", SectionsIndexed: 1, SectionsTotal: 1, CorrelationID: "corr-9"}, nil).Maybe()
+	c.EXPECT().WriteEvents(mock.Anything, "tok1", mock.Anything).Return(nil).Maybe()
+	d, stdout, _ := newDeps(t, c)
+
+	if code := Dispatch(context.Background(), d, execArgs("conv", "printf hello")); code != 0 {
+		t.Fatalf("exit = %d; want 0", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "↳ source=calm:v1:test@") {
+		t.Errorf("trailer must carry the fused source label; got:\n%s", out)
+	}
+	if !strings.Contains(out, "feedback: calm-capture feedback corr-9") {
+		t.Errorf("trailer must carry the feedback ref; got:\n%s", out)
+	}
+}
+
 func TestExec_NonzeroExitPropagates(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectEstablish(c, "tok1")

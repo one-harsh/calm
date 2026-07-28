@@ -108,6 +108,7 @@ func (c *genapiClient) Ingest(ctx context.Context, token string, in IngestInput)
 		SectionsTotal:    r.SectionsTotal,
 		SummaryTruncated: r.SummaryTruncated,
 		DistinctiveTerms: r.DistinctiveTerms,
+		CorrelationID:    correlationID(resp.HTTPResponse),
 	}
 	for _, s := range r.Summary {
 		preview := ""
@@ -144,7 +145,7 @@ func (c *genapiClient) Search(ctx context.Context, token string, in SearchInput)
 	if resp.JSON200 == nil {
 		return SearchResults{}, statusErr("search", resp.StatusCode(), resp.Status())
 	}
-	out := SearchResults{NextOffset: resp.JSON200.NextOffset}
+	out := SearchResults{NextOffset: resp.JSON200.NextOffset, CorrelationID: correlationID(resp.HTTPResponse)}
 	for _, q := range resp.JSON200.Results {
 		qr := QueryResult{Query: q.Query}
 		for _, h := range q.Hits {
@@ -197,4 +198,11 @@ func (c *genapiClient) Feedback(ctx context.Context, token, correlationID, outco
 		return nil
 	}
 	return statusErr("feedback", resp.StatusCode(), resp.Status())
+}
+
+func correlationID(r *http.Response) string {
+	if r == nil {
+		return ""
+	}
+	return r.Header.Get(headerCorrelationID)
 }

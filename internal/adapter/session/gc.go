@@ -80,7 +80,7 @@ func idleSince(dir string, cutoff time.Time) bool {
 // claims past the shorter stale-inflight age. Inflight claims are deleted unread
 // — the same delete-not-replay guarantee Drain applies (AD06). The sweep runs
 // under the conversation's lock: an unlocked sweep could observe an aged spool,
-// race a live Emit's append, and unlink freshly enqueued events. A busy
+// race a live Record's spool append, and unlink freshly enqueued events. A busy
 // conversation is skipped — its own invocations keep house.
 func sweepOrphans(dir string, cutoff time.Time) {
 	unlock, ok, err := (&store{dir: dir}).tryLock()

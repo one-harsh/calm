@@ -132,8 +132,9 @@ func TestRecover_AlreadyReplaced_NoSecondCreate(t *testing.T) {
 }
 
 // An unwritable state root degrades Ensure to capture_failed (CALM is fine; the
-// local store is not) and Record silently no-ops.
-func TestStoreUnwritable_EnsureCaptureFailed_RecordNoOp(t *testing.T) {
+// local store is not) and both Record and Enqueue — each acquiring its own lock —
+// silently no-op.
+func TestStoreUnwritable_EnsureCaptureFailed_RecordAndEnqueueNoOp(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -145,8 +146,10 @@ func TestStoreUnwritable_EnsureCaptureFailed_RecordNoOp(t *testing.T) {
 	if _, sig := m.Ensure(ctx); sig == nil || sig.Reason != "capture_failed" {
 		t.Fatalf("ensure = %+v; want capture_failed", sig)
 	}
-	// Best-effort: Record cannot lock the unwritable store, logs WARN, and never panics.
+	// Best-effort: neither Record nor Enqueue can lock the unwritable store; each
+	// logs WARN and never panics.
 	m.Record(ctx, "tok1", []capture.SourceToken{{Source: "s1", Token: "t1"}})
+	m.Enqueue(ctx, "tok1", sampleEvents())
 }
 
 func TestEnsure_CorruptState_CaptureFailed(t *testing.T) {
@@ -417,6 +420,9 @@ func TestState_ForeignStateRefused(t *testing.T) {
 	if _, err := m.View(ctx); err == nil {
 		t.Errorf("view of foreign state succeeded; want refusal")
 	}
+	// The write ports refuse the foreign directory too, each under its own lock.
+	m.Record(ctx, "tok-foreign", []capture.SourceToken{{Source: "s", Token: "t"}})
+	m.Enqueue(ctx, "tok-foreign", sampleEvents())
 	if st := loadState(t, m); st.SessionID != "conv-other" || st.SessionToken != "tok-foreign" {
 		t.Errorf("foreign state was rewritten: %+v", st)
 	}
@@ -448,7 +454,7 @@ func TestGC_SkipsDirHeldByLiveProcess(t *testing.T) {
 
 // The orphan sweep must not race a live conversation: it runs under the
 // conversation's lock and skips a busy directory outright — an unlocked sweep
-// could unlink a spool right after a live Emit appended to it.
+// could unlink a spool right after a live Record appended to it.
 func TestGC_SweepSkipsBusyDir(t *testing.T) {
 	root := t.TempDir()
 	s := newStore(root, "conv-1")

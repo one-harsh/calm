@@ -22,6 +22,62 @@ const (
 	rangedMaxBytes     = 8192
 )
 
+type presentOptions struct {
+	recall        string
+	discoveryCard bool
+}
+
+// present renders one delivered unit into the shell-facing Outcome, by
+// delivery state:
+//   - no summary — every ingest failed: raw payload, capture_failed
+//   - partial persist — captured presentation with label + ref, capture_partial
+//   - all persisted — captured presentation with label + ref, no reason
+func present(ctx context.Context, log *logging.Logger, d Delivery, spec Spec, seq int64, opts presentOptions) Outcome {
+	token := d.Unit.Plan.Token
+	anyFailed := false
+	for _, o := range d.Outcomes {
+		if !o.Persisted {
+			anyFailed = true
+			break
+		}
+	}
+
+	var out Outcome
+	switch {
+	case d.Summary == nil:
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
+		log.WithContext(ctx).Warn("all ingests failed; returning raw output",
+			obs.DegradedReasonFieldCaptureFailed)
+		return Outcome{Visible: spec.Visible, Reason: obs.DegradedReasonCaptureFailed}
+	case anyFailed:
+		logging.BindSummary(ctx, logging.BoolField(obs.KeyCaptured, true), obs.SourceLabel(d.Summary.Source))
+		out = Outcome{
+			Visible:     presentCapture(ctx, *d.Summary, spec.Visible, spec.Res, token, spec.RangedView, opts.recall),
+			Captured:    true,
+			Source:      d.Summary.Source,
+			Reason:      obs.DegradedReasonCapturePartial,
+			Label:       fuseSource(d.Summary.Source, token),
+			FeedbackRef: d.Summary.CorrelationID,
+		}
+	default:
+		logging.BindSummary(ctx, logging.BoolField(obs.KeyCaptured, true), obs.SourceLabel(d.Summary.Source))
+		out = Outcome{
+			Visible:     presentCapture(ctx, *d.Summary, spec.Visible, spec.Res, token, spec.RangedView, opts.recall),
+			Captured:    true,
+			Source:      d.Summary.Source,
+			Label:       fuseSource(d.Summary.Source, token),
+			FeedbackRef: d.Summary.CorrelationID,
+		}
+	}
+
+	// The retrieval-discovery card rides the session's first captured
+	// presentation once; the persisted sequence makes "first" knowable.
+	if opts.discoveryCard && seq == 1 && out.Captured {
+		out.Visible = withDiscoveryCard(out.Visible, opts.recall)
+	}
+	return out
+}
+
 // presentCapture picks the presentation mode. A deliberately-scoped read always
 // presents through the ranged view regardless of slice size — ranged presentation
 // is a window into a larger capture, so the fused recall label is informative at

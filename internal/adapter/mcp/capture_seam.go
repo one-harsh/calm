@@ -18,9 +18,13 @@ import (
 // hostage (never-worse).
 const eventTimeout = 5 * time.Second
 
-// The Server is the MCP shell's capture.Session: it holds the per-session
-// credential, sequence, and registry the engine reaches through this seam.
-var _ capture.Session = (*Server)(nil)
+// The Server is the MCP shell's capture.Session and capture.EventSink: it holds
+// the per-session credential, sequence, and registry the engine reaches through
+// this seam, and transports finalized events off the response path.
+var (
+	_ capture.Session   = (*Server)(nil)
+	_ capture.EventSink = (*Server)(nil)
+)
 
 // Ensure adapts lazy session establishment to the engine seam, allocating the
 // capture sequence only on success so a degraded call never burns a number
@@ -39,11 +43,8 @@ func (s *Server) OnCallError(ctx context.Context, failedToken string, err error)
 	return s.sessionFailureSignal(ctx, failedToken, err).toCapture()
 }
 
-// Record registers the capture's persisted delta in the shell's in-memory
-// registry, discarding a delta whose session was replaced mid-call: the
-// registry was reset for the new generation, and dead-generation labels must
-// fail with staleness later, never validate against the new session (honest
-// capture continuity).
+// Record registers the persisted delta in the in-memory registry, discarded when
+// the session was replaced mid-call (honest capture continuity).
 func (s *Server) Record(_ context.Context, token string, delta []capture.SourceToken) {
 	if cur, _ := s.sessionState(); cur != token {
 		return
@@ -53,11 +54,11 @@ func (s *Server) Record(_ context.Context, token string, delta []capture.SourceT
 	}
 }
 
-// Emit is the MCP shell's event-delivery strategy: fire-and-forget in a detached
-// goroutine bounded by eventTimeout, off the response path so events never delay
-// the tool result (never-worse). Event derivation is engine-owned; this delivery
-// mechanism is the shell's (DESIGN.md §5).
-func (s *Server) Emit(ctx context.Context, token string, ev []calm.EventInput) {
+// Enqueue delivers finalized events off the response path: a detached goroutine
+// bounded by eventTimeout so a slow /v1/events never delays the tool result
+// (never-worse). Events whose session was replaced mid-call are discarded
+// (honest capture continuity).
+func (s *Server) Enqueue(ctx context.Context, token string, events []calm.EventInput) {
 	if cur, _ := s.sessionState(); cur != token {
 		return
 	}
@@ -74,7 +75,7 @@ func (s *Server) Emit(ctx context.Context, token string, ev []calm.EventInput) {
 		// on the same token, so either that ingest already recovered or the
 		// next tool call will; recovering from this goroutine would add
 		// concurrency surface for no visible benefit.
-		if err := s.calm.WriteEvents(wctx, token, ev); err != nil {
+		if err := s.calm.WriteEvents(wctx, token, events); err != nil {
 			s.log.WithContext(wctx).Warn("write events failed", logging.ErrorField(err))
 		}
 	}()

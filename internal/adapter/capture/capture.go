@@ -14,10 +14,11 @@ import (
 	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
-// Session is the engine's seam onto a shell's per-session state (DESIGN.md §4).
-// The shell owns the credential, the monotonic capture sequence, and the token
-// registry; the engine reaches them only through this interface so it depends
-// on no shell.
+// Session is the engine's write-port onto a shell's per-session state: the sole
+// owner of every mutation to the five-item session state — Ensure drives the
+// sequence and establishment, OnCallError drives the auth latch and epoch, and
+// Record drives the token registry — so the engine can enumerate every state
+// write from one seam and depends on no shell.
 type Session interface {
 	// Ensure lazily establishes the CALM session (capture is the only
 	// establishment trigger) and allocates this capture's sequence, or returns
@@ -29,22 +30,18 @@ type Session interface {
 	// session loss with its recovery) into a Signal, or nil when the error is
 	// not session-level.
 	OnCallError(ctx context.Context, failedToken string, err error) *Signal
-	// Record hands the shell the capture's persisted delta: each source label
-	// paired with the staleness token that validates its later retrieval.
-	// token names the session generation that captured — a shell discards a
-	// delta whose session has since been replaced, so dead-generation labels
-	// surface as staleness later, never as valid refs into the new session
-	// (honest capture continuity). Called at most once per capture, with the
-	// full delta. Storage and its locking are shell-owned.
+	// Record merges the persisted registry delta under the shell's per-session
+	// store. A delta whose session was replaced mid-call is discarded, so
+	// dead-generation labels surface as staleness rather than validate against
+	// the new session (honest capture continuity).
 	Record(ctx context.Context, token string, delta []SourceToken)
-	// Emit enqueues this capture's finalized events for delivery by the shell's
-	// strategy. It must return without blocking on network — the engine calls
-	// it in-call, so delivery never delays the response (never-worse); queue
-	// durability is shell-owned (the MCP shell's queue is its process lifetime,
-	// the capture shell's is the on-disk spool). token names the generation
-	// that captured: a shell rejects a replaced generation's events before
-	// enqueue. Called at most once per capture, with a non-empty batch.
-	Emit(ctx context.Context, token string, events []calm.EventInput)
+}
+
+// EventSink is the shell-provided transport for finalized capture events,
+// consumed by the delivery strategy (DESIGN.md §10). Enqueue must not block on
+// the network (never-worse); the shell delivers off the response path.
+type EventSink interface {
+	Enqueue(ctx context.Context, token string, events []calm.EventInput)
 }
 
 type EnsureResult struct {
@@ -63,11 +60,32 @@ type Signal struct {
 }
 
 type Outcome struct {
-	Visible  string
-	Captured bool
-	Source   string
-	Reason   string // obs.DegradedReason* value; "" when not degraded
-	Detail   string // optional detail accompanying Reason
+	Visible     string
+	Captured    bool
+	Source      string
+	Reason      string // obs.DegradedReason* value; "" when not degraded
+	Detail      string // optional detail accompanying Reason
+	Label       string
+	FeedbackRef string
+}
+
+type CaptureUnit struct {
+	Plan    extract.Plan
+	Content string
+	Events  []extract.EventDraft
+}
+
+type Delivery struct {
+	Unit     CaptureUnit // provenance: the unit this delivery carried
+	Outcomes []extract.WriteOutcome
+	Summary  *calm.IngestSummary // preferred summary (latest wins) for presentation
+	Events   []calm.EventInput   // finalized (ApplyOutcomes), already handed to the sink
+	Delta    []SourceToken       // registry delta for the sources that persisted
+	Err      error
+}
+
+type DeliveryStrategy interface {
+	Deliver(ctx context.Context, token string, unit CaptureUnit) Delivery
 }
 
 // Spec carries one executed local action into the shared CALM capture pipeline.
@@ -83,32 +101,39 @@ type Spec struct {
 }
 
 type Engine struct {
-	calm          calm.Client
-	log           *logging.Logger
-	recall        string
-	discoveryCard bool
+	sess     Session
+	strategy DeliveryStrategy
+	log      *logging.Logger
+	present  presentOptions
 }
 
 type Option func(*Engine)
 
 func WithDiscoveryCard() Option {
-	return func(e *Engine) { e.discoveryCard = true }
+	return func(e *Engine) { e.present.discoveryCard = true }
 }
 
-func NewEngine(c calm.Client, log *logging.Logger, recall string, opts ...Option) *Engine {
-	e := &Engine{calm: c, log: log, recall: recall}
+func NewEngine(client calm.Client, sess Session, sink EventSink, log *logging.Logger, recall string, opts ...Option) *Engine {
+	e := &Engine{
+		sess:     sess,
+		strategy: fanOut{calm: client, log: log, events: sink},
+		log:      log,
+		present:  presentOptions{recall: recall},
+	}
 	for _, o := range opts {
 		o(e)
 	}
 	return e
 }
 
-// Capture is the tool-agnostic back half every capture tool shares: session
-// pre-checks, staleness-token mint, preservation-first dual-write, token
-// recording, presentation, and fire-and-forget events. The local action already
-// ran — on any CALM failure the visible payload returns raw (never-worse),
-// classified by the degradation Signal.
-func (e *Engine) Capture(ctx context.Context, sess Session, spec Spec) (out Outcome) {
+// Capture is the engine's whole per-call surface:
+//  1. ensure the session (a degraded Ensure burns no sequence number)
+//  2. derive the plan, mint the staleness token
+//  3. compose the capture unit
+//  4. deliver it through the strategy (events ride the delivery)
+//  5. record the registry delta through the session write-port
+//  6. present (label, feedback ref, first-capture card)
+func (e *Engine) Capture(ctx context.Context, spec Spec) (out Outcome) {
 	out = Outcome{Visible: spec.Visible} // default; the recover keeps whatever out holds at panic time
 	ctx = logging.BindSummary(ctx, obs.ResponseRawBytes(len(spec.Visible)))
 	defer func() {
@@ -120,7 +145,7 @@ func (e *Engine) Capture(ctx context.Context, sess Session, spec Spec) (out Outc
 		}
 	}()
 
-	res, sig := sess.Ensure(ctx)
+	res, sig := e.sess.Ensure(ctx)
 	if sig != nil {
 		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		if sig.Reason == obs.DegradedReasonCalmUnreachable {
@@ -139,29 +164,22 @@ func (e *Engine) Capture(ctx context.Context, sess Session, spec Spec) (out Outc
 	}
 	plan.Token = extract.MintToken()
 
-	outcomes, rep, sessErr := e.dualWriteIngest(ctx, res.Token, plan, spec.Ingest)
-	if sessErr != nil {
+	unit := newCaptureUnit(plan, spec.Ingest)
+	d := e.strategy.Deliver(ctx, res.Token, unit)
+	if d.Err != nil {
 		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		var reason, detail string
-		if s := sess.OnCallError(ctx, res.Token, sessErr); s != nil {
+		if s := e.sess.OnCallError(ctx, res.Token, d.Err); s != nil {
 			reason, detail = s.Reason, s.Detail
 		}
 		return Outcome{Visible: spec.Visible, Reason: reason, Detail: detail}
 	}
-	e.recordPersistedTokens(ctx, sess, res.Token, plan, outcomes)
-	out = e.formatCaptureOutcome(ctx, outcomes, rep, spec.Visible, spec.Res, plan.Token, spec.RangedView)
+	e.sess.Record(ctx, res.Token, d.Delta)
+	return present(ctx, e.log, d, spec, res.Seq, e.present)
+}
 
-	// The retrieval-discovery card rides the session's first captured
-	// presentation once; the persisted sequence makes "first" knowable.
-	// Off for the MCP shell, so its output is unchanged.
-	if e.discoveryCard && res.Seq == 1 && out.Captured {
-		out.Visible = withDiscoveryCard(out.Visible, e.recall)
-	}
-
-	// Events are pure observability: either fire-and-forget or spool.
-	if ev := extract.FinalizeEvents(plan, outcomes); len(ev) > 0 {
-		sess.Emit(ctx, res.Token, ev)
-	}
-
-	return
+// newCaptureUnit assembles one wrapped action's full capture set: its dual-write
+// plan, the content to ingest, and the derived event drafts.
+func newCaptureUnit(plan extract.Plan, content string) CaptureUnit {
+	return CaptureUnit{Plan: plan, Content: content, Events: extract.DeriveEvents(plan)}
 }

@@ -182,7 +182,7 @@ func TestSpool_AppendThenDrainDelivers(t *testing.T) {
 			return nil
 		}).Once()
 
-	m.Emit(context.Background(), "tok-live", events)
+	m.Enqueue(context.Background(), "tok-live", events)
 	m.Drain(context.Background())
 
 	if gotToken != "tok-live" {
@@ -194,21 +194,21 @@ func TestSpool_AppendThenDrainDelivers(t *testing.T) {
 	assertNoSpoolFiles(t, m.store)
 }
 
-// Emit is a no-op when there is nothing to spool: events with no established
-// session are dropped rather than tagged against a nil epoch, and an empty
-// batch never touches the spool file.
-func TestSpool_EmitNoOpWhenNothingToSpool(t *testing.T) {
-	c := calm.NewMockClient(t) // strict: Emit never touches CALM
+// Enqueue spools nothing when there is nothing to spool: events with no
+// established session are dropped rather than tagged against a nil epoch, and an
+// empty batch never touches the spool file.
+func TestEnqueue_SpoolNoOpWhenNoEvents(t *testing.T) {
+	c := calm.NewMockClient(t) // strict: the spool path never touches CALM
 	root := t.TempDir()
 	m := newTestManager(t, root, "conv-1", c)
 
-	m.Emit(context.Background(), "tok", sampleEvents()) // no session state yet
+	m.Enqueue(context.Background(), "tok", sampleEvents()) // no session state yet
 	if _, err := os.Stat(m.store.spoolPath()); !os.IsNotExist(err) {
 		t.Errorf("events with no session state must not spool; stat err = %v", err)
 	}
 
 	saveFixture(t, m.store, func(st *state) { st.SessionToken = "tok"; st.Epoch = 1 })
-	m.Emit(context.Background(), "tok", nil) // empty batch
+	m.Enqueue(context.Background(), "tok", nil) // empty batch
 	if _, err := os.Stat(m.store.spoolPath()); !os.IsNotExist(err) {
 		t.Errorf("empty batch must write no spool file; stat err = %v", err)
 	}
@@ -222,7 +222,7 @@ func TestSpool_ClaimByRenameExclusive(t *testing.T) {
 	root := t.TempDir()
 	m := newTestManager(t, root, "conv-1", c)
 	saveFixture(t, m.store, func(st *state) { st.SessionToken = "tok"; st.Epoch = 1 })
-	m.Emit(context.Background(), "tok", sampleEvents())
+	m.Enqueue(context.Background(), "tok", sampleEvents())
 
 	rival := m.store.inflightPath(999999)
 	if err := os.Rename(m.store.spoolPath(), rival); err != nil {
@@ -246,7 +246,7 @@ func TestSpool_TransportFailureLeavesInflightThenStaleReaped(t *testing.T) {
 	root := t.TempDir()
 	m := newTestManager(t, root, "conv-1", c)
 	saveFixture(t, m.store, func(st *state) { st.SessionToken = "tok"; st.Epoch = 1 })
-	m.Emit(context.Background(), "tok", sampleEvents())
+	m.Enqueue(context.Background(), "tok", sampleEvents())
 
 	m.Drain(context.Background())
 
@@ -265,11 +265,11 @@ func TestSpool_TransportFailureLeavesInflightThenStaleReaped(t *testing.T) {
 	}
 }
 
-// Emit holds the session lock while it appends, so concurrent Ensure calls
+// Enqueue holds the session lock while it appends, so concurrent Ensure calls
 // contending for the same lock never interleave a write: every spooled line
 // parses as one complete JSON object.
-func TestSpool_EmitUnderLockNoTornLineWithParallelEnsure(t *testing.T) {
-	c := calm.NewMockClient(t) // established session → Ensure makes no network call; Emit makes none
+func TestEnqueue_AppendUnderLockNoTornLineWithParallelEnsure(t *testing.T) {
+	c := calm.NewMockClient(t) // established session → Ensure makes no network call; the spool append makes none
 	root := t.TempDir()
 	m := newTestManager(t, root, "conv-1", c)
 	saveFixture(t, m.store, func(st *state) { st.SessionToken = "tok"; st.Epoch = 1 })
@@ -281,7 +281,7 @@ func TestSpool_EmitUnderLockNoTornLineWithParallelEnsure(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			if i%2 == 0 {
-				m.Emit(context.Background(), "tok", sampleEvents())
+				m.Enqueue(context.Background(), "tok", sampleEvents())
 				return
 			}
 			if _, sig := m.Ensure(context.Background()); sig != nil {
@@ -311,10 +311,10 @@ func TestSpool_EmitUnderLockNoTornLineWithParallelEnsure(t *testing.T) {
 	}
 }
 
-// Events from a replaced generation are rejected before enqueue: an enqueued
-// line would carry a lying (current-epoch, dead-token) tag pair, and the 404
-// delivery attempt it provokes is avoidable.
-func TestEmit_RejectsReplacedGenerationBeforeEnqueue(t *testing.T) {
+// Events from a replaced generation are rejected before the spool append: an
+// appended line would carry a lying (current-epoch, dead-token) tag pair, and the
+// 404 delivery attempt it provokes is avoidable.
+func TestEnqueue_RejectsReplacedGenerationBeforeAppend(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectRegister(c)
 	c.EXPECT().CreateSession(mock.Anything, testClient, testTTL, mock.Anything).Return("tok1", nil).Once()
@@ -330,11 +330,11 @@ func TestEmit_RejectsReplacedGenerationBeforeEnqueue(t *testing.T) {
 		t.Fatalf("recovery = %+v; want session_lost", sig)
 	}
 
-	m.Emit(ctx, "tok1", sampleEvents())
+	m.Enqueue(ctx, "tok1", sampleEvents())
 	if _, err := os.Stat(m.store.spoolPath()); !os.IsNotExist(err) {
 		t.Fatalf("dead-generation events were enqueued")
 	}
-	m.Emit(ctx, "tok2", sampleEvents())
+	m.Enqueue(ctx, "tok2", sampleEvents())
 	if _, err := os.Stat(m.store.spoolPath()); err != nil {
 		t.Errorf("current-generation events not enqueued: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestSpool_ClaimNotBornStale(t *testing.T) {
 	if _, sig := m.Ensure(ctx); sig != nil {
 		t.Fatalf("establish degraded: %+v", sig)
 	}
-	m.Emit(ctx, "tok1", sampleEvents())
+	m.Enqueue(ctx, "tok1", sampleEvents())
 	old := time.Now().Add(-time.Hour)
 	if err := os.Chtimes(m.store.spoolPath(), old, old); err != nil {
 		t.Fatal(err)

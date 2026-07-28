@@ -26,11 +26,11 @@ func TestDiscoveryCard_FirstCaptureOnly(t *testing.T) {
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.IngestSummary{Source: "calm:v1:vcs:git:status", SectionsIndexed: 1, SectionsTotal: 1}, nil)
 	sess := &stubSession{reg: NewRegistry(), token: "tok-1"}
-	e := NewEngine(m, logging.Nop(), "calm-capture search", WithDiscoveryCard())
+	e := NewEngine(m, sess, &stubSink{}, logging.Nop(), "calm-capture search", WithDiscoveryCard())
 
 	// "hi" (no trailing newline) exercises the card's separator normalization.
-	first := e.Capture(context.Background(), sess, Spec{Ingest: "hi", Visible: "hi", Plan: planFor("git status", "hi")})
-	second := e.Capture(context.Background(), sess, Spec{Ingest: "hi", Visible: "hi", Plan: planFor("git status", "hi")})
+	first := e.Capture(context.Background(), Spec{Ingest: "hi", Visible: "hi", Plan: planFor("git status", "hi")})
+	second := e.Capture(context.Background(), Spec{Ingest: "hi", Visible: "hi", Plan: planFor("git status", "hi")})
 
 	if !strings.Contains(first.Visible, testCardMarker) {
 		t.Errorf("first capture must carry the discovery card; got:\n%s", first.Visible)
@@ -50,9 +50,9 @@ func TestDiscoveryCard_OffByDefault(t *testing.T) {
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.IngestSummary{Source: "calm:v1:vcs:git:status", SectionsIndexed: 1, SectionsTotal: 1}, nil)
 	sess := &stubSession{reg: NewRegistry(), token: "tok-1"}
-	e := NewEngine(m, logging.Nop(), "calm_search")
+	e := NewEngine(m, sess, &stubSink{}, logging.Nop(), "calm_search")
 
-	out := e.Capture(context.Background(), sess, Spec{Ingest: "hi\n", Visible: "hi\n", Plan: planFor("git status", "hi\n")})
+	out := e.Capture(context.Background(), Spec{Ingest: "hi\n", Visible: "hi\n", Plan: planFor("git status", "hi\n")})
 
 	if strings.Contains(out.Visible, testCardMarker) {
 		t.Errorf("no card without WithDiscoveryCard; got:\n%s", out.Visible)

@@ -69,9 +69,9 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 		return 1
 	}
 
-	engine := capture.NewEngine(d.Client, d.Logger, recallCommand, capture.WithDiscoveryCard())
+	engine := capture.NewEngine(d.Client, mgr, mgr, d.Logger, recallCommand, capture.WithDiscoveryCard())
 	raw := capture.CommandPayload(r)
-	out := engine.Capture(ctx, mgr, capture.Spec{
+	out := engine.Capture(ctx, capture.Spec{
 		Ingest:  raw,
 		Visible: raw,
 		Res:     r,
@@ -98,18 +98,30 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 	return r.ExitCode
 }
 
-// composeExec is the presented stdout: the engine's visible output, plus — only
-// when degraded — the one canonical degradation sentence appended after it
-// (DESIGN.md §9). No telemetry, no detail block, no exit-code change.
+// composeExec is the presented stdout: the engine's visible output plus one
+// trailing line — the canonical degradation sentence when degraded, otherwise
+// a compact trailer whose source label makes even a small (inline) capture
+// recall-discoverable, with the feedback ref for outcome reporting.
 func composeExec(out capture.Outcome) string {
-	if out.Reason == "" {
+	if out.Reason != "" {
+		v := out.Visible
+		if v != "" && !strings.HasSuffix(v, "\n") {
+			v += "\n"
+		}
+		return v + obs.DegradedPhrase(out.Reason) + "\n"
+	}
+	if !out.Captured || out.Label == "" {
 		return out.Visible
 	}
 	v := out.Visible
 	if v != "" && !strings.HasSuffix(v, "\n") {
 		v += "\n"
 	}
-	return v + obs.DegradedPhrase(out.Reason) + "\n"
+	v += "↳ source=" + out.Label
+	if out.FeedbackRef != "" {
+		v += " · feedback: calm-capture feedback " + out.FeedbackRef
+	}
+	return v + "\n"
 }
 
 func (d Deps) drain(ctx context.Context, mgr *session.Manager) {

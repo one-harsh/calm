@@ -91,7 +91,8 @@ type Server struct {
 	registry *capture.Registry
 
 	// engine is the shell-agnostic capture pipeline; the Server presents itself
-	// as its capture.Session and maps each capture.Outcome onto MCP tool results.
+	// as its capture.Session and capture.EventSink, and maps each capture.Outcome
+	// onto MCP tool results.
 	engine *capture.Engine
 }
 
@@ -110,7 +111,7 @@ func NewServer(cfg Config) *Server {
 		grepEngine:    probeGrepEngine(),
 	}
 	// The MCP shell fuses calm_search — its retrieval tool — into recall hints.
-	s.engine = capture.NewEngine(cfg.Calm, cfg.Logger, toolNameSearch)
+	s.engine = capture.NewEngine(cfg.Calm, s, s, cfg.Logger, toolNameSearch)
 	for _, t := range cfg.Tools {
 		s.addTool(t)
 	}

@@ -77,7 +77,7 @@ func (s *Server) listDir(ctx context.Context, args json.RawMessage) (ToolResult,
 	listing := b.String()
 
 	r := exec.Result{Stdout: listing}
-	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
 		Ingest:  listing,
 		Visible: listing,
 		Res:     r,

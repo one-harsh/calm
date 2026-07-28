@@ -43,10 +43,15 @@ func TestThreading_InjectsHeadersAndLogsCall(t *testing.T) {
 	}
 
 	ctx, reqID := obs.WithCallContext(context.Background())
-	if _, err := c.Ingest(ctx, "tok", calm.IngestInput{Source: "s", Content: "c"}); err != nil {
-		t.Fatalf("Ingest: %v", err)
+	sum, ierr := c.Ingest(ctx, "tok", calm.IngestInput{Source: "s", Content: "c"})
+	if ierr != nil {
+		t.Fatalf("Ingest: %v", ierr)
 	}
 	_ = logger.Sync()
+
+	if sum.CorrelationID != "corr-xyz" {
+		t.Errorf("Ingest CorrelationID = %q; want the response header threaded into the return", sum.CorrelationID)
+	}
 
 	if gotReqID != reqID {
 		t.Errorf("X-Workload-Request-Id = %q; want minted id %q", gotReqID, reqID)
@@ -105,5 +110,25 @@ func TestThreading_NoCallContextSendsNoWorkloadHeaders(t *testing.T) {
 	}
 	if sawTraceparent {
 		t.Error("traceparent set without a call context")
+	}
+}
+
+func TestThreading_SearchThreadsCorrelationID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-CALM-Correlation-Id", "corr-search")
+		jsonResp(w, http.StatusOK, `{"results":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := calm.NewGenapiClient(srv.URL, "k", nil)
+	if err != nil {
+		t.Fatalf("NewGenapiClient: %v", err)
+	}
+	res, err := c.Search(context.Background(), "tok", calm.SearchInput{Queries: []string{"q"}})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if res.CorrelationID != "corr-search" {
+		t.Errorf("Search CorrelationID = %q; want the response header threaded into the return", res.CorrelationID)
 	}
 }

@@ -120,7 +120,7 @@ func (s *Server) grep(ctx context.Context, args json.RawMessage) (ToolResult, er
 	}
 
 	raw := capture.CommandPayload(r)
-	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
 		Ingest:  raw,
 		Visible: raw,
 		Res:     r,

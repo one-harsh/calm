@@ -30,7 +30,10 @@ const (
 	establishRetryInterval = 60 * time.Second
 )
 
-var _ capture.Session = (*Manager)(nil)
+var (
+	_ capture.Session   = (*Manager)(nil)
+	_ capture.EventSink = (*Manager)(nil)
+)
 
 type Config struct {
 	SessionID  string
@@ -133,10 +136,12 @@ func (m *Manager) Ensure(ctx context.Context) (capture.EnsureResult, *capture.Si
 	return capture.EnsureResult{Token: st.SessionToken, Seq: st.Seq}, nil
 }
 
-// Record merges the capture's persisted delta into the on-disk registry
-// (the post-ingest phase): reload under the lock, merge, save. Best-effort — a failed save
-// logs WARN and never propagates, since a lost registry entry surfaces later as
-// an honest staleness signal, never corruption.
+// Record is the capture CLI's post-ingest registry merge (DESIGN.md §10, §11):
+// one lock acquisition merges the persisted delta into the on-disk registry.
+// Best-effort — a failed save logs WARN and never propagates (response-first). A
+// delta from a replaced generation is rejected: a dead-generation label must fail
+// with staleness, never validate against the new session (honest capture
+// continuity).
 func (m *Manager) Record(ctx context.Context, token string, delta []capture.SourceToken) {
 	if len(delta) == 0 {
 		return
@@ -153,7 +158,7 @@ func (m *Manager) Record(ctx context.Context, token string, delta []capture.Sour
 		return
 	}
 	if st == nil {
-		m.log.WithContext(ctx).Warn("no session state to record delta into")
+		m.log.WithContext(ctx).Warn("no session state to record into; delta dropped")
 		return
 	}
 	if err := m.ownedState(st); err != nil {
@@ -161,10 +166,6 @@ func (m *Manager) Record(ctx context.Context, token string, delta []capture.Sour
 		return
 	}
 	if st.SessionToken != token {
-		// The session was replaced between this capture's ingest and its
-		// record; the delta's labels died with the captured generation and
-		// must fail with staleness later, never validate against the new
-		// session (honest capture continuity).
 		m.log.WithContext(ctx).Debug("registry delta from replaced session discarded")
 		return
 	}
@@ -173,6 +174,45 @@ func (m *Manager) Record(ctx context.Context, token string, delta []capture.Sour
 	}
 	if err := m.store.save(st); err != nil {
 		m.log.WithContext(ctx).Warn("save registry delta failed", logging.ErrorField(err))
+	}
+}
+
+// Enqueue is the capture CLI's post-ingest event spool: its own lock acquisition
+// tags the finalized events with the current epoch and appends them for a later
+// invocation to drain. Best-effort — a failed append logs WARN and never
+// propagates (response-first). Events from a replaced generation are rejected: an
+// enqueued line would carry a lying (current-epoch, dead-token) tag pair, and a
+// dead-generation label must fail with staleness, never validate against the new
+// session (honest capture continuity).
+func (m *Manager) Enqueue(ctx context.Context, token string, events []calm.EventInput) {
+	if len(events) == 0 {
+		return
+	}
+	unlock, err := m.store.lock()
+	if err != nil {
+		m.log.WithContext(ctx).Warn("lock state for enqueue failed; events not spooled", logging.ErrorField(err))
+		return
+	}
+	defer unlock()
+	st, err := m.store.load()
+	if err != nil {
+		m.log.WithContext(ctx).Warn("load state for enqueue failed; events not spooled", logging.ErrorField(err))
+		return
+	}
+	if st == nil {
+		m.log.WithContext(ctx).Warn("no session state to enqueue into; events dropped")
+		return
+	}
+	if err := m.ownedState(st); err != nil {
+		m.log.WithContext(ctx).Warn("enqueue refused", logging.ErrorField(err))
+		return
+	}
+	if st.SessionToken != token {
+		m.log.WithContext(ctx).Debug("events from replaced session discarded")
+		return
+	}
+	if err := m.store.appendSpool(spoolLine{Epoch: st.Epoch, SessionToken: token, Events: events}); err != nil {
+		m.log.WithContext(ctx).Warn("append event spool failed; events dropped", logging.ErrorField(err))
 	}
 }
 

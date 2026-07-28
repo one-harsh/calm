@@ -242,6 +242,19 @@ adapter emits this subset of the HLD's example taxonomy:
 `latest_source` / `history_source` cross-links are populated **only** for sources
 that actually persisted, so an event never points at a write that failed.
 
+Event payload fields divide by who computes them. **Intent-derived** fields are
+produced from the command or invocation alone — `tool_name`, `command`,
+`exit_code`, `invocation_id`, `message`, `source`, `trace_snippet`, `subcommand`,
+`path`, `operation`, `diff` — knowable before any ingest is attempted and
+suppliable as-is in whatever wire shape carries the event. **Outcome-derived**
+fields are exactly the two cross-links `latest_source` and `history_source`:
+computed from which sources actually persisted in the delivery, attached only for
+a persisted source, and never claimable by the client — under a compound request
+that carries the events alongside its ingests, the server computes them from the
+writes it performs in the same request. This split is what lets one derivation
+serve both a client-side fan-out (which resolves the cross-links from observed
+write outcomes) and a server-side compound ingest (which resolves them itself).
+
 `task_in_progress` and `delegated_work` from the HLD taxonomy are **deferred** —
 they need host-native-tool visibility (subagent invocations, structured task lists)
 that the current adapter surface does not expose.

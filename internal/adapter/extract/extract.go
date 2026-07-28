@@ -52,7 +52,7 @@ type ExecResult struct {
 	TimedOut bool
 }
 
-// Plan's unexported event facts are shared with FinalizeEvents so a command's
+// Plan's unexported event facts are shared with DeriveEvents so a command's
 // labels and events come from one parse and cannot diverge.
 type Plan struct {
 	Mode          CaptureMode
@@ -68,10 +68,24 @@ type Plan struct {
 	base        eventFacts
 }
 
-// WriteOutcome gates FinalizeEvents cross-links to sources that actually persisted.
+// WriteOutcome gates ApplyOutcomes cross-links to sources that actually persisted.
 type WriteOutcome struct {
 	Source    string
 	Persisted bool
+}
+
+// EventDraft carries a derived event split by who computes each field
+// (LABELING.md's event-derivation contract): Data holds the intent-derived
+// fields, while latestLink/historyLink are the outcome-derived source cross-links
+// a delivery resolves once it knows which sources persisted. Leaving the drafts
+// free of resolved links is what lets one derivation serve both a client-side
+// fan-out and a server-side compound ingest.
+type EventDraft struct {
+	Type        string
+	Priority    int
+	Data        map[string]any
+	latestLink  string
+	historyLink string
 }
 
 type eventFacts struct {
@@ -156,34 +170,21 @@ func coexistPlan(id labelID, inv Invocation, facts eventFacts) Plan {
 	}
 }
 
-// Cross-links are set only for outcomes that persisted, so an event never points at a
-// source that was never written.
-func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
-	persisted := make(map[string]bool, len(outcomes))
-	for _, o := range outcomes {
-		if o.Persisted {
-			persisted[o.Source] = true
-		}
-	}
+func DeriveEvents(p Plan) []EventDraft {
 	f := p.base
-	events := make([]calm.EventInput, 0, 4)
+	drafts := make([]EventDraft, 0, 4)
 
-	inv := map[string]any{
-		keyToolName:     f.toolName,
-		keyCommand:      f.commandSummary,
-		keyExitCode:     f.exitCode,
-		keyInvocationID: f.invocationID,
-	}
-	if p.LatestSource != "" && persisted[p.LatestSource] {
-		inv[keyLatestSource] = p.LatestSource
-	}
-	if p.HistorySource != "" && persisted[p.HistorySource] {
-		inv[keyHistorySource] = p.HistorySource
-	}
-	events = append(events, calm.EventInput{
+	drafts = append(drafts, EventDraft{
 		Type:     EventToolInvocation,
 		Priority: priorityToolInvocation,
-		Data:     inv,
+		Data: map[string]any{
+			keyToolName:     f.toolName,
+			keyCommand:      f.commandSummary,
+			keyExitCode:     f.exitCode,
+			keyInvocationID: f.invocationID,
+		},
+		latestLink:  p.LatestSource,
+		historyLink: p.HistorySource,
 	})
 
 	if f.exitCode != 0 || f.timedOut {
@@ -196,11 +197,7 @@ func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 		if f.traceSnippet != "" {
 			ed[keyTraceSnippet] = f.traceSnippet
 		}
-		events = append(events, calm.EventInput{
-			Type:     EventErrorObserved,
-			Priority: priorityErrorObserved,
-			Data:     ed,
-		})
+		drafts = append(drafts, EventDraft{Type: EventErrorObserved, Priority: priorityErrorObserved, Data: ed})
 	}
 
 	if f.isGit {
@@ -211,11 +208,7 @@ func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 		if f.subcommand != "" {
 			gd[keySubcommand] = f.subcommand
 		}
-		events = append(events, calm.EventInput{
-			Type:     EventGitOperation,
-			Priority: priorityGitOperation,
-			Data:     gd,
-		})
+		drafts = append(drafts, EventDraft{Type: EventGitOperation, Priority: priorityGitOperation, Data: gd})
 	}
 
 	if f.fileTouched != nil {
@@ -230,18 +223,47 @@ func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
 		if f.fileTouched.diffTruncated {
 			fd[keyDiffTruncated] = true
 		}
-		if p.LatestSource != "" && persisted[p.LatestSource] {
-			fd[keyLatestSource] = p.LatestSource
-		}
-		if p.HistorySource != "" && persisted[p.HistorySource] {
-			fd[keyHistorySource] = p.HistorySource
-		}
-		events = append(events, calm.EventInput{
-			Type:     EventFileTouched,
-			Priority: priorityFileTouched,
-			Data:     fd,
+		drafts = append(drafts, EventDraft{
+			Type:        EventFileTouched,
+			Priority:    priorityFileTouched,
+			Data:        fd,
+			latestLink:  p.LatestSource,
+			historyLink: p.HistorySource,
 		})
 	}
 
+	return drafts
+}
+
+// ApplyOutcomes resolves each draft's outcome-derived cross-links against the
+// per-source write outcomes (LABELING.md's event-derivation contract), building a
+// fresh Data map per event so the drafts stay immutable — a cross-link is set
+// only for a source that persisted, and reapplying the drafts under different
+// outcomes never inherits a prior application's links.
+func ApplyOutcomes(drafts []EventDraft, outcomes []WriteOutcome) []calm.EventInput {
+	persisted := make(map[string]bool, len(outcomes))
+	for _, o := range outcomes {
+		if o.Persisted {
+			persisted[o.Source] = true
+		}
+	}
+	events := make([]calm.EventInput, 0, len(drafts))
+	for _, d := range drafts {
+		data := make(map[string]any, len(d.Data)+2)
+		for k, val := range d.Data {
+			data[k] = val
+		}
+		if d.latestLink != "" && persisted[d.latestLink] {
+			data[keyLatestSource] = d.latestLink
+		}
+		if d.historyLink != "" && persisted[d.historyLink] {
+			data[keyHistorySource] = d.historyLink
+		}
+		events = append(events, calm.EventInput{Type: d.Type, Priority: d.Priority, Data: data})
+	}
 	return events
+}
+
+func FinalizeEvents(p Plan, outcomes []WriteOutcome) []calm.EventInput {
+	return ApplyOutcomes(DeriveEvents(p), outcomes)
 }

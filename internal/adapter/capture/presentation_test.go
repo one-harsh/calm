@@ -131,15 +131,19 @@ func TestPresentCapture_RangedView(t *testing.T) {
 // Uniform threshold: capture_partial with a small raw presents inline (raw
 // verbatim, no label in visible text) while still signaling capture_partial —
 // degradation and presentation are orthogonal dimensions.
-func TestFormatCaptureOutcome_SmallPartial_InlineWithSignal(t *testing.T) {
-	e := NewEngine(nil, logging.Nop(), "calm_search")
+func TestPresent_SmallPartial_InlineWithSignal(t *testing.T) {
 	outcomes := []extract.WriteOutcome{
 		{Source: "calm:v1:vcs:git:status#1", Persisted: true},
 		{Source: "calm:v1:vcs:git:status", Persisted: false},
 	}
 	rep := &calm.IngestSummary{Source: "calm:v1:vcs:git:status#1", SectionsIndexed: 1, SectionsTotal: 1}
+	d := Delivery{
+		Unit:     CaptureUnit{Plan: extract.Plan{Token: "a3f2k6"}},
+		Outcomes: outcomes,
+		Summary:  rep,
+	}
 
-	out := e.formatCaptureOutcome(context.Background(), outcomes, rep, "tiny status\n", exec.Result{}, "a3f2k6", false)
+	out := present(context.Background(), logging.Nop(), d, Spec{Visible: "tiny status\n", Res: exec.Result{}}, 2, presentOptions{recall: "calm_search"})
 
 	if out.Reason != obs.DegradedReasonCapturePartial {
 		t.Fatalf("reason = %q; want capture_partial", out.Reason)

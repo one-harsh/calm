@@ -105,8 +105,56 @@ func TestSearch_DocumentOrder(t *testing.T) {
 	}
 	out := stdout.String()
 	if !strings.Contains(out, "in document order from offset 0") || !strings.Contains(out, "chunk-0") ||
-		!strings.Contains(out, documentOrderTruncatedMarker) || !strings.Contains(out, "offset: 3") {
+		!strings.Contains(out, searchVocab.TruncatedMarker) || !strings.Contains(out, "offset: 3") {
 		t.Errorf("stdout must render document-order chunks with markers; got:\n%s", out)
+	}
+}
+
+// Search results carry the feedback ref as the opaque handle `calm-capture
+// feedback` accepts, so outcome reporting is discoverable from a retrieval.
+func TestSearch_FeedbackRefTrailer(t *testing.T) {
+	c := calm.NewMockClient(t)
+	expectEstablish(c, "tok1")
+	c.EXPECT().Search(mock.Anything, "tok1", mock.Anything).Return(calm.SearchResults{
+		Queries:       []calm.QueryResult{{Query: "q", Hits: []calm.Hit{{Title: "t", Snippet: "s", Source: "src", MatchLayer: "primary"}}}},
+		CorrelationID: "corr-7",
+	}, nil).Once()
+	d, stdout, _ := newDeps(t, c)
+
+	Dispatch(context.Background(), d, execArgs("conv", "printf hello"))
+	stdout.Reset()
+	code := Dispatch(context.Background(), d, []string{"search", "--session", "conv", "q"})
+
+	if code != 0 {
+		t.Fatalf("exit = %d; want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "↳ feedback: calm-capture feedback corr-7") {
+		t.Errorf("search results must carry the feedback-ref trailer; got:\n%s", stdout.String())
+	}
+}
+
+// A zero-hit search still has a correlation row, so its result carries the
+// feedback ref — both ranked and document-order — right where attribution of a
+// miss is most valuable.
+func TestSearch_ZeroHitCarriesFeedbackRef(t *testing.T) {
+	c := calm.NewMockClient(t)
+	expectEstablish(c, "tok1")
+	c.EXPECT().Search(mock.Anything, "tok1", mock.Anything).
+		Return(calm.SearchResults{CorrelationID: "corr-z"}, nil).Twice()
+	d, stdout, _ := newDeps(t, c)
+
+	Dispatch(context.Background(), d, execArgs("conv", "printf hello"))
+
+	stdout.Reset()
+	Dispatch(context.Background(), d, []string{"search", "--session", "conv", "nomatch"})
+	if got := stdout.String(); !strings.Contains(got, "no matches") || !strings.Contains(got, "↳ feedback: calm-capture feedback corr-z") {
+		t.Errorf("ranked zero-hit must carry the feedback ref; got:\n%s", got)
+	}
+
+	stdout.Reset()
+	Dispatch(context.Background(), d, []string{"search", "--session", "conv", "source=calm:v1:x"})
+	if got := stdout.String(); !strings.Contains(got, "no chunks at this offset") || !strings.Contains(got, "↳ feedback: calm-capture feedback corr-z") {
+		t.Errorf("document-order zero-hit must carry the feedback ref; got:\n%s", got)
 	}
 }
 

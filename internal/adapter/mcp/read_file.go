@@ -89,7 +89,7 @@ func (s *Server) readFile(ctx context.Context, args json.RawMessage) (ToolResult
 	}
 
 	r := exec.Result{Stdout: full, Truncated: truncated}
-	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
 		Ingest:     full,
 		Visible:    visible,
 		Res:        r,

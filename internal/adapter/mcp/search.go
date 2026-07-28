@@ -13,6 +13,7 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
+	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
@@ -144,92 +145,23 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 		return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable, Detail: err.Error()}
 	}
 
+	// An empty result — no matches, or an offset past the end — is a healthy
+	// page, not a degradation: it renders as a non-error result through the same
+	// formatters, distinct from the calm_unreachable/session_lost error shapes.
 	if documentOrder {
-		// Offset-past-end is a healthy empty page, not a degradation — keep it
-		// distinct from the calm_unreachable/session_lost error shapes.
-		if totalHits(res) == 0 {
-			return TextResult("no chunks at this offset"+sourceNote(a.Source), false), nil
-		}
-		return TextResult(formatDocumentOrder(res, a.Offset), false), nil
+		return TextResult(capture.FormatDocumentOrder(res, a.Offset, a.Source, searchVocab), false), nil
 	}
-
-	if totalHits(res) == 0 {
-		return TextResult("no matches"+sourceNote(a.Source), false), nil
-	}
-	return TextResult(formatSearchResults(res), false), nil
+	return TextResult(capture.FormatSearchResults(res, a.Source, searchVocab), false), nil
 }
 
-func totalHits(res calm.SearchResults) int {
-	n := 0
-	for _, q := range res.Queries {
-		n += len(q.Hits)
-	}
-	return n
-}
-
-func sourceNote(source string) string {
-	if source == "" {
-		return ""
-	}
-	return " under source=" + source
-}
-
-const maxSearchResultLen = 8192
-
-func formatSearchResults(res calm.SearchResults) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d %s across %d %s:\n",
-		totalHits(res), plural(totalHits(res), "hit", "hits"),
-		len(res.Queries), plural(len(res.Queries), "query", "queries"))
-
-	for _, q := range res.Queries {
-		fmt.Fprintf(&b, "\n# %q — %d %s\n", q.Query, len(q.Hits), plural(len(q.Hits), "hit", "hits"))
-		for _, h := range q.Hits {
-			fmt.Fprintf(&b, "[%s] %s  (%s)\n%s\n", h.MatchLayer, h.Title, h.Source, h.Snippet)
-		}
-	}
-
-	out := b.String()
-	if len(out) > maxSearchResultLen {
-		out = strings.ToValidUTF8(out[:maxSearchResultLen], "") + "…"
-	}
-	return out
-}
-
-const (
-	documentOrderTruncatedMarker  = "[truncated — raise budget_bytes or use a ranked query for the rest]"
-	documentOrderContinuationLine = "more chunks remain — call calm_search again with source and offset: "
-)
-
-// formatDocumentOrder renders a document-order page as a sequential reread: no
-// ranking annotations, each chunk its title line then full snippet text, in
-// order. Unlike ranked results this is not adapter-capped — the page is already
-// bounded by CALM's byte budget, and a local cap would sever the continuation
-// hint and truncate the exact chunk text (content-fidelity).
-func formatDocumentOrder(res calm.SearchResults, offset int) string {
-	var hits []calm.Hit
-	for _, q := range res.Queries {
-		hits = append(hits, q.Hits...)
-	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d %s in document order from offset %d:\n",
-		len(hits), plural(len(hits), "chunk", "chunks"), offset)
-	for _, h := range hits {
-		fmt.Fprintf(&b, "\n## %s\n%s\n", h.Title, h.Snippet)
-		if h.Truncated {
-			b.WriteString(documentOrderTruncatedMarker + "\n")
-		}
-	}
-	if res.NextOffset != nil {
-		fmt.Fprintf(&b, "\n%s%d\n", documentOrderContinuationLine, *res.NextOffset)
-	}
-	return b.String()
-}
-
-func plural(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
+// searchVocab is the MCP shell's search-presentation vocabulary. Its
+// document-order strings name the JSON `budget_bytes` knob and the `calm_search`
+// tool; its empty FeedbackPrefix renders no per-result feedback line — the MCP
+// shell surfaces the feedback ref through its outcome tool, keeping inline
+// economics.
+var searchVocab = capture.SearchVocab{
+	TruncatedMarker:  "[truncated — raise budget_bytes or use a ranked query for the rest]",
+	ContinuationLine: "more chunks remain — call calm_search again with source and offset: ",
+	ZeroHitRanked:    "no matches",
+	ZeroHitDocument:  "no chunks at this offset",
 }

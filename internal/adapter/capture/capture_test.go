@@ -20,17 +20,12 @@ import (
 	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
-// MOCKERY-ESCAPE: a generated double for capture.Session waits until the seam
-// has a second shell implementation; this minimal in-package stub drives the
-// engine's own pipeline tests.
 type stubSession struct {
 	reg       *Registry
 	seq       atomic.Int64
 	token     string
 	ensureSig *Signal
 	onCallSig *Signal
-	emitToken string
-	emitted   [][]calm.EventInput
 }
 
 func (s *stubSession) Ensure(context.Context) (EnsureResult, *Signal) {
@@ -41,6 +36,8 @@ func (s *stubSession) Ensure(context.Context) (EnsureResult, *Signal) {
 }
 func (s *stubSession) OnCallError(context.Context, string, error) *Signal { return s.onCallSig }
 
+// Record captures the persisted-delta handoff so tests assert the engine recorded
+// the delta under the capture's token.
 func (s *stubSession) Record(_ context.Context, token string, delta []SourceToken) {
 	if token != s.token {
 		return
@@ -50,11 +47,16 @@ func (s *stubSession) Record(_ context.Context, token string, delta []SourceToke
 	}
 }
 
-// Emit records the delivery-seam handoff so tests assert the engine finalized
-// and handed events to the shell — delivery itself is shell-owned.
-func (s *stubSession) Emit(_ context.Context, token string, events []calm.EventInput) {
-	s.emitToken = token
-	s.emitted = append(s.emitted, events)
+// stubSink captures the finalized-event handoff so tests assert the engine
+// enqueued events under the capture's token — delivery itself is shell-owned.
+type stubSink struct {
+	deliveredTok  string
+	deliveredEvts [][]calm.EventInput
+}
+
+func (s *stubSink) Enqueue(_ context.Context, token string, events []calm.EventInput) {
+	s.deliveredTok = token
+	s.deliveredEvts = append(s.deliveredEvts, events)
 }
 
 func planFor(command, raw string) func(int64) (extract.Plan, error) {
@@ -67,10 +69,10 @@ func planFor(command, raw string) func(int64) (extract.Plan, error) {
 }
 
 // The happy path drives the full pipeline: dual-write (history then latest),
-// token recording, summary-mode presentation with the fused recall label, and
-// fire-and-forget event emission. Both sources are recorded so their fused
-// labels validate later.
-func TestCapture_Happy_DualWriteRecordsAndEmits(t *testing.T) {
+// finalized-event delivery, token recording, and summary-mode presentation with
+// the fused recall label. Both sources are recorded so their fused labels
+// validate later.
+func TestCapture_Happy_DualWriteDeliversAndRecords(t *testing.T) {
 	m := calm.NewMockClient(t)
 	raw := strings.Repeat("x", inlineMaxBytes+1) // force summary mode so the recall label appears
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
@@ -78,12 +80,13 @@ func TestCapture_Happy_DualWriteRecordsAndEmits(t *testing.T) {
 	})).Return(calm.IngestSummary{Source: "calm:v1:vcs:git:status#1", SectionsIndexed: 1, SectionsTotal: 1}, nil).Once()
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
 		return in.Source == "calm:v1:vcs:git:status"
-	})).Return(calm.IngestSummary{Source: "calm:v1:vcs:git:status", SectionsIndexed: 1, SectionsTotal: 1}, nil).Once()
+	})).Return(calm.IngestSummary{Source: "calm:v1:vcs:git:status", SectionsIndexed: 1, SectionsTotal: 1, CorrelationID: "corr-happy"}, nil).Once()
 
 	sess := &stubSession{reg: NewRegistry(), token: "tok-1"}
-	e := NewEngine(m, logging.Nop(), "calm_search")
+	sink := &stubSink{}
+	e := NewEngine(m, sess, sink, logging.Nop(), "calm_search")
 
-	out := e.Capture(context.Background(), sess, Spec{Ingest: raw, Visible: raw, Res: exec.Result{}, Plan: planFor("git status", raw)})
+	out := e.Capture(context.Background(), Spec{Ingest: raw, Visible: raw, Res: exec.Result{}, Plan: planFor("git status", raw)})
 
 	if out.Reason != "" {
 		t.Fatalf("reason = %q; want no degradation", out.Reason)
@@ -94,14 +97,20 @@ func TestCapture_Happy_DualWriteRecordsAndEmits(t *testing.T) {
 	if !strings.Contains(out.Visible, "calm_search source=calm:v1:vcs:git:status@") {
 		t.Errorf("visible must carry the fused recall label; got:\n%s", out.Visible)
 	}
+	if out.FeedbackRef != "corr-happy" {
+		t.Errorf("feedback ref = %q; want the primary source's ingest correlation id", out.FeedbackRef)
+	}
+	if !strings.HasPrefix(out.Label, "calm:v1:vcs:git:status@") {
+		t.Errorf("outcome label = %q; want the fused primary source label", out.Label)
+	}
 	snap := sess.reg.Snapshot()
 	if snap["calm:v1:vcs:git:status"] == "" || snap["calm:v1:vcs:git:status#1"] == "" {
 		t.Errorf("both persisted sources must be recorded; snapshot = %v", snap)
 	}
 	// Delivery is shell-owned: the engine finalizes events and hands one batch
-	// to the seam under the capture's token — it never writes them itself.
-	if len(sess.emitted) != 1 || sess.emitToken != "tok-1" {
-		t.Errorf("emitted = %d batch(es) under token %q; want 1 under tok-1", len(sess.emitted), sess.emitToken)
+	// to the sink under the capture's token — it never writes them itself.
+	if len(sink.deliveredEvts) != 1 || sink.deliveredTok != "tok-1" {
+		t.Errorf("delivered = %d batch(es) under token %q; want 1 under tok-1", len(sink.deliveredEvts), sink.deliveredTok)
 	}
 }
 
@@ -114,9 +123,9 @@ func TestCapture_EnsureUnreachable_PropagatesReasonAndDetail(t *testing.T) {
 		reg:       NewRegistry(),
 		ensureSig: &Signal{Reason: obs.DegradedReasonCalmUnreachable, Detail: "dial tcp: connection refused"},
 	}
-	e := NewEngine(m, logging.Nop(), "calm_search")
+	e := NewEngine(m, sess, &stubSink{}, logging.Nop(), "calm_search")
 
-	out := e.Capture(context.Background(), sess, Spec{Ingest: "hi\n", Visible: "hi\n", Plan: planFor("echo hi", "hi\n")})
+	out := e.Capture(context.Background(), Spec{Ingest: "hi\n", Visible: "hi\n", Plan: planFor("echo hi", "hi\n")})
 
 	if out.Visible != "hi\n" {
 		t.Errorf("visible = %q; want raw preserved (never-worse)", out.Visible)
@@ -136,9 +145,9 @@ func TestCapture_SessionLevelError_UsesOnCallError(t *testing.T) {
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.IngestSummary{}, calm.ErrSessionNotFound).Once()
 	sess := &stubSession{reg: NewRegistry(), token: "tok-1", onCallSig: &Signal{Reason: obs.DegradedReasonSessionLost}}
-	e := NewEngine(m, logging.Nop(), "calm_search")
+	e := NewEngine(m, sess, &stubSink{}, logging.Nop(), "calm_search")
 
-	out := e.Capture(context.Background(), sess, Spec{Ingest: "hi\n", Visible: "hi\n", Plan: planFor("echo hi", "hi\n")})
+	out := e.Capture(context.Background(), Spec{Ingest: "hi\n", Visible: "hi\n", Plan: planFor("echo hi", "hi\n")})
 
 	if out.Visible != "hi\n" || out.Reason != obs.DegradedReasonSessionLost {
 		t.Errorf("outcome = %+v; want raw payload with session_lost", out)
@@ -152,9 +161,10 @@ func TestCapture_IngestFailure_CaptureFailed(t *testing.T) {
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
 		Return(calm.IngestSummary{}, errors.New("boom")).Once()
 	sess := &stubSession{reg: NewRegistry(), token: "tok-1"}
-	e := NewEngine(m, logging.Nop(), "calm_search")
+	sink := &stubSink{}
+	e := NewEngine(m, sess, sink, logging.Nop(), "calm_search")
 
-	out := e.Capture(context.Background(), sess, Spec{Ingest: "hi\n", Visible: "hi\n", Plan: planFor("echo hi", "hi\n")})
+	out := e.Capture(context.Background(), Spec{Ingest: "hi\n", Visible: "hi\n", Plan: planFor("echo hi", "hi\n")})
 
 	if out.Visible != "hi\n" || out.Reason != obs.DegradedReasonCaptureFailed {
 		t.Errorf("outcome = %+v; want raw payload with capture_failed", out)
@@ -162,9 +172,9 @@ func TestCapture_IngestFailure_CaptureFailed(t *testing.T) {
 	if out.Captured {
 		t.Errorf("captured must be false when nothing persisted")
 	}
-	// The best-effort tool event still hands off to the delivery seam.
-	if len(sess.emitted) != 1 {
-		t.Errorf("emitted = %d batch(es); want the best-effort event handed to the seam", len(sess.emitted))
+	// The best-effort tool event still hands off to the delivery sink.
+	if len(sink.deliveredEvts) != 1 {
+		t.Errorf("delivered = %d batch(es); want the best-effort event handed to the sink", len(sink.deliveredEvts))
 	}
 }
 
@@ -173,9 +183,9 @@ func TestCapture_IngestFailure_CaptureFailed(t *testing.T) {
 func TestCapture_PlanError_CaptureFailed(t *testing.T) {
 	m := calm.NewMockClient(t) // strict: no ingest/events on a plan failure
 	sess := &stubSession{reg: NewRegistry(), token: "tok-1"}
-	e := NewEngine(m, logging.Nop(), "calm_search")
+	e := NewEngine(m, sess, &stubSink{}, logging.Nop(), "calm_search")
 
-	out := e.Capture(context.Background(), sess, Spec{
+	out := e.Capture(context.Background(), Spec{
 		Ingest:  "hi\n",
 		Visible: "hi\n",
 		Plan:    func(int64) (extract.Plan, error) { return extract.Plan{}, errors.New("untranslatable") },
@@ -183,5 +193,28 @@ func TestCapture_PlanError_CaptureFailed(t *testing.T) {
 
 	if out.Visible != "hi\n" || out.Reason != obs.DegradedReasonCaptureFailed {
 		t.Errorf("outcome = %+v; want raw payload with capture_failed", out)
+	}
+}
+
+// The strategy skips the sink when a unit finalizes to zero events, rather than
+// handing it an empty batch — DeriveEvents always yields the tool-invocation
+// draft, so this drives the strategy with an empty draft set directly.
+func TestCapture_NoEvents_SinkNotCalled(t *testing.T) {
+	m := calm.NewMockClient(t)
+	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.Anything).
+		Return(calm.IngestSummary{Source: "s", SectionsIndexed: 1, SectionsTotal: 1}, nil).Once()
+	sink := &stubSink{}
+	f := fanOut{calm: m, log: logging.Nop(), events: sink}
+
+	d := f.Deliver(context.Background(), "tok-1", CaptureUnit{Plan: extract.Plan{LatestSource: "s"}, Content: "hi\n"})
+
+	if d.Err != nil {
+		t.Fatalf("deliver err = %v; want success", d.Err)
+	}
+	if len(d.Events) != 0 {
+		t.Errorf("finalized events = %d; want 0 for an empty draft set", len(d.Events))
+	}
+	if len(sink.deliveredEvts) != 0 {
+		t.Errorf("sink called %d time(s); want 0 for an empty batch", len(sink.deliveredEvts))
 	}
 }

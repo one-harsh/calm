@@ -47,6 +47,7 @@ type IngestSummary struct {
 	SummaryTruncated bool
 	Sections         []SectionPreview
 	DistinctiveTerms []string
+	CorrelationID    string
 }
 
 type SectionPreview struct {
@@ -63,8 +64,9 @@ type SearchInput struct {
 }
 
 type SearchResults struct {
-	Queries    []QueryResult
-	NextOffset *int
+	Queries       []QueryResult
+	NextOffset    *int
+	CorrelationID string
 }
 
 type QueryResult struct {

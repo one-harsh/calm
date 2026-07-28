@@ -145,7 +145,7 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 	}
 
 	r := exec.Result{Stdout: newContent}
-	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
 		Ingest:  newContent,
 		Visible: newContent,
 		Res:     r,
@@ -196,7 +196,7 @@ func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResul
 	}
 
 	r := exec.Result{Stdout: a.Content}
-	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
 		Ingest:  a.Content,
 		Visible: a.Content,
 		Res:     r,

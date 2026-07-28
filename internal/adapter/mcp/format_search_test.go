@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
+	"github.com/one-harsh/calm/internal/adapter/capture"
 )
 
 func TestFormatSearchResults_RendersHitsPerQuery(t *testing.T) {
@@ -20,7 +21,7 @@ func TestFormatSearchResults_RendersHitsPerQuery(t *testing.T) {
 			{Title: "c.go", Snippet: "beta snippet", Source: "calm:v1:file:read:c.go", MatchLayer: "primary"},
 		}},
 	}}
-	out := formatSearchResults(res)
+	out := capture.FormatSearchResults(res, "", searchVocab)
 
 	for _, want := range []string{
 		"3 hits across 2 queries",
@@ -46,7 +47,7 @@ func TestFormatDocumentOrder_NoAnnotationsWithContinuation(t *testing.T) {
 		}}},
 		NextOffset: &next,
 	}
-	out := formatDocumentOrder(res, 0)
+	out := capture.FormatDocumentOrder(res, 0, "", searchVocab)
 
 	for _, want := range []string{
 		"2 chunks in document order from offset 0:",
@@ -79,7 +80,7 @@ func TestFormatDocumentOrder_FinalPageOmitsContinuation(t *testing.T) {
 		}}},
 		NextOffset: nil,
 	}
-	out := formatDocumentOrder(res, 8)
+	out := capture.FormatDocumentOrder(res, 8, "", searchVocab)
 
 	if strings.Contains(out, "more chunks remain") {
 		t.Errorf("final page must omit the continuation hint:\n%s", out)
@@ -97,7 +98,7 @@ func TestFormatDocumentOrder_TruncatedMarker(t *testing.T) {
 		}}},
 		NextOffset: &next,
 	}
-	out := formatDocumentOrder(res, 0)
+	out := capture.FormatDocumentOrder(res, 0, "", searchVocab)
 
 	// Literal text pinned: the marker names the budget_bytes parameter the
 	// tool exposes, so the advertised recovery is actionable.
@@ -109,18 +110,19 @@ func TestFormatDocumentOrder_TruncatedMarker(t *testing.T) {
 	}
 }
 
-func TestFormatSearchResults_BoundsLength(t *testing.T) {
-	huge := strings.Repeat("x", maxSearchResultLen+1000)
-	res := calm.SearchResults{Queries: []calm.QueryResult{{
-		Query: "q",
-		Hits:  []calm.Hit{{Title: "t", Snippet: huge, Source: "s", MatchLayer: "primary"}},
-	}}}
-	out := formatSearchResults(res)
+// The zero-hit paths route through the shared formatters now; the MCP shell's
+// empty FeedbackPrefix must keep their bytes exactly as before — the bare
+// message, no ref line, no trailing newline — even when a correlation id exists.
+func TestFormatZeroHit_MCPBytesUnchanged(t *testing.T) {
+	empty := calm.SearchResults{CorrelationID: "corr-x"}
 
-	if !strings.HasSuffix(out, "…") {
-		t.Errorf("over-length result should end with an ellipsis")
+	if got := capture.FormatSearchResults(empty, "calm:v1:x", searchVocab); got != "no matches under source=calm:v1:x" {
+		t.Errorf("zero-hit ranked bytes drifted: %q", got)
 	}
-	if len(out) > maxSearchResultLen+len("…") {
-		t.Errorf("result length = %d; want bounded to %d", len(out), maxSearchResultLen+len("…"))
+	if got := capture.FormatSearchResults(empty, "", searchVocab); got != "no matches" {
+		t.Errorf("zero-hit ranked (no source) bytes drifted: %q", got)
+	}
+	if got := capture.FormatDocumentOrder(empty, 0, "calm:v1:x", searchVocab); got != "no chunks at this offset under source=calm:v1:x" {
+		t.Errorf("zero-hit document bytes drifted: %q", got)
 	}
 }

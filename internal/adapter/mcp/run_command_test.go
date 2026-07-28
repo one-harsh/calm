@@ -458,7 +458,7 @@ func TestRunCommand_BlockedEventWriteDoesNotHoldResponse(t *testing.T) {
 			close(started)
 			select {
 			case <-release:
-			case <-ctx.Done(): // Emit's own timeout
+			case <-ctx.Done(): // the detached event write's own timeout
 			}
 			return nil
 		}).Once()

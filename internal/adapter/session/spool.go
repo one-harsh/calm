@@ -66,47 +66,6 @@ func (s *store) appendSpool(line spoolLine) error {
 	return f.Close()
 }
 
-// Emit is the capture CLI's event-delivery seam (capture.Session): it spools
-// this capture's events for a later flush rather than delivering in-call. The
-// process dies milliseconds after responding, and synchronous delivery would
-// tie loss to capture size, clustering drops on the highest-value calls
-// (DESIGN.md §11, AD06). One brief lock acquisition appends a line tagged with
-// the passed token and the loaded state's current epoch. Best-effort: an append
-// failure is logged and never propagates (response-first). Events from a
-// replaced generation are rejected before enqueue — an enqueued line would
-// carry a lying (current-epoch, dead-token) tag pair.
-func (m *Manager) Emit(ctx context.Context, token string, events []calm.EventInput) {
-	if len(events) == 0 {
-		return
-	}
-	unlock, err := m.store.lock()
-	if err != nil {
-		m.log.WithContext(ctx).Warn("lock state for event spool failed; events dropped", logging.ErrorField(err))
-		return
-	}
-	defer unlock()
-	st, err := m.store.load()
-	if err != nil {
-		m.log.WithContext(ctx).Warn("load state for event spool failed; events dropped", logging.ErrorField(err))
-		return
-	}
-	if st == nil {
-		m.log.WithContext(ctx).Warn("no session state to spool events into; events dropped")
-		return
-	}
-	if err := m.ownedState(st); err != nil {
-		m.log.WithContext(ctx).Warn("event spool refused", logging.ErrorField(err))
-		return
-	}
-	if st.SessionToken != token {
-		m.log.WithContext(ctx).Debug("events from replaced session discarded")
-		return
-	}
-	if err := m.store.appendSpool(spoolLine{Epoch: st.Epoch, SessionToken: token, Events: events}); err != nil {
-		m.log.WithContext(ctx).Warn("append event spool failed; events dropped", logging.ErrorField(err))
-	}
-}
-
 // Drain is the single spool-flush primitive: the exec binary calls it immediately
 // after a response (immediate flush) and opportunistically at invocation start
 // (leftovers). Delivery is at-most-once — stale claims are reaped unread and
@@ -153,7 +112,7 @@ func (m *Manager) reapStaleInflight(ctx context.Context, now time.Time) {
 }
 
 // claimSpool renames events.spool → events.inflight.<pid> under the session lock
-// (serializing against Emit's append). The rename is the claim: a racing drainer
+// (serializing against Enqueue's spool append). The rename is the claim: a racing drainer
 // that loses it simply finds no spool file. ok=false means nothing to claim.
 func (m *Manager) claimSpool(ctx context.Context) (string, bool) {
 	unlock, err := m.store.lock()

@@ -84,18 +84,10 @@ func (d Deps) searchCmd(ctx context.Context, args []string) int {
 	}
 
 	if documentOrder {
-		if totalHits(res) == 0 {
-			_, _ = fmt.Fprintln(d.Stdout, "no chunks at this offset"+sourceNote(*source))
-			return 0
-		}
-		_, _ = fmt.Fprint(d.Stdout, formatDocumentOrder(res, *offset))
+		_, _ = fmt.Fprint(d.Stdout, capture.FormatDocumentOrder(res, *offset, *source, searchVocab))
 		return 0
 	}
-	if totalHits(res) == 0 {
-		_, _ = fmt.Fprintln(d.Stdout, "no matches"+sourceNote(*source))
-		return 0
-	}
-	_, _ = fmt.Fprint(d.Stdout, formatSearchResults(res))
+	_, _ = fmt.Fprint(d.Stdout, capture.FormatSearchResults(res, *source, searchVocab))
 	return 0
 }
 
@@ -136,68 +128,13 @@ func numericOption(a, prefix string, dst *int) bool {
 	return true
 }
 
-const (
-	documentOrderTruncatedMarker  = "[truncated — raise budget-bytes or use a query for the rest]"
-	documentOrderContinuationLine = "more chunks remain — search again with source and offset: "
-	maxSearchResultLen            = 8192
-)
-
-func formatSearchResults(res calm.SearchResults) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d %s across %d %s:\n",
-		totalHits(res), plural(totalHits(res), "hit", "hits"),
-		len(res.Queries), plural(len(res.Queries), "query", "queries"))
-	for _, q := range res.Queries {
-		fmt.Fprintf(&b, "\n# %q — %d %s\n", q.Query, len(q.Hits), plural(len(q.Hits), "hit", "hits"))
-		for _, h := range q.Hits {
-			fmt.Fprintf(&b, "[%s] %s  (%s)\n%s\n", h.MatchLayer, h.Title, h.Source, h.Snippet)
-		}
-	}
-	out := b.String()
-	if len(out) > maxSearchResultLen {
-		out = strings.ToValidUTF8(out[:maxSearchResultLen], "") + "…"
-	}
-	return out
-}
-
-func formatDocumentOrder(res calm.SearchResults, offset int) string {
-	var hits []calm.Hit
-	for _, q := range res.Queries {
-		hits = append(hits, q.Hits...)
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d %s in document order from offset %d:\n",
-		len(hits), plural(len(hits), "chunk", "chunks"), offset)
-	for _, h := range hits {
-		fmt.Fprintf(&b, "\n## %s\n%s\n", h.Title, h.Snippet)
-		if h.Truncated {
-			b.WriteString(documentOrderTruncatedMarker + "\n")
-		}
-	}
-	if res.NextOffset != nil {
-		fmt.Fprintf(&b, "\n%s%d\n", documentOrderContinuationLine, *res.NextOffset)
-	}
-	return b.String()
-}
-
-func totalHits(res calm.SearchResults) int {
-	n := 0
-	for _, q := range res.Queries {
-		n += len(q.Hits)
-	}
-	return n
-}
-
-func sourceNote(source string) string {
-	if source == "" {
-		return ""
-	}
-	return " under source=" + source
-}
-
-func plural(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
+// searchVocab is the capture shell's search-presentation vocabulary; its
+// FeedbackPrefix appends the correlation id as the handle `calm-capture
+// feedback` accepts.
+var searchVocab = capture.SearchVocab{
+	TruncatedMarker:  "[truncated — raise budget-bytes or use a query for the rest]",
+	ContinuationLine: "more chunks remain — search again with source and offset: ",
+	FeedbackPrefix:   "↳ feedback: calm-capture feedback ",
+	ZeroHitRanked:    "no matches",
+	ZeroHitDocument:  "no chunks at this offset",
 }

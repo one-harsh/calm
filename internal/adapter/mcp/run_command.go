@@ -72,7 +72,7 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (ToolResu
 	}
 
 	raw := capture.CommandPayload(r)
-	return s.outcomeToResult(s.engine.Capture(ctx, s, capture.Spec{
+	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
 		Ingest:  raw,
 		Visible: raw,
 		Res:     r,

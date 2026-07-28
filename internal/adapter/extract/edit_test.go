@@ -107,6 +107,50 @@ func TestFinalizeEvents_FileTouchedPayloadAndGating(t *testing.T) {
 	}
 }
 
+// ApplyOutcomes must not write cross-links back into the drafts: reapplying the
+// same drafts under different outcomes must not carry a prior application's
+// links, or an event could claim a source that did not persist in its delivery.
+func TestApplyOutcomes_DoesNotMutateDrafts(t *testing.T) {
+	p := PlanFileEdit(structuredInv(4), ExecResult{}, "f.txt", "a\n", "b\n")
+	drafts := DeriveEvents(p)
+
+	eventsA := ApplyOutcomes(drafts, []WriteOutcome{
+		{Source: p.LatestSource, Persisted: true},
+		{Source: p.HistorySource, Persisted: true},
+	})
+	linked := false
+	for _, e := range eventsA {
+		if e.Data[keyLatestSource] == p.LatestSource {
+			linked = true
+		}
+	}
+	if !linked {
+		t.Fatal("a persisted source should produce a cross-link")
+	}
+
+	for _, d := range drafts {
+		if _, has := d.Data[keyLatestSource]; has {
+			t.Error("ApplyOutcomes mutated a draft with latest_source")
+		}
+		if _, has := d.Data[keyHistorySource]; has {
+			t.Error("ApplyOutcomes mutated a draft with history_source")
+		}
+	}
+
+	eventsB := ApplyOutcomes(drafts, []WriteOutcome{
+		{Source: p.LatestSource, Persisted: false},
+		{Source: p.HistorySource, Persisted: false},
+	})
+	for _, e := range eventsB {
+		if _, has := e.Data[keyLatestSource]; has {
+			t.Errorf("second application carried a stale latest_source: %+v", e.Data)
+		}
+		if _, has := e.Data[keyHistorySource]; has {
+			t.Errorf("second application carried a stale history_source: %+v", e.Data)
+		}
+	}
+}
+
 // An idempotent write carries no diff key; a create diffs from empty content.
 func TestFileTouched_DiffEdgeCases(t *testing.T) {
 	p := PlanFileWrite(structuredInv(1), ExecResult{}, "same.txt", OperationWrite, "unchanged\n", "unchanged\n")
