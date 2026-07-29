@@ -353,3 +353,100 @@ func TestExec_SentinelPassthrough_StartFailure(t *testing.T) {
 		t.Errorf("stdout = %q; want the failure notice", stdout.String())
 	}
 }
+
+// Argv form with a leading assignment (`exec -- FOO=bar cmd`, multiple args)
+// would try to run `FOO=bar` as a program, so it is a usage error naming the
+// single-string fix. The command never runs (the strict mock proves no CALM
+// traffic), the exit is the usage class, and stderr stays pure (invariant 7).
+func TestExec_ArgvAssignmentPrefixIsUsageError(t *testing.T) {
+	c := calm.NewMockClient(t) // strict: the command must not run, no CALM call
+	d, stdout, stderr := newDeps(t, c)
+
+	code := Dispatch(context.Background(), d,
+		[]string{"exec", "--session", "conv", "--", "FOO=bar", "echo", "hi"})
+
+	if code != 2 {
+		t.Fatalf("exit = %d; want 2 (usage class)", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "single-string form") || !strings.Contains(out, "exec -- 'FOO=bar cmd") {
+		t.Errorf("usage error must name the single-string fix; stdout=%q", out)
+	}
+	if strings.Contains(out, "failed to run command") {
+		t.Errorf("guard must fire before running the command; stdout=%q", out)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr must stay pure; got %q", stderr.String())
+	}
+}
+
+// Single-string form is unaffected: the shell applies the assignment, the
+// command runs, and the engine strips the prefix so its value never reaches the
+// presentation or the source label.
+func TestExec_SingleStringAssignmentRunsClean(t *testing.T) {
+	c := calm.NewMockClient(t)
+	expectEstablish(c, "tok1")
+	d, stdout, _ := newDeps(t, c)
+
+	code := Dispatch(context.Background(), d, execArgs("conv", "FOO=supersecretval printf hello"))
+	if code != 0 {
+		t.Fatalf("exit = %d; want 0", code)
+	}
+	out := stdout.String()
+	if !strings.HasPrefix(out, "hello") {
+		t.Errorf("stdout must lead with the command output; got %q", out)
+	}
+	if strings.Contains(out, "supersecretval") {
+		t.Errorf("assignment value must not reach the presentation or label; got %q", out)
+	}
+}
+
+// The argv-assignment guard also protects the bootstrap-failure floor: with no
+// config/client, an argv-form assignment still gets the single-string guidance
+// and exit 2, and the wrapped command never runs.
+func TestPassthroughExec_BootstrapFloorArgvAssignmentIsUsageError(t *testing.T) {
+	t.Setenv(CaptureActiveEnv, "")
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := PassthroughExec(context.Background(), []string{"--", "FOO=bar", "echo", "hi"}, stdout, stderr)
+
+	if code != 2 {
+		t.Fatalf("exit = %d; want 2 (usage class)", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "single-string form") || !strings.Contains(out, "exec -- 'FOO=bar cmd") {
+		t.Errorf("must name the single-string fix; stdout=%q", out)
+	}
+	if strings.Contains(out, "hi") || strings.Contains(out, "failed to run command") {
+		t.Errorf("command must not run; stdout=%q", out)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr must stay pure; got %q", stderr.String())
+	}
+}
+
+// The guard protects the sentinel passthrough floor too: even nested under
+// CALM_CAPTURE_ACTIVE, an argv-form assignment gets the guidance and exit 2
+// before the transparent passthrough would try to run FOO=bar as a program.
+func TestPassthroughExec_SentinelFloorArgvAssignmentIsUsageError(t *testing.T) {
+	t.Setenv(CaptureActiveEnv, "1")
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := PassthroughExec(context.Background(), []string{"--", "FOO=bar", "echo", "hi"}, stdout, stderr)
+
+	if code != 2 {
+		t.Fatalf("exit = %d; want 2 (usage class)", code)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "single-string form") || !strings.Contains(out, "exec -- 'FOO=bar cmd") {
+		t.Errorf("must name the single-string fix; stdout=%q", out)
+	}
+	if strings.Contains(out, "hi") || strings.Contains(out, "failed to run command") {
+		t.Errorf("command must not run; stdout=%q", out)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr must stay pure; got %q", stderr.String())
+	}
+}

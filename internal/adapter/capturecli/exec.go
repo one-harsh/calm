@@ -44,6 +44,9 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 		_, _ = fmt.Fprintln(d.Stdout, "calm-capture exec: no command after --")
 		return 2
 	}
+	if argvAssignmentGuard(argv, d.Stdout) {
+		return 2
+	}
 
 	if os.Getenv(CaptureActiveEnv) == "1" {
 		return passthroughRun(ctx, argv, d.Stdout, d.Stderr)
@@ -130,6 +133,19 @@ func (d Deps) drain(ctx context.Context, mgr *session.Manager) {
 	mgr.Drain(dctx)
 }
 
+// argvAssignmentGuard rejects argv-form invocations whose first word is an
+// assignment prefix (`exec -- FOO=bar cmd`, multiple args): argv form would try
+// to run `FOO=bar` as a program. It writes the single-string guidance to out
+// and returns true when it fires. Single-string form (one arg) is unaffected —
+// the shell applies the assignment and the engine strips it from the label.
+func argvAssignmentGuard(argv []string, out io.Writer) bool {
+	if len(argv) > 1 && extract.IsAssignmentPrefix(argv[0]) {
+		_, _ = fmt.Fprintln(out, "calm-capture exec: assignment prefix needs the single-string form: exec -- 'FOO=bar cmd …'")
+		return true
+	}
+	return false
+}
+
 // PassthroughExec is exec's bootstrap-failure floor: with no usable config,
 // logger, or client, the wrapped command still runs and its output still
 // returns — a broken CALM setup must never block the local action
@@ -148,6 +164,12 @@ func PassthroughExec(ctx context.Context, args []string, stdout, stderr io.Write
 	argv := fs.Args()
 	if strings.TrimSpace(strings.Join(argv, " ")) == "" {
 		_, _ = fmt.Fprintln(stdout, "calm-capture exec: no command after --")
+		return 2
+	}
+	// The guard runs on the degraded floors too: an argv-form assignment must
+	// get the single-string guidance even when capture is already down, never
+	// the raw "executable file not found".
+	if argvAssignmentGuard(argv, stdout) {
 		return 2
 	}
 	if os.Getenv(CaptureActiveEnv) == "1" {

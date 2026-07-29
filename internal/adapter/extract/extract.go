@@ -4,10 +4,12 @@
 package extract
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 )
+
+var errUntranslatable = errors.New("extract: untranslatable command")
 
 type CaptureMode int
 
@@ -114,7 +116,8 @@ type fileTouchedFacts struct {
 func DerivePlan(inv Invocation, r ExecResult) (Plan, error) {
 	c, ok := parse(inv.Command)
 	if !ok {
-		return Plan{}, fmt.Errorf("extract: untranslatable command %q", inv.Command)
+		// not adding the command to the error message because it can be a secret
+		return Plan{}, errUntranslatable
 	}
 
 	facts := eventFacts{

@@ -203,6 +203,13 @@ normalization happens *before* the grammar is built:
   the git tools, `sed` for `calm_edit_file`, `tee` for `calm_write_file`) — typed
   and shell fallbacks share buckets, and tool names never enter the label grammar.
 - **Whitespace** is collapsed by tokenization.
+- **Assignment prefixes and an `env` wrapper are transparent to identity.** Leading
+  `NAME=VALUE` assignment prefixes and a plain `env` wrapper are stripped before the program
+  is derived, so `FOO=bar git status` and `env git status` label identically to `git status`.
+  An assignment's value can be a literal secret, so the whole prefix — name and value alike —
+  is dropped and never enters any label component. An `env` carrying its own flags (`env -i`,
+  `env -u NAME`) keeps the generic `env` program identity rather than reaching past the flags
+  to the wrapped command.
 - **All operands** form the identity — `cat a b` → `calm:v1:file:read:a:b`, never just
   `read:a` — so a multi-operand command can't alias onto a single-operand label. If any
   operand can't be resolved, the whole command falls back to `coexist`.

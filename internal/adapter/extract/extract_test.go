@@ -4,6 +4,7 @@
 package extract
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -621,6 +622,9 @@ func FuzzDerivePlan(f *testing.F) {
 		"", "cat foo.py", "git diff HEAD", "go test ./...", "grep TODO .",
 		"cat foo | grep bar", "ls", "weird $(cmd) thing", `cat "unterminated`,
 		"git", "git frobnicate", "  ", "../../etc/passwd",
+		"FOO=bar git status", "A=1 B=2", "env FOO=bar ls", "env -i printenv", "env",
+		`KEY=a\ b echo hi`, `grep foo\.bar x`, `trailing\`, `type C:\Users\foo.txt`,
+		`KEY="first\" secretpart" echo ok`, `KEY='odd\' quote' echo hi`, `KEY="unterminated echo hi`,
 	}
 	for _, s := range seeds {
 		f.Add(s, int64(1), "/work", "/work")
@@ -638,4 +642,246 @@ func FuzzDerivePlan(f *testing.F) {
 			t.Fatalf("no events for %q", command)
 		}
 	})
+}
+
+// assignmentMatrix pairs each prefix form with the value substrings that must
+// never survive into any derived string.
+var assignmentMatrix = []struct {
+	name   string
+	prefix string
+	absent []string
+}{
+	{"single", "FOO=singleval ", []string{"singleval"}},
+	{"multiple", "A=firstval B=secondval ", []string{"firstval", "secondval"}},
+	{"env_plain", "env ", nil},
+	{"env_assign", "env FOO=envval ", []string{"envval"}},
+	{"secret_value", "KEY=hunter2-super-secret ", []string{"hunter2-super-secret"}},
+	{"escaped_space", `KEY=first\ secretpart `, []string{"first", "secretpart"}},
+	{"single_quoted", `KEY='first secretpart' `, []string{"secretpart"}},
+	{"double_quoted", `KEY="first secretpart" `, []string{"secretpart"}},
+	{"dquote_escaped_quote", `KEY="first\" secretpart" `, []string{"first", "secretpart"}},
+	{"dquote_escaped_backslash", `KEY="first\\ secretpart" `, []string{"first", "secretpart"}},
+}
+
+// assignmentBases are commands with known derivations (git subcommand, a file
+// list, a coexist runner) that each prefix must not perturb.
+var assignmentBases = []string{"git status", "ls src", "go test ./..."}
+
+// planStrings collects every string a Plan carries — sources, content type, the
+// staleness token, and the shared event facts — so a secret-absence assertion
+// can sweep them all.
+func planStrings(p Plan) []string {
+	return []string{
+		p.LatestSource, p.HistorySource, p.Token, p.ContentType,
+		p.base.toolName, p.base.commandSummary, p.base.subcommand,
+		p.base.errMessage, p.base.traceSnippet,
+	}
+}
+
+func TestIsAssignmentPrefix(t *testing.T) {
+	cases := map[string]bool{
+		"FOO=bar": true,  // letters + value
+		"A1=x":    true,  // digit permitted after the first name char
+		"_x=y":    true,  // leading underscore
+		"FOO=":    true,  // empty value is still an assignment
+		"1A=x":    false, // name may not start with a digit
+		"a-b=c":   false, // '-' is not a name char
+		"cmd":     false, // no '='
+		"=x":      false, // empty name
+	}
+	for tok, want := range cases {
+		if got := IsAssignmentPrefix(tok); got != want {
+			t.Errorf("IsAssignmentPrefix(%q) = %v; want %v", tok, got, want)
+		}
+	}
+}
+
+func TestTokenize_BackslashEscaping(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{`KEY=first\ secretpart cmd`, []string{"KEY=first secretpart", "cmd"}},
+		{`grep foo\.bar x`, []string{"grep", `foo\.bar`, "x"}},
+		{`type C:\Users\foo.txt`, []string{"type", `C:\Users\foo.txt`}},
+		{`trailing\`, []string{`trailing\`}},
+		{`\`, []string{`\`}},
+		{`KEY="first\" secretpart" echo ok`, []string{`KEY=first" secretpart`, "echo", "ok"}},
+		{`KEY="a\\" b`, []string{`KEY=a\`, "b"}},
+		{`grep "a\nb" f`, []string{"grep", `a\nb`, "f"}},
+		{`KEY="a\`, []string{`KEY=a\`}},
+	}
+	for _, tc := range cases {
+		if got := tokenize(tc.in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("tokenize(%q) = %#v; want %#v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A backslash before a non-whitespace rune passes through literally, so an
+// escaped-arg command keeps its backslash AND still derives as itself — program
+// grep, not the generic sh bucket. The escaped and unescaped forms then label
+// distinctly; that identity fragmentation is accepted (best-effort normalizer).
+func TestDerivePlan_BackslashEscapedArgsDeriveAsSimpleCommand(t *testing.T) {
+	const seq = 3
+	esc, eerr := DerivePlan(inv(`grep foo\.bar x`, seq), okResult())
+	plain, perr := DerivePlan(inv("grep foo.bar x", seq), okResult())
+	if eerr != nil || perr != nil {
+		t.Fatalf("both must derive: escaped err=%v / plain err=%v", eerr, perr)
+	}
+	if esc.Mode != Replace {
+		t.Errorf("escaped-arg grep must derive as a simple command (replace), not the generic sh bucket; got %s / %q", esc.Mode, esc.HistorySource)
+	}
+	if esc.LatestSource == plain.LatestSource {
+		t.Errorf("escaped backslash must be retained (identity distinct from unescaped); both %q", esc.LatestSource)
+	}
+}
+
+// A Windows-style path survives tokenization verbatim: `\` is a separator there,
+// not an escape, and whitespace-only handling leaves the separators intact so
+// the path text reaches the args unchanged.
+func TestParse_WindowsPathSeparatorsSurvive(t *testing.T) {
+	c, ok := parse(`type C:\Users\foo.txt`)
+	if !ok {
+		t.Fatal(`parse(type C:\Users\foo.txt): want ok`)
+	}
+	if c.program != "type" {
+		t.Errorf("program = %q; want type", c.program)
+	}
+	want := `C:\Users\foo.txt`
+	if len(c.args) != 1 || c.args[0] != want {
+		t.Errorf("args = %#v; want [%q] (separators intact)", c.args, want)
+	}
+}
+
+// A program token bearing whitespace can only arise from quote gluing the
+// shell would reject or split differently — unattributable, so it labels as
+// the generic sh pipeline, never as a value-fragment identity.
+func TestParse_GluedProgramTokenCollapsesToGenericSh(t *testing.T) {
+	for _, command := range []string{
+		`KEY='first\' secretpart' echo ok`, // odd single-quotes re-open around the tail
+		`'my app' arg`,                     // quoted space-bearing program path: accepted degradation
+	} {
+		c, ok := parse(command)
+		if !ok || !c.pipeline || c.program != "sh" {
+			t.Errorf("parse(%q) = %+v, %v; want generic sh pipeline", command, c, ok)
+		}
+		joined := c.program + c.subcommand + strings.Join(c.args, " ")
+		if strings.Contains(joined, "secretpart") {
+			t.Errorf("parse(%q): value fragment leaked into identity: %q", command, joined)
+		}
+	}
+}
+
+// The untranslatable-command error is WARN-logged, so for an assignments-only
+// command (whose value can be a secret) its text must carry no command content.
+func TestDerivePlan_UntranslatableErrorHasNoCommandText(t *testing.T) {
+	_, err := DerivePlan(inv("SECRET=hunter2-super-secret", 1), okResult())
+	if err == nil {
+		t.Fatal("assignments-only command must be untranslatable")
+	}
+	if strings.Contains(err.Error(), "hunter2-super-secret") || strings.Contains(err.Error(), "SECRET=") {
+		t.Errorf("untranslatable error leaked command text: %q", err.Error())
+	}
+}
+
+// Assignment prefixes and an env wrapper are transparent at the parse level: the
+// program/subcommand/args match the unprefixed command exactly, and no
+// assignment value survives into a token.
+func TestParse_AssignmentPrefixesTransparent(t *testing.T) {
+	for _, pf := range assignmentMatrix {
+		for _, base := range assignmentBases {
+			t.Run(pf.name+"/"+base, func(t *testing.T) {
+				want, wok := parse(base)
+				got, gok := parse(pf.prefix + base)
+				if !wok || !gok {
+					t.Fatalf("both must parse: base ok=%v prefixed ok=%v", wok, gok)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("prefixed cmd = %+v; want %+v (unprefixed)", got, want)
+				}
+				fields := append([]string{got.program, got.subcommand}, got.args...)
+				for _, sec := range pf.absent {
+					for _, field := range fields {
+						if strings.Contains(field, sec) {
+							t.Errorf("assignment value %q leaked into token %q", sec, field)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// The same matrix at the Plan level: every derived string field matches the
+// unprefixed derivation, and no assignment value appears in any of them.
+func TestDerivePlan_AssignmentPrefixesTransparent(t *testing.T) {
+	const seq = 7
+	for _, pf := range assignmentMatrix {
+		for _, base := range assignmentBases {
+			t.Run(pf.name+"/"+base, func(t *testing.T) {
+				want, werr := DerivePlan(inv(base, seq), okResult())
+				got, gerr := DerivePlan(inv(pf.prefix+base, seq), okResult())
+				if werr != nil || gerr != nil {
+					t.Fatalf("both must derive: base err=%v prefixed err=%v", werr, gerr)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("prefixed plan = %+v; want %+v (unprefixed)", got, want)
+				}
+				for _, sec := range pf.absent {
+					for _, field := range planStrings(got) {
+						if strings.Contains(field, sec) {
+							t.Errorf("assignment value %q leaked into Plan field %q", sec, field)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// A command that is only assignment prefixes (optionally env-wrapped) has no
+// output worth an identity, so it is untranslatable — no label ever carries the
+// assignment value.
+func TestParse_OnlyAssignmentsUntranslatable(t *testing.T) {
+	for _, command := range []string{
+		"FOO=bar",
+		"A=1 B=2",
+		"KEY=hunter2-super-secret",
+		"env FOO=bar",
+		`FOO=bar\`,            // dangling backslash kept literal, still assignment-only
+		`KEY="secret echo ok`, // unterminated quote swallows the rest into the value
+	} {
+		if _, ok := parse(command); ok {
+			t.Errorf("parse(%q): want ok=false (untranslatable)", command)
+		}
+		if _, err := DerivePlan(inv(command, 1), okResult()); err == nil {
+			t.Errorf("DerivePlan(%q): want error (untranslatable)", command)
+		}
+	}
+}
+
+// env is never stripped down to the program it wraps once it carries its own
+// flags, and a bare env keeps the generic env identity — the label is always
+// calm:v1:shell:env, never a guess at the wrapped command past env's flag
+// grammar.
+func TestDerivePlan_EnvKeepsGenericIdentity(t *testing.T) {
+	const seq = 7
+	for _, command := range []string{"env -i printenv", "env -u SECRET_VAR mycmd", "env"} {
+		p, err := DerivePlan(inv(command, seq), okResult())
+		if err != nil {
+			t.Fatalf("DerivePlan(%q): %v", command, err)
+		}
+		if p.Mode != Coexist || p.LatestSource != "" {
+			t.Errorf("%q: want generic coexist; got mode=%s latest=%q", command, p.Mode, p.LatestSource)
+		}
+		if p.HistorySource != "calm:v1:shell:env#7" {
+			t.Errorf("%q: history = %q; want calm:v1:shell:env#7", command, p.HistorySource)
+		}
+		for _, leaked := range []string{"printenv", "mycmd", "SECRET_VAR"} {
+			if strings.Contains(p.HistorySource, leaked) {
+				t.Errorf("%q: %q leaked into label %q", command, leaked, p.HistorySource)
+			}
+		}
+	}
 }

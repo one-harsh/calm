@@ -27,8 +27,8 @@ var cosmeticFlags = map[string]bool{
 	"--no-pager": true,
 }
 
-// parse returns ok=false only for a blank command (the untranslatable signal);
-// every other input yields a cmd.
+// parse returns ok=false for a blank command or one that is only assignment
+// prefixes (both untranslatable signals); every other input yields a cmd.
 func parse(command string) (cmd, bool) {
 	s := strings.TrimSpace(command)
 	if s == "" {
@@ -39,8 +39,14 @@ func parse(command string) (cmd, bool) {
 	}
 
 	toks := tokenize(s)
+	toks = stripAssignmentPrefixes(toks)
 	if len(toks) == 0 {
 		return cmd{}, false
+	}
+	// A program token bearing whitespace means quoting glued a phrase the shell
+	// would not have — attribution can't be trusted, same verdict as shellMeta.
+	if strings.ContainsAny(toks[0], " \t") {
+		return cmd{program: "sh", pipeline: true}, true
 	}
 
 	c := cmd{program: filepath.Base(toks[0])}
@@ -63,12 +69,17 @@ func parse(command string) (cmd, bool) {
 	return c, true
 }
 
-// tokenize tolerates an unterminated quote — a best-effort normalizer, not a shell.
+// tokenize is a best-effort normalizer, not a shell: it tolerates an
+// unterminated quote; escaped whitespace glues and a double-quoted \" or \\
+// escapes, so an assignment value never splits a fragment into the program
+// slot; every other backslash is literal so Windows paths survive.
 func tokenize(s string) []string {
 	var toks []string
 	var b strings.Builder
 	var quote rune
 	inTok := false
+	pendingEsc := false
+	dqEsc := false
 
 	flush := func() {
 		if inTok {
@@ -80,12 +91,32 @@ func tokenize(s string) []string {
 
 	for _, r := range s {
 		switch {
-		case quote != 0:
-			if r == quote {
-				quote = 0
+		case pendingEsc:
+			if r == ' ' || r == '\t' {
+				b.WriteRune(r) // glue: drop the backslash, keep the whitespace
 			} else {
+				b.WriteByte('\\') // literal passthrough of both runes
 				b.WriteRune(r)
 			}
+			inTok = true
+			pendingEsc = false
+		case dqEsc:
+			if r != '"' && r != '\\' {
+				b.WriteByte('\\') // backslash stays literal before other runes, as in sh
+			}
+			b.WriteRune(r)
+			dqEsc = false
+		case quote != 0:
+			switch {
+			case quote == '"' && r == '\\':
+				dqEsc = true
+			case r == quote:
+				quote = 0
+			default:
+				b.WriteRune(r)
+			}
+		case r == '\\':
+			pendingEsc = true
 		case r == '\'' || r == '"':
 			quote = r
 			inTok = true
@@ -96,8 +127,54 @@ func tokenize(s string) []string {
 			inTok = true
 		}
 	}
+	if pendingEsc || dqEsc {
+		b.WriteByte('\\') // a trailing backslash escapes nothing; keep it literal
+		inTok = true
+	}
 	flush()
 	return toks
+}
+
+func IsAssignmentPrefix(tok string) bool {
+	eq := strings.IndexByte(tok, '=')
+	if eq <= 0 {
+		return false
+	}
+
+	// The value after "=" is never inspected: it can be a literal secret
+	// and must reach no label component.
+	for i := 0; i < eq; i++ {
+		ch := tok[i]
+		switch {
+		case ch == '_', ch >= 'A' && ch <= 'Z', ch >= 'a' && ch <= 'z':
+		case i > 0 && ch >= '0' && ch <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// stripAssignmentPrefixes drops leading assignment prefixes and a plain env
+// wrapper so identity derives from the real program, never from an assignment
+// (whose value can be a secret) or the env shim. An env carrying its own flags
+// (env -i, env -u NAME) is left intact: attribution isn't worth modeling, so
+// the program stays env (a generic coexist identity) rather than guessing past
+// env's flag grammar to the wrapped command.
+func stripAssignmentPrefixes(toks []string) []string {
+	i := 0
+	for i < len(toks) {
+		if IsAssignmentPrefix(toks[i]) {
+			i++
+			continue
+		}
+		if toks[i] == "env" && i+1 < len(toks) && !strings.HasPrefix(toks[i+1], "-") {
+			i++
+			continue
+		}
+		break
+	}
+	return toks[i:]
 }
 
 func (c cmd) pathArgs() []string {
