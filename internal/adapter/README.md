@@ -5,23 +5,60 @@ SPDX-License-Identifier: Apache-2.0
 
 # CALM Adapter
 
-The adapter turns local coding-agent actions into CALM-managed context. At its core is one **capture engine**: it runs (or receives) a local action, captures the full output to a CALM session, and returns task-facing text; the agent later retrieves the captured material through the same surface. The engine is shell-agnostic and drives two shells:
+A coding agent's tools spill a lot into its context window — a build
+log, a whole file, a `git diff` — and every line is re-billed on the
+model's next turn. The adapter is what puts CALM in front of that: it
+runs (or observes) the agent's action, captures the **full** output into
+a CALM session, and hands the agent back a compact, task-facing version
+plus a label to retrieve the rest on demand. The raw output stays
+searchable in CALM; the agent's context stays lean.
 
-- **MCP shell** (`mcp/`) — an `stdio` MCP server whose tools the host invokes directly (file read, shell command, git operation, edit). Coverage is what the host routes through the adapter's own tools, since CALM cannot see the host's native ones.
-- **Capture CLI** (`capturecli/`) — the `calm-capture` binary a harness-native hook rewrites shell tool calls onto (`exec`), the agent-facing retrieval (`search`) and outcome (`feedback`) commands, the harness-facing `hook`, and the operator's `init`. Utilization is structural: the hook fires on every native shell execution.
+Concretely: the agent runs a 5,000-line test suite. Without the adapter,
+all 5,000 lines land in context. With it, the agent gets back a short
+presentation and a `source=<label>`; later, if it needs the three
+failing assertions, it searches that label and pulls back just those.
+The same goes for file reads, greps, and git inspection.
 
-This is one CALM workload, not the universal shape of CALM integration. The adapter solves the hardest case: a coding-agent host where CALM cannot see the host's native tools, so the adapter has to run alongside them.
+At its core is **one capture engine**, with two front-ends over it (we
+call them *shells* — not OS shells; think "entry points"). The engine
+owns the capture semantics; each shell owns how a particular host reaches
+it:
+
+- **MCP server** (`mcp/`) — CALM tools a coding-agent host (Claude Code,
+  Cursor, Codex, …) calls directly over the Model Context Protocol (MCP,
+  how such hosts invoke external tools). What gets captured is whatever
+  the host routes through *these* tools — CALM can't see the host's own
+  native ones.
+- **Capture CLI** (`capturecli/`) — the `calm-capture` binary a
+  harness-native hook rewrites shell commands onto, so capture happens on
+  *every* command with no directive needed, plus the agent-facing
+  `search` / `feedback` retrieval and the operator's `init` installer.
+
+**This is one CALM workload, not the universal shape of CALM
+integration.** The adapter solves the *hardest* case — a coding-agent
+host where CALM can't see the native tools, so the adapter has to run
+alongside them. Other CALM workloads (say, an eval pipeline) just call
+the HTTP contract directly and need none of this machinery.
+
+**Two reader paths.** *Just want to understand what this does?* The intro
+above plus [`docs/DESIGN.md`](docs/DESIGN.md) Part I (the capture engine)
+is the whole orientation. *Contributing to the adapter?* Read the four
+contracts below, then the package layout.
 
 ## Canonical contracts
 
-Read these before contributing to the adapter:
+The design lives in docs, not in this README — read these before changing
+the adapter:
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) — adapter design contract: the capture engine (Part I), the shells and their command/hook/distribution surface (Part III), capture & presentation, lifecycle, observability.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — the append-only Adapter Decision Log (stable `ADnn` anchors), cited by name from DESIGN.md.
-- [`docs/LABELING.md`](docs/LABELING.md) — source-label grammar (fused `<base>[#<seq>]@<token>` form, validation rules) and event-extraction contract.
+- [`docs/LABELING.md`](docs/LABELING.md) — source-label grammar (the fused `<base>[#<seq>]@<token>` form that makes a capture retrievable, plus validation rules) and event-extraction contract.
 - [`docs/archives/PROTOTYPE-LEARNINGS.md`](docs/archives/PROTOTYPE-LEARNINGS.md) — origin painpoints that shaped the contracts; historical record only.
 
 ## Package layout
+
+*For contributors — a map of the source, not required reading to
+understand what the adapter does.*
 
 | Path | Purpose |
 |---|---|
@@ -36,13 +73,29 @@ Read these before contributing to the adapter:
 | `obs/` | Structured-log field keys + closed enums (degraded_reason, presentation mode), per-call measurement constants, context-bound per-call identity. |
 | `docs/` | The canonical adapter contracts (see above). |
 
-Two binary entry points over the one engine: [`cmd/calm-adapter/main.go`](../../cmd/calm-adapter/main.go) is the MCP `stdio` server an MCP host (Claude Code, Cursor, …) launches; [`cmd/calm-capture/main.go`](../../cmd/calm-capture/main.go) is the `calm-capture` CLI a harness hook and the operator invoke. Both are standalone static binaries.
+Two binary entry points over the one engine:
+[`cmd/calm-adapter/main.go`](../../cmd/calm-adapter/main.go) is the MCP
+`stdio` server an MCP host launches;
+[`cmd/calm-capture/main.go`](../../cmd/calm-capture/main.go) is the
+`calm-capture` CLI a harness hook and the operator invoke. Both are
+standalone static binaries.
 
 ## Boundary
 
-The adapter lives under `internal/adapter` because only this repository's binaries (`cmd/calm-adapter`, `cmd/calm-capture`) consume it — CALM's public surface is the OpenAPI spec, not a client SDK (see DL09 in `docs/HLD.md`). A boundary test pins its server-package imports to the extraction-portable set so a future carve-out is a lift, not a refactor.
+The adapter lives under `internal/adapter` because only this repository's
+binaries (`cmd/calm-adapter`, `cmd/calm-capture`) consume it — CALM's
+public surface is the OpenAPI spec, not a client SDK. (A boundary test
+keeps its imports carve-out-ready, so the engine could later ship as its
+own library without a rewrite.)
 
-The adapter owns its host-facing surfaces (the MCP protocol; the hook rewrite and CLI), local action execution, capture identity, response presentation, degraded-state signaling, and event emission. It does not own CALM's namespace/session security model, indexing semantics, feedback model, or storage lifecycle — those live in [`docs/HLD.md`](../../docs/HLD.md). It does not sandbox local execution either; commands run on the developer's machine with that process's ordinary permissions.
+The adapter **owns** its host-facing surfaces (the MCP protocol; the hook
+rewrite and CLI), local action execution, capture identity, response
+presentation, degraded-state signaling, and event emission. It does
+**not** own CALM's namespace/session security model, indexing semantics,
+feedback model, or storage lifecycle — those live in
+[`docs/HLD.md`](../../docs/HLD.md). It does not sandbox local execution
+either; commands run on the developer's machine with that process's
+ordinary permissions.
 
 ## Build, run, test
 
@@ -55,11 +108,21 @@ task smoke:adapter       # offline MCP-protocol smoke
 task closeout            # rebuild bin/calm-adapter for the next conversation
 ```
 
-Operator-facing deployment instructions (binary install, MCP-host registration, environment variables) live in the top-level [`README.md`](../../README.md). Project-wide engineering disciplines (logging, transactions, comment policy, …) live in [`CLAUDE.md`](../../CLAUDE.md).
+Operator-facing deployment (binary install, MCP-host registration,
+environment variables) lives in the top-level
+[`README.md`](../../README.md). Project-wide engineering disciplines
+(logging, transactions, comment policy, …) live in
+[`CLAUDE.md`](../../CLAUDE.md).
 
 ## Platform notes
 
-The module compile-checks on linux/darwin/windows × amd64/arm64 (`task build:all`, packages and all test files). Every tool lands on something that ships with the OS: `calm_run_command` uses the platform shell (`sh -c` on Unix, `cmd /c` on Windows — named in its description) and labels cmd-native idioms (`type`, `dir`, `findstr`) with the same stable identities as their Unix equivalents; `calm_grep` selects its engine at startup (ripgrep when installed, else grep, else findstr on Windows) and names it — findstr's limited regex dialect is stated in the description. The native file tools and `calm_search` are platform-independent. Only the git tools require an external install (`git` — which a git workspace implies). Timeout kills use process groups on Unix; on Windows only the direct child is killed, with the wait still bounded.
+The adapter runs cross-platform — it compile-checks on
+linux/darwin/windows × amd64/arm64 (`task build:all`), and every tool
+lands on something that ships with the OS (only the git tools need an
+external `git`). The per-tool specifics — the shell each `exec` uses,
+`calm_grep`'s engine selection, cmd-native idiom labeling, and the bounded
+Windows timeout — are stated in each tool's own description, which is
+where an integrator actually reads them.
 
 ## Related
 

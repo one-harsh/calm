@@ -1,35 +1,30 @@
 # CALM — Context Abstraction Layer for Models
 
-An HTTP service for team-deployed LLM workloads. CALM filters and
-compresses tool output before it enters the context window, indexes
-the raw content for later search, captures session events that outlive
-the conversation, and closes the loop by attributing workload-reported
-outcomes back to the specific calls that produced them. Token spend
-*and* retrieval quality are CALM's twin observable concerns — both
-load-bearing, both instrumented. CALM sits *beside* the workload and
-the LLM (a sidecar, not a proxy).
+CALM is context-management infrastructure for team-deployed LLM
+workloads. When an LLM app calls a tool — runs a command, reads a file,
+hits an API — the raw output normally lands in the model's context
+window and is re-billed on every turn. CALM sits *beside* the workload
+and the LLM (a sidecar, not a proxy): it captures that output, hands the
+model a compact representation, indexes the raw content so the model can
+search it back when it actually needs it, and — the part that makes it
+more than a compressor — attributes the outcomes a workload reports back
+to the specific calls that produced them, so a team can *measure*
+whether their context management is helping. Token spend *and* retrieval
+quality are its twin observable concerns.
 
-The canonical design lives in [`docs/HLD.md`](docs/HLD.md). This README
-is the operator-facing landing page. [`CLAUDE.md`](CLAUDE.md) is the
-engineering directive — code-side conventions and dev workflow, for
-contributors and AI coding assistants.
+**CALM is workload-agnostic.** Any LLM workload that produces bulky tool
+output is a fit — coding agents, eval pipelines, retrieval-heavy
+assistants. This repo ships two *worked integrations* (a coding-agent
+adapter and a Python eval harness) as examples of the HTTP contract, not
+as the product — the product is the HTTP service and its contract; the
+integrations are showcases you can copy or ignore.
 
-## Status
-
-Foundation, auth model, session lifecycle, observability surface, the
-content-handling layer (ingest / search / events / snapshot), outcome
-attribution (a correlation row per value-producing call, updated via
-`/v1/feedback`), and the capture adapter (capture→retrieve through a coding
-agent, via an MCP server or a shell hook) are end-to-end.
-
-Still stubbed (`501`): the `/v1/manage/*` administrative API. Search uses
-BM25 ranking per tokenizer class (prose and code), title-weighted, fused via
-reciprocal rank fusion, with a strict-word-similarity trigram fallback for
-partial identifiers; responses are byte-budgeted by a pluggable allocator
-(five variants, per-namespace default with per-request override), and a
-queries-less source scope rereads captured content in document order. Ingest
-maintains per-session vocabulary statistics and returns the highest-IDF
-distinctive terms with each response.
+**New here?** Read the HLD's *Motivation* and *Goals & Non-Goals*
+([`docs/HLD.md`](docs/HLD.md)) for *why* CALM exists, then this page for
+how to run it and wire a workload in. The HLD is the canonical design;
+this README is the operator-facing landing page. Contributing (or an AI
+coding assistant working in this repo)? The engineering directive is
+[`CLAUDE.md`](CLAUDE.md).
 
 ## What problem this addresses
 
@@ -56,24 +51,44 @@ the HLD's *Motivation*, *Goals & Non-Goals*, and *A note on RAG*
 sections for the full argument; CALM is explicitly not a RAG system,
 not an orchestrator, and not for solo install.
 
-## Architecture at a glance
+## How it works
 
-Single statically-linked Go binary, REST API with JSON payloads, all
-state behind a DAL backed by Postgres.
+A single statically-linked Go binary exposing a REST API, with all state
+behind a data-access layer backed by Postgres. The moving parts, in
+plain terms:
 
-- **Three core primitives** (ingest, search, session state) — see HLD's
-  primitives section.
-- **Workload patterns** identified by `namespace` (server-resolved from
-  the `X-CALM-API-Key`) and a `client` identifier (workload-supplied
-  metadata or server-verified bearer credential, depending on namespace
-  config) — see DL01.
-- **Six design invariants** — `never-worse`, `workload-agnostic`, the
-  two-layer isolation invariant (`namespace-isolation` for the
-  security/trust boundary + `session-isolation` for the content/scope
-  boundary), `sidecar-not-proxy`, `content-fidelity`, `idempotent-indexing`.
-  See the HLD's design-invariants section.
-- **Storage**: Postgres in production, BM25 via `pg_search` or
-  `pg_textsearch`, trigram via `pg_trgm` — see DL11.
+- **Three primitives** — *ingest* (capture tool output and index it),
+  *search* (retrieve it on demand — ranked queries, or a whole capture
+  reread in order), and *session state* (events that outlive the
+  conversation). The HLD's primitives section is the formal treatment.
+- **Outcome attribution** — every value-producing response carries a
+  correlation ID; a workload echoes it back to `/v1/feedback` to report
+  whether that call helped, and CALM labels its metrics by the reported
+  outcome. That's the mechanism behind the measurable-quality-signal the
+  intro promises.
+- **A sidecar, never a proxy.** CALM is beside the workload, not between
+  it and the LLM. If CALM is slow or down, the workload's own path still
+  works — this "never-worse" guarantee is the first of six design
+  invariants (workload-agnostic, isolation, fidelity, idempotency, …)
+  named and argued in the HLD.
+- **Two isolation boundaries.** Data is partitioned by *namespace* (the
+  security/trust boundary, resolved server-side from the API key) and by
+  *session* (the content/scope boundary). A cross-namespace read isn't
+  denied, it's *invisible* — it returns 404.
+- **Postgres storage**, with full-text ranking (prose and code) and
+  trigram matching for partial identifiers via standard Postgres
+  extensions.
+
+## Status
+
+Working end-to-end: ingest, search, session events, outcome attribution
+(a correlation row per value-producing call, updated via `/v1/feedback`),
+and the coding-agent adapter (capture→retrieve through an MCP server or a
+shell hook). Search ranks results across prose and code (BM25), with a
+trigram fallback that matches partial identifiers an exact term misses;
+it byte-budgets each response and can reread a whole capture in document
+order, and each response surfaces the most distinctive terms it saw. Still stubbed (returns `501`): the
+`/v1/manage/*` administrative API.
 
 ## Quickstart (local dev)
 
@@ -97,8 +112,8 @@ task run:calm                      # builds and runs against cmd/calm/config/dev
 [`cmd/calm/config/dev.yaml`](cmd/calm/config/dev.yaml), which references
 `[env:CALM_DEFAULT_KEY]` for the default namespace's bearer credential —
 the service refuses to start if you haven't exported it. Keeping the key in
-`.calm/calm_api.key` (gitignored) lets the MCP adapter below read the *same*
-key from that file, so the server and adapter always agree.
+`.calm/calm_api.key` (gitignored) lets the integrations below read the *same*
+key from that file, so the server and any adapter always agree.
 
 Once running, `/v1/health` is the simplest unauthenticated smoke check
 (the content endpoints return real data too, but need auth plus a session
@@ -116,9 +131,31 @@ session-touching endpoints additionally require
 and `X-CALM-Session-Token: <session-token>` (issued at
 `POST /v1/sessions`).
 
-## Wiring into a coding agent
+## Worked integrations
 
-CALM offers two ways to route a coding agent's actions through it — use either or both:
+CALM ships integrations as examples of the HTTP contract, not as
+libraries a workload must depend on. Two today, as peers:
+
+- **Coding agents** — the `calm-adapter` MCP server and the
+  `calm-capture` shell hook route a coding agent's tool calls through
+  CALM. This is the *hardest* integration case (CALM can't see a host's
+  native tools, so the adapter runs alongside them), which is why it's
+  the most fully worked — deep-dived below.
+- **LLM-eval pipelines** — the Python eval harness triages eval runs
+  (prompt diffs, run summaries, tool traces, judge rationales, golden
+  investigation queries) through the same HTTP contract, with no coding
+  agent in sight. It reports exact UTF-8 byte counts and intentionally
+  does not estimate model tokens. See
+  [`examples/eval-harness/README.md`](examples/eval-harness/README.md).
+
+A third or fourth workload wires in the same way: talk to the HTTP
+contract. The rest of this section is the coding-agent walkthrough — one
+example, in depth — so skip to [Configuration](#configuration) if that's
+not what you're integrating.
+
+### Coding agents
+
+Two ways to route a coding agent's actions through CALM — use either or both:
 
 - **MCP tools** — the `calm-adapter` MCP server exposes `calm_*` tools the host calls
   directly. Utilization is discretionary (the agent picks the tool), so it pairs with a
@@ -127,24 +164,21 @@ CALM offers two ways to route a coding agent's actions through it — use either
   every native shell command to run through capture. Utilization is structural: the hook
   fires on every shell execution, no directive needed.
 
-### Via the MCP adapter (`calm-adapter`)
-
-The adapter is a standard MCP stdio server, so any MCP host — Claude Code, Codex, Cursor,
-Claude Desktop, … — can use it. Build it first:
-
-```bash
-task build:adapter        # produces bin/calm-adapter
-```
-
-The adapter-specific design contract lives in
-[`internal/adapter/docs/DESIGN.md`](internal/adapter/docs/DESIGN.md); its source-label and
-event-extraction grammar lives in
-[`internal/adapter/docs/LABELING.md`](internal/adapter/docs/LABELING.md).
+The adapter's own design contract lives in
+[`internal/adapter/docs/DESIGN.md`](internal/adapter/docs/DESIGN.md) (and
+its source-label grammar in
+[`internal/adapter/docs/LABELING.md`](internal/adapter/docs/LABELING.md)) —
+read those for depth; what follows is enough to get wired.
 
 The commands below wire against the **local dev** CALM from the Quickstart
 (`http://localhost:8080`, the `.calm/calm_api.key` file). For a **deployed CALM**, point
 `CALM_ADAPTER_CALM_URL` at it and supply your team's namespace key the way your secret tooling
 delivers it (`[env:…]` / `[file:…]`) instead of the local `openssl`-generated file.
+
+#### Via the MCP adapter (`calm-adapter`)
+
+The adapter is a standard MCP stdio server, so any MCP host — Claude Code, Codex, Cursor,
+Claude Desktop, … — can use it. Build it (`task build:adapter`), then register it.
 
 **Claude Code** registers it from the CLI. Run this **from the repo root** (so `$(pwd)`
 expands to absolute paths):
@@ -158,25 +192,21 @@ claude mcp add calm \
   -- "$(pwd)/bin/calm-adapter"
 ```
 
-Two rules this encodes — both learned the hard way:
+Two rules this encodes, both learned the hard way:
 
-- **Absolute paths only.** Both the `command` and the `[file:…]` path must be absolute.
-  Claude Code execs the binary directly (no shell, so `~` is *not* expanded), and the secret
-  resolver rejects `~`/relative paths — either one silently becomes "failed to connect."
-  Running from the repo root makes `$(pwd)` resolve both.
-- **The key file holds only the bare key.** `[file:…]` uses the file's whole trimmed
-  contents as the API key, so `.calm/calm_api.key` must contain *just* the hex — no
-  `export`, no `VAR=`, no quotes. It's the same file the Quickstart created and that CALM is
-  running with, so server and adapter agree by construction; `.calm/` is gitignored, so the
-  key is never committed.
+- **Absolute paths only** for the binary and the `[file:…]` path — Claude Code execs the
+  binary directly (no shell, so `~` isn't expanded) and the secret resolver rejects `~`/relative
+  paths; either one silently becomes "failed to connect." Running from the repo root makes
+  `$(pwd)` resolve both.
+- **The key file holds only the bare key** — `[file:…]` uses the file's whole trimmed contents,
+  so `.calm/calm_api.key` must be *just* the hex (no `export`, no `VAR=`, no quotes). It's the
+  same file CALM is running with, so server and adapter agree by construction.
 
-`claude mcp list` then shows `calm: ✓ Connected`. On connect the adapter registers its
-client (idempotent — `409 already-registered` is treated as success) and creates a session;
-both are torn down on disconnect.
+`claude mcp list` then shows `calm: ✓ Connected`. On connect the adapter registers its client
+(idempotent) and creates a session; both are torn down on disconnect.
 
 **Other hosts** (Cursor, Claude Desktop, Codex) use the `mcpServers` convention — same
-`command` + `env`; only the file location differs (`~/.cursor/mcp.json` for Cursor, Codex's
-own config format, …):
+`command` + `env`; only the config file's location differs:
 
 ```json
 {
@@ -195,36 +225,27 @@ own config format, …):
 }
 ```
 
-These config files are usually committed, so they reference `[env:CALM_DEFAULT_KEY]` rather
-than inlining the key or a machine-specific path — export it where the host launches
-(`export CALM_DEFAULT_KEY=$(cat .calm/calm_api.key)`). The host's `clientInfo.name`
-(e.g. `claude-code`, `codex`) becomes the CALM `client` for the session.
+These files are usually committed, so they reference `[env:CALM_DEFAULT_KEY]` rather than
+inlining the key — export it where the host launches
+(`export CALM_DEFAULT_KEY=$(cat .calm/calm_api.key)`). `CALM_ADAPTER_CALM_API_KEY` uses the
+secret-reference dialect (`[text:..]` / `[env:..]` / `[file:..]`; raw values are rejected), and
+adapter logs go to `CALM_ADAPTER_LOG_FILE` — never stdout, which is the JSON-RPC channel.
 
 **One key, many agents.** What authenticates you to CALM is the *namespace* credential — the
-trust boundary between your deployment and CALM, not a per-agent key. (`CALM_DEFAULT_KEY` and
-`.calm/calm_api.key` are just how *local dev* holds that key for this walkthrough; in
-production the namespace key comes from operator config and platform-provisioned secrets —
-see [Configuration](#configuration).) Run Claude Code and Codex against the same CALM and they
-**share** the namespace key; the `client` identifier is what distinguishes them. In an
-*uncredentialed* namespace `client` is metadata only — any holder of the namespace key can
-claim any client name. Per-agent *secrets* (a server-minted bearer token per client, for real
-within-namespace isolation) are the *credentialed* namespace mode
-(`require_client_credentials: true`).
+trust boundary between your deployment and CALM, not a per-agent key. Run Claude Code and Codex
+against the same CALM and they **share** the namespace key; the host's `clientInfo.name`
+(`claude-code`, `codex`, …) becomes the CALM `client` that distinguishes them. Per-agent secrets
+(a server-minted bearer token per client, for real within-namespace isolation) are the
+*credentialed* namespace mode (`require_client_credentials: true`).
 
-The agent then has the adapter's tool surface: `calm_run_command` (run a shell command
-locally; output captured into CALM, returned compact), `calm_read_file` / `calm_edit_file` /
-`calm_write_file` / `calm_list_dir` / `calm_grep` (file operations with the same
-capture-on-the-way-through), `calm_git_status` / `calm_git_diff` (git inspection), and
-`calm_search` (retrieve captured output on demand — ranked queries, or a queries-less
-`source` scope that rereads a capture in document order).
-`stdout` is the JSON-RPC channel, so adapter logs go to `CALM_ADAPTER_LOG_FILE` (or stderr)
-— never stdout. `CALM_ADAPTER_CALM_API_KEY` uses the secret-reference dialect
-(`[text:..]` / `[env:..]` / `[file:..]`; raw values are rejected).
+Registration exposes the tools: `calm_run_command` (run a shell command locally, output captured
+and returned compact), the file tools (`calm_read_file` / `calm_edit_file` / `calm_write_file` /
+`calm_list_dir` / `calm_grep`), git inspection (`calm_git_status` / `calm_git_diff`), and
+`calm_search` (retrieve captured output on demand).
 
-**Make CALM the default (not just available).** Registration only *exposes* the tools; the tool
-descriptions nudge the agent toward them, but to make routing-through-CALM the agent's default
-behavior, add a directive to your project's `CLAUDE.md` / `AGENTS.md` (whatever rules file your
-host reads):
+**Make CALM the default (not just available).** Registration only *exposes* the tools; their
+descriptions nudge the agent, but to make routing-through-CALM the default, add a directive to
+your project's `CLAUDE.md` / `AGENTS.md`:
 
 ```markdown
 - Use the `calm_*` tool for each operation instead of the native equivalent: `calm_run_command`
@@ -236,62 +257,28 @@ host reads):
   the surrounding flow — it rereads the capture in document order.
 ```
 
-Without this, the agent will often fall back to its native shell tool. (The `calm-capture` shell
-hook below makes utilization structural instead of discretionary — it rewrites the native shell
-through capture on every call, and fails open so commands still run when CALM is unreachable, per
-the `never-worse` invariant.)
+Without it, the agent often falls back to its native shell tool — which the `calm-capture` hook
+below fixes structurally. To confirm a fresh setup works, have the agent run a command through
+`calm_run_command` and then `calm_search` a term from that output; each tool call and CALM
+request is logged with a shared `correlation_id` (in both `/tmp/calm-adapter.log` and CALM's own
+log), so a single call joins across the boundary. `task smoke:adapter` is an offline check that
+the binary speaks MCP.
 
-**Debugging the integration.** Each tool call stamps a `workload_request_id` and a
-`trace_id`, and every CALM request the adapter makes is logged with its latency, status,
-and the server-minted `correlation_id` — all of which also appear in CALM's own logs, so
-you can join a single tool call across adapter ↔ CALM. For an offline check that the
-binary speaks MCP correctly, run `task smoke:adapter`.
-
-### Verifying it works
-
-With CALM running (`task dev:up` + `task run:calm`, `CALM_DEFAULT_KEY` exported) and the
-adapter registered as above:
-
-1. **Connect** — start the host and confirm the `calm` server lists the adapter tools
-   (`calm_run_command`, `calm_search`, the file and git tools; `claude mcp list` shows
-   `✓ Connected`; `/mcp` inside a session lists them). On connect the adapter registers its client and creates a session — both visible
-   in `/tmp/calm-adapter.log`.
-2. **Capture** — have the agent run a command through `calm_run_command` (e.g. *"run `ls -la`
-   with calm_run_command"*); it returns a compact summary plus a `source=` label.
-3. **Retrieve** — have the agent `calm_search` a term from that output (e.g. a filename); it
-   returns the matching snippet.
-4. **Confirm the join** — `tail /tmp/calm-adapter.log` shows `calm call` lines carrying
-   `correlation_id`, `workload_request_id`, and `http.duration_ms`; the same `correlation_id`
-   appears in CALM's server log. The client is registered and a session created when the host
-   connects; the session is deleted on disconnect (all logged).
-
-If all four hold, the capture→retrieve loop is working end-to-end and is debuggable across the
-adapter ↔ CALM boundary.
-
-### Via a shell hook (`calm-capture`)
+#### Via a shell hook (`calm-capture`)
 
 `calm-capture` is a single-invocation CLI a harness-native hook rewrites shell tool calls onto,
-so capture is structural rather than discretionary. Build it:
-
-```bash
-task build:capture        # produces bin/calm-capture
-```
-
-Its commands:
+so capture is structural rather than discretionary. Build it (`task build:capture`). Its commands:
 
 - `calm-capture exec -- <command>` — runs the command, captures its full output into the CALM
-  session, and prints the engine's presentation in place of the raw output. The wrapped command's
-  exit code propagates verbatim, and on capture failure the raw output is shown unchanged
-  (`never-worse`). This is the form the hook rewrites to — you don't invoke it directly.
-- `calm-capture search [source=<label>] <terms>` — retrieve captured output: ranked queries, or a
-  queries-less `source` scope that rereads a capture in document order. The same primitive as the
-  MCP shell's `calm_search`.
-- `calm-capture feedback <ref> <outcome>` — report an outcome (`success` / `retry` / `degraded`)
-  against a capture's feedback ref.
-- `calm-capture hook` — the harness-facing adapter: reads a hook payload on stdin, emits the
+  session, and prints the engine's presentation in place of the raw output (exit code propagates
+  verbatim; on capture failure the raw output is shown unchanged — `never-worse`). This is the
+  form the hook rewrites to; you don't invoke it directly.
+- `calm-capture search [source=<label>] <terms>` — retrieve captured output (the same primitive
+  as the MCP shell's `calm_search`).
+- `calm-capture feedback <ref> <outcome>` — report an outcome (`success` / `retry` / `degraded`).
+- `calm-capture hook` — the harness-facing entry point: reads a hook payload on stdin, emits the
   rewrite (or a pass-through) on stdout. The harness invokes this, not you.
-- `calm-capture init --harness=claude` — installs the hook for Claude Code and validates
-  connectivity and credentials at install time.
+- `calm-capture init --harness=claude` — installs the hook for Claude Code (below).
 
 Every non-degraded capture prints a compact trailer pairing the source label with the feedback
 ref, so recall and outcome reporting are both discoverable from the result:
@@ -324,6 +311,9 @@ permission rule itself. One caution it repeats — never choose "don't ask again
 wrapped command.
 
 ## Configuration
+
+*Skip this section unless you're deploying CALM.* Local dev is covered by
+the Quickstart above; this is the operator reference.
 
 CALM reads its config from the YAML file pointed at by
 `CALM_CONFIG_FILE` (required — the service refuses to start without it).
@@ -371,57 +361,14 @@ Slice fields under `namespaces` are not env-overridable.
 
 ## API
 
-The HTTP contract is generated from
-[`docs/api/openapi.yaml`](docs/api/openapi.yaml). The full surface
-(`/v1/manage/*` currently stubbed):
-
-```
-GET    /v1/health
-GET    /v1/version
-POST   /v1/clients/{name}
-POST   /v1/clients/{name}/rotate-token
-POST   /v1/sessions
-DELETE /v1/sessions
-GET    /v1/sources
-GET    /v1/snapshot
-POST   /v1/ingest
-POST   /v1/search
-POST   /v1/events
-GET    /v1/events
-POST   /v1/feedback
-GET    /v1/manage/sessions
-DELETE /v1/manage/sessions
-GET    /v1/manage/clients
-DELETE /v1/manage/clients/{client}
-```
-
-Every request carries `X-CALM-API-Key: <namespace-key>`. Namespace is
-server-resolved from the key — clients never send a namespace in the
-request body. Cross-namespace mismatches return **404, not 403**
-(invisibility, not denial — encoded in the OpenAPI spec).
-
-Session-touching endpoints carry `X-CALM-Session-Token` (the credential
-returned by `POST /v1/sessions`). In credentialed namespaces, they also
-carry `Authorization: Bearer <client-token>`.
-
-Every response carries `X-CALM-Correlation-Id` (server-minted UUIDv7,
-unique per request). Workloads supply `X-Workload-Request-Id` to have
-it echoed back for their own log correlation. Requests with a valid
-inbound `traceparent` get a `traceresponse` on the way out. The
-correlation ID is the value workloads echo back to `/v1/feedback` when
-reporting outcomes for a prior call.
-
-## Examples
-
-CALM ships worked integrations as examples of the HTTP contract, not as
-libraries workloads must depend on. The MCP adapter demonstrates coding-agent
-capture/retrieval. The Python eval harness demonstrates a non-coding-agent
-workflow: LLM eval triage over prompt diffs, run summaries, tool traces, judge
-rationales, and golden investigation queries.
-
-The eval harness reports exact UTF-8 byte counts and intentionally does not
-estimate model tokens. See
-[`examples/eval-harness/README.md`](examples/eval-harness/README.md).
+The full HTTP contract — every route, request/response shape, and status
+code — is defined in [`docs/api/openapi.yaml`](docs/api/openapi.yaml),
+and the handlers are generated from it, so this README doesn't mirror the
+route list. `/v1/manage/*` (session and client administration) is
+currently stubbed (`501`). Request auth is covered in the
+[Quickstart](#quickstart-local-dev); the response-header contract
+(correlation id, `X-Workload-Request-Id`, W3C trace propagation) is in the
+HLD's response-headers section.
 
 ## Building and testing
 
@@ -445,58 +392,33 @@ migrations.
 
 ## Repo layout
 
+*For contributors — a map before you open the source; per-package detail
+lives in the code (and, for the adapter, in
+[`internal/adapter/README.md`](internal/adapter/README.md)).*
+
 ```
-cmd/
-  calm/             service entry (thin: config, deps, server.Run)
-    config/         operator config templates (example.yaml, dev.yaml)
-  calm-adapter/     MCP adapter binary (MCP shell)
-  calm-capture/     capture-CLI binary (hook rewrite + retrieval/feedback/init)
-examples/
-  eval-harness/     Python stdlib LLM-eval showcase and byte benchmark
-internal/
-  adapter/          the capture engine + two shells (MCP adapter, calm-capture
-                    CLI) — CALM client port, capture pipeline, extraction,
-                    on-disk session state (consumed by cmd/calm-adapter and
-                    cmd/calm-capture)
-  api/              generated handler interface + thin handlers + DTOs
-  auth/             API-key registry, namespace resolver, shared
-                    token mint/hash helpers, wire-header constants
-  clientreg/        client-entity orchestration (register, rotate, resolve)
-  config/           YAML config loader (Viper + struct binding)
-  db/               Postgres DAL — per-entity files (pg_clients.go,
-                    pg_sessions.go, ...), errors, models, tx primitive,
-                    embedded migrations
-  events/           session-event capture + priority-range validation
-  feedback/         outcome-feedback service: UUIDv7-timestamp TTL check,
-                    delegates to CorrelationsRepo.UpdateOutcome
-  ingest/           chunking, format detection, intent filtering
-  obs/              context-bound logging + field helpers; OTel
-                    propagator install (config-gated at bootup)
-  search/           search service: correlation capture + allocator seam
-                    (BM25 + RRF + trigram fallback live in the sources DAL)
-  secrets/          [scheme:payload] secret-reference resolver
-  server/           HTTP lifecycle + middleware chain (recovery, context,
-                    logging, workload-request-id, rate-limit, auth,
-                    body-size, timeout, OpenAPI, session-resolve)
-  session/          session-lifecycle orchestration service + LRU metadata
-                    cache + Idempotency-Key dedup + TTL scanner
-  snapshot/         generic event-store snapshot builder
-docs/
-  HLD.md            canonical design document
-  api/openapi.yaml  formal API contract
-test/integration/   real-Postgres end-to-end scenarios
+cmd/         the three binaries: calm (the service), calm-adapter (MCP
+             shell), calm-capture (capture-CLI shell)
+internal/    the service, one Go package per concern — api, auth, clientreg,
+             config, db (Postgres DAL), events, feedback, ingest, obs, search,
+             secrets, server, session, snapshot — plus adapter/ (the capture
+             engine and its two shells)
+examples/    worked integrations (eval-harness/, the Python LLM-eval showcase)
+docs/        HLD.md (canonical design) and api/openapi.yaml (the contract)
+test/        real-Postgres end-to-end integration scenarios
 ```
 
 ## Contributing
 
-Contributor contract — DCO sign-off, SPDX headers on new Go files,
-AGPL-free dependency policy — is in
-[`CONTRIBUTING.md`](CONTRIBUTING.md). The day-to-day development
-discipline (file layout, comment policy, logging conventions,
-middleware-chain order, testing rules) is in
-[`AGENTS.md`](AGENTS.md). The HLD is the spec; code follows the HLD,
-and silence in the HLD on something the code needs is a design gap to
-surface, not a license to improvise.
+The engineering directive — code-side conventions, file layout, comment
+policy, logging, middleware order, testing rules, and the day-to-day
+development discipline — is [`CLAUDE.md`](CLAUDE.md). (Non-Claude coding
+harnesses: [`AGENTS.md`](AGENTS.md) is a one-line pointer to it, so agents
+converge on the same rules.) The contributor contract — DCO sign-off,
+SPDX headers on new Go files, AGPL-free dependency policy — is in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). The HLD is the spec; code follows
+the HLD, and silence in the HLD on something the code needs is a design
+gap to surface, not a license to improvise.
 
 ## License
 
