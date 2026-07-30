@@ -1,0 +1,7 @@
+{
+    "session_id": "00000000-0000-0000-0000-000000000002",
+    "transcript_path": "/work/.transcript.jsonl",
+    "cwd": "/work",
+    "hook_event_name": "SessionStart",
+    "source": "resume"
+}

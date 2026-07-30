@@ -66,15 +66,12 @@ func TestDispatch_UsageErrors(t *testing.T) {
 }
 
 func TestResolveRoot(t *testing.T) {
-	if r, _ := ResolveRoot("/override"); r != "/override" {
-		t.Errorf("override root = %q; want /override", r)
-	}
 	t.Setenv("CALM_HOME", "/from-env")
-	if r, _ := ResolveRoot(""); r != "/from-env" {
+	if r, _ := ResolveRoot(); r != "/from-env" {
 		t.Errorf("env root = %q; want /from-env", r)
 	}
 	t.Setenv("CALM_HOME", "")
-	if r, err := ResolveRoot(""); err != nil || !strings.HasSuffix(r, ".calm") {
+	if r, err := ResolveRoot(); err != nil || !strings.HasSuffix(r, ".calm") {
 		t.Errorf("home fallback root = %q (err %v); want ~/.calm", r, err)
 	}
 }

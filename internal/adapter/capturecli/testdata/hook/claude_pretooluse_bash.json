@@ -1,0 +1,17 @@
+{
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "transcript_path": "/work/.transcript.jsonl",
+    "cwd": "/work",
+    "prompt_id": "00000000-0000-0000-0000-0000000000a1",
+    "permission_mode": "default",
+    "effort": {
+        "level": "xhigh"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+        "command": "git status",
+        "description": "Show working tree status"
+    },
+    "tool_use_id": "toolu_00000000000000000000000001"
+}

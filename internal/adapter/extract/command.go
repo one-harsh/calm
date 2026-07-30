@@ -69,6 +69,20 @@ func parse(command string) (cmd, bool) {
 	return c, true
 }
 
+// Program is the base program a command invokes, sharing parse with the labeler
+// so a re-entrancy guard and the source label agree on identity: argv[0]'s base
+// for a simple command, "sh" for a compound/pipeline (no single owner), and ""
+// for a blank or assignment-only line (no program at all). Substring matching a
+// program name against the whole command is the bug this replaces — it drops any
+// command that merely mentions the name.
+func Program(command string) string {
+	c, ok := parse(command)
+	if !ok {
+		return ""
+	}
+	return c.program
+}
+
 // tokenize is a best-effort normalizer, not a shell: it tolerates an
 // unterminated quote; escaped whitespace glues and a double-quoted \" or \\
 // escapes, so an assignment value never splits a fragment into the program

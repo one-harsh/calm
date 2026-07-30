@@ -13,8 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"sort"
 	"strconv"
 	"time"
 
@@ -41,7 +40,7 @@ type Config struct {
 	CALM       calm.Client
 	Logger     *logging.Logger
 	TTLMinutes int
-	RootDir    string // override; empty → $CALM_HOME → ~/.calm
+	RootDir    string // resolved state home (capturecli.ResolveRoot); required
 }
 
 // Manager persists the engine's session state for one harness conversation and
@@ -58,32 +57,20 @@ type Manager struct {
 }
 
 func New(cfg Config) (*Manager, error) {
-	root, err := resolveRoot(cfg.RootDir)
-	if err != nil {
-		return nil, err
+	// The state home is resolved once at bootstrap (capturecli.ResolveRoot) and
+	// injected: the session layer consumes it, never rediscovers CALM_HOME/~/.calm.
+	// An empty RootDir is a wiring error, not a cue to re-resolve.
+	if cfg.RootDir == "" {
+		return nil, errors.New("session: RootDir is required")
 	}
 	return &Manager{
-		store:     newStore(root, cfg.SessionID),
+		store:     newStore(cfg.RootDir, cfg.SessionID),
 		calm:      cfg.CALM,
 		log:       cfg.Logger,
 		sessionID: cfg.SessionID,
 		client:    cfg.Client,
 		ttlMin:    cfg.TTLMinutes,
 	}, nil
-}
-
-func resolveRoot(override string) (string, error) {
-	if override != "" {
-		return override, nil
-	}
-	if h := os.Getenv("CALM_HOME"); h != "" {
-		return h, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".calm"), nil
 }
 
 func (m *Manager) Ensure(ctx context.Context) (capture.EnsureResult, *capture.Signal) {
@@ -169,8 +156,12 @@ func (m *Manager) Record(ctx context.Context, token string, delta []capture.Sour
 		m.log.WithContext(ctx).Debug("registry delta from replaced session discarded")
 		return
 	}
+	if st.RegistrySeq == nil {
+		st.RegistrySeq = map[string]int64{}
+	}
 	for _, d := range delta {
 		st.Registry[d.Source] = d.Token
+		st.RegistrySeq[d.Source] = st.Seq
 	}
 	if err := m.store.save(st); err != nil {
 		m.log.WithContext(ctx).Warn("save registry delta failed", logging.ErrorField(err))
@@ -256,6 +247,7 @@ func (m *Manager) Reset(_ context.Context) error {
 	st.RecoverySeq++
 	st.Epoch++
 	st.Registry = map[string]string{}
+	st.RegistrySeq = map[string]int64{}
 	return m.store.save(st)
 }
 
@@ -390,6 +382,7 @@ func (m *Manager) recover(ctx context.Context, failedToken string) *capture.Sign
 		st.SessionToken = token
 		st.Epoch++
 		st.Registry = map[string]string{}
+		st.RegistrySeq = map[string]int64{}
 		if serr := m.store.save(st); serr != nil {
 			return m.storeFailure(ctx, "save replacement session", serr)
 		}
@@ -453,6 +446,41 @@ func (m *Manager) View(ctx context.Context) (View, error) {
 	}
 	reg.Load(st.Registry)
 	return View{Token: st.SessionToken, AuthFailed: st.AuthFailed, Epoch: st.Epoch, Registry: reg}, nil
+}
+
+// Inventory is a read-only slice of the capture registry for the session-start
+// card: the count of captures allocated this conversation, and its identities
+// ordered most-recent-first by the sequence at which each was last captured. It
+// takes the same lock read path as View, establishes nothing, and never touches
+// the network. A never-established session yields (0, nil).
+func (m *Manager) Inventory(ctx context.Context) (int64, []capture.InventoryEntry, error) {
+	unlock, err := m.store.lock()
+	if err != nil {
+		return 0, nil, err
+	}
+	defer unlock()
+	st, err := m.store.load()
+	if err != nil {
+		return 0, nil, err
+	}
+	if err := m.ownedState(st); err != nil {
+		return 0, nil, err
+	}
+	if st == nil {
+		m.log.WithContext(ctx).Debug("inventory of never-established session")
+		return 0, nil, nil
+	}
+	entries := make([]capture.InventoryEntry, 0, len(st.Registry))
+	for label := range st.Registry {
+		entries = append(entries, capture.InventoryEntry{Label: label, Token: st.Registry[label], Seq: st.RegistrySeq[label]})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Seq != entries[j].Seq {
+			return entries[i].Seq > entries[j].Seq
+		}
+		return entries[i].Label < entries[j].Label
+	})
+	return st.Seq, entries, nil
 }
 
 // `throttleActive` reports whether the persisted establishment throttle defers

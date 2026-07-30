@@ -44,6 +44,11 @@ type state struct {
 	NextAttemptAt   time.Time         `json:"next_attempt_at"`
 	CreatedAt       time.Time         `json:"created_at"`
 	Registry        map[string]string `json:"registry"`
+	// RegistrySeq stamps each registry identity with the sequence at which it
+	// was last captured, so the session-start inventory can order identities by
+	// recency (a latest label carries no `#seq`). Additive on the versioned
+	// schema: a state file predating it loads as nil and refills on next Record.
+	RegistrySeq map[string]int64 `json:"registry_seq,omitempty"`
 }
 
 // store resolves one conversation's on-disk layout and performs atomic
@@ -84,6 +89,9 @@ func (s *store) load() (*state, error) {
 	}
 	if st.Registry == nil {
 		st.Registry = map[string]string{}
+	}
+	if st.RegistrySeq == nil {
+		st.RegistrySeq = map[string]int64{}
 	}
 	return &st, nil
 }
@@ -126,6 +134,7 @@ func newState(sessionID, client string, now time.Time) *state {
 		IdempotencyBase: idempotencyBase(sessionID),
 		CreatedAt:       now,
 		Registry:        map[string]string{},
+		RegistrySeq:     map[string]int64{},
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 
 const (
 	CaptureActiveEnv string = "CALM_CAPTURE_ACTIVE"
+	binaryName       string = "calm-capture"
 	recallCommand    string = "calm-capture search"
 	defaultSessionID string = "default"
 
@@ -34,13 +35,14 @@ type Deps struct {
 	Logger *logging.Logger
 	Client calm.Client
 	Root   string
+	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
 }
 
 func Dispatch(ctx context.Context, d Deps, args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(d.Stderr, "usage: calm-capture <exec|search|feedback|init> [flags]")
+		_, _ = fmt.Fprintln(d.Stderr, "usage: calm-capture <exec|search|feedback|hook|init> [flags]")
 		return 2
 	}
 	switch args[0] {
@@ -50,6 +52,8 @@ func Dispatch(ctx context.Context, d Deps, args []string) int {
 		return d.searchCmd(ctx, args[1:])
 	case "feedback":
 		return d.feedbackCmd(ctx, args[1:])
+	case "hook":
+		return d.hookCmd(ctx)
 	case "init":
 		return d.initCmd(ctx, args[1:])
 	default:
@@ -58,10 +62,7 @@ func Dispatch(ctx context.Context, d Deps, args []string) int {
 	}
 }
 
-func ResolveRoot(override string) (string, error) {
-	if override != "" {
-		return override, nil
-	}
+func ResolveRoot() (string, error) {
 	if h := os.Getenv("CALM_HOME"); h != "" {
 		return h, nil
 	}

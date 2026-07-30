@@ -32,7 +32,7 @@ One HTTP API serves any LLM application a team runs:
 
 - **Internal LLM apps** — slackbots, internal copilots, query-answering assistants.
 - **Automated agent pipelines** — batch workflows, eval harnesses, scheduled report generators.
-- **Coding agents** (Claude Code, Cursor, Codex) — via a thin MCP adapter binary CALM ships.
+- **Coding agents** (Claude Code, Cursor, Codex) — via the adapter CALM ships: an MCP server exposing capture tools, or a shell hook that captures every command the agent runs.
 
 Those are illustrative, not architectural categories. Any LLM application that speaks HTTP and authenticates with a namespace credential is a valid CALM workload.
 

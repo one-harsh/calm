@@ -189,18 +189,11 @@ func TestGC_MissingRootAndStatelessIdleDir(t *testing.T) {
 	}
 }
 
-func TestResolveRoot_FallsBackToHome(t *testing.T) {
-	t.Setenv("CALM_HOME", "")
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home dir")
-	}
-	m, err := New(Config{SessionID: "conv-1", Logger: logging.Nop()})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if want := filepath.Join(home, ".calm", "sessions", "conv-1"); m.store.dir != want {
-		t.Errorf("dir = %q; want %q", m.store.dir, want)
+// The root is resolved at bootstrap and injected; the session layer requires it
+// rather than rediscovering CALM_HOME/~/.calm, so an empty RootDir is rejected.
+func TestNew_RequiresRootDir(t *testing.T) {
+	if _, err := New(Config{SessionID: "conv-1", Logger: logging.Nop()}); err == nil {
+		t.Error("New must reject an empty RootDir")
 	}
 }
 

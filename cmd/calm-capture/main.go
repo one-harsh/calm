@@ -43,10 +43,14 @@ func run() int {
 	d, cleanup, err := bootstrap()
 	if err != nil {
 		// never-worse: a broken CALM setup must never block the local action —
-		// exec degrades to a pure passthrough of the wrapped command. The
-		// CALM-facing commands fail honestly instead.
+		// exec degrades to a pure passthrough of the wrapped command, and hook
+		// to a stdin→stdout transform that rewrites/passes through with the
+		// static card. The CALM-facing commands fail honestly instead.
 		if len(args) > 0 && args[0] == "exec" {
 			return capturecli.PassthroughExec(ctx, args[1:], os.Stdout, os.Stderr)
+		}
+		if len(args) > 0 && args[0] == "hook" {
+			return capturecli.HookDegraded(ctx, os.Stdin, os.Stdout)
 		}
 		fmt.Fprintln(os.Stderr, "fatal:", err)
 		return 2
@@ -60,12 +64,12 @@ func run() int {
 }
 
 func bootstrap() (capturecli.Deps, func(), error) {
-	cfg, err := config.Load(os.Getenv("CALM_ADAPTER_CONFIG_FILE"))
+	root, err := capturecli.ResolveRoot()
 	if err != nil {
 		return capturecli.Deps{}, nil, err
 	}
 
-	root, err := capturecli.ResolveRoot("")
+	cfg, err := config.Load(os.Getenv("CALM_ADAPTER_CONFIG_FILE"), root)
 	if err != nil {
 		return capturecli.Deps{}, nil, err
 	}
@@ -107,6 +111,7 @@ func bootstrap() (capturecli.Deps, func(), error) {
 		Logger: logger,
 		Client: client,
 		Root:   root,
+		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 	}, func() { _ = logger.Sync() }, nil

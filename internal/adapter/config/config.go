@@ -6,6 +6,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
@@ -13,6 +15,8 @@ import (
 
 	"github.com/one-harsh/calm/internal/secrets"
 )
+
+const AdapterConfigFileName = "adapter.yaml"
 
 type Config struct {
 	Calm CalmConfig `mapstructure:"calm"`
@@ -33,17 +37,23 @@ type LogConfig struct {
 	File   string `mapstructure:"file"` // empty = stderr
 }
 
-func Load(path string) (Config, error) {
+func Load(path, root string) (Config, error) {
 	v := viper.New()
 	v.SetEnvPrefix("CALM_ADAPTER")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 	setDefaults(v)
 
-	if path != "" {
-		v.SetConfigFile(path)
+	file := path
+	if file == "" && root != "" {
+		if candidate := filepath.Join(root, AdapterConfigFileName); fileExists(candidate) {
+			file = candidate
+		}
+	}
+	if file != "" {
+		v.SetConfigFile(file)
 		if err := v.ReadInConfig(); err != nil {
-			return Config{}, fmt.Errorf("read config %s: %w", path, err)
+			return Config{}, fmt.Errorf("read config %s: %w", file, err)
 		}
 	}
 
@@ -67,6 +77,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.file", "")
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func validate(cfg Config) error {

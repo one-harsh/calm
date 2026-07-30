@@ -1,0 +1,9 @@
+{
+    "session_id": "00000000-0000-0000-0000-000000000001",
+    "transcript_path": "/work/.transcript.jsonl",
+    "cwd": "/work",
+    "prompt_id": "00000000-0000-0000-0000-0000000000b2",
+    "hook_event_name": "SessionStart",
+    "source": "compact",
+    "model": "claude-opus-4-8"
+}

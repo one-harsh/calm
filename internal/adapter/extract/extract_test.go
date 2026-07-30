@@ -696,6 +696,25 @@ func TestIsAssignmentPrefix(t *testing.T) {
 	}
 }
 
+func TestProgram(t *testing.T) {
+	cases := map[string]string{
+		"git status":                    "git",
+		"/usr/local/bin/calm-capture x": "calm-capture", // basename, not the whole path
+		"FOO=1 calm-capture exec":       "calm-capture", // assignment prefixes stripped
+		"grep -r calm-capture docs/":    "grep",         // a mention is not an invocation
+		"cat calm-capture.log":          "cat",
+		"foo && calm-capture exec":      "sh", // compound: no single owner
+		"a | b":                         "sh",
+		"":                              "", // blank: no program
+		"A=1 B=2":                       "", // assignment-only: no program
+	}
+	for command, want := range cases {
+		if got := Program(command); got != want {
+			t.Errorf("Program(%q) = %q; want %q", command, got, want)
+		}
+	}
+}
+
 func TestTokenize_BackslashEscaping(t *testing.T) {
 	cases := []struct {
 		in   string

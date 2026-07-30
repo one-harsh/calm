@@ -19,8 +19,8 @@ contributors and AI coding assistants.
 Foundation, auth model, session lifecycle, observability surface, the
 content-handling layer (ingest / search / events / snapshot), outcome
 attribution (a correlation row per value-producing call, updated via
-`/v1/feedback`), and the MCP adapter (capture→retrieve through a coding
-agent) are end-to-end.
+`/v1/feedback`), and the capture adapter (capture→retrieve through a coding
+agent, via an MCP server or a shell hook) are end-to-end.
 
 Still stubbed (`501`): the `/v1/manage/*` administrative API. Search uses
 BM25 ranking per tokenizer class (prose and code), title-weighted, fused via
@@ -116,7 +116,18 @@ session-touching endpoints additionally require
 and `X-CALM-Session-Token: <session-token>` (issued at
 `POST /v1/sessions`).
 
-## Wiring into a coding agent (MCP host)
+## Wiring into a coding agent
+
+CALM offers two ways to route a coding agent's actions through it — use either or both:
+
+- **MCP tools** — the `calm-adapter` MCP server exposes `calm_*` tools the host calls
+  directly. Utilization is discretionary (the agent picks the tool), so it pairs with a
+  `CLAUDE.md` directive.
+- **A shell hook** — the `calm-capture` CLI, installed as a harness-native hook, rewrites
+  every native shell command to run through capture. Utilization is structural: the hook
+  fires on every shell execution, no directive needed.
+
+### Via the MCP adapter (`calm-adapter`)
 
 The adapter is a standard MCP stdio server, so any MCP host — Claude Code, Codex, Cursor,
 Claude Desktop, … — can use it. Build it first:
@@ -225,9 +236,10 @@ host reads):
   the surrounding flow — it rereads the capture in document order.
 ```
 
-Without this, the agent will often fall back to its native shell tool. (A host-level hook that
-hard-blocks the native shell is possible but heavier — and must fail open so commands still run
-when CALM is unreachable, per the `never-worse` invariant.)
+Without this, the agent will often fall back to its native shell tool. (The `calm-capture` shell
+hook below makes utilization structural instead of discretionary — it rewrites the native shell
+through capture on every call, and fails open so commands still run when CALM is unreachable, per
+the `never-worse` invariant.)
 
 **Debugging the integration.** Each tool call stamps a `workload_request_id` and a
 `trace_id`, and every CALM request the adapter makes is logged with its latency, status,
@@ -255,6 +267,61 @@ adapter registered as above:
 
 If all four hold, the capture→retrieve loop is working end-to-end and is debuggable across the
 adapter ↔ CALM boundary.
+
+### Via a shell hook (`calm-capture`)
+
+`calm-capture` is a single-invocation CLI a harness-native hook rewrites shell tool calls onto,
+so capture is structural rather than discretionary. Build it:
+
+```bash
+task build:capture        # produces bin/calm-capture
+```
+
+Its commands:
+
+- `calm-capture exec -- <command>` — runs the command, captures its full output into the CALM
+  session, and prints the engine's presentation in place of the raw output. The wrapped command's
+  exit code propagates verbatim, and on capture failure the raw output is shown unchanged
+  (`never-worse`). This is the form the hook rewrites to — you don't invoke it directly.
+- `calm-capture search [source=<label>] <terms>` — retrieve captured output: ranked queries, or a
+  queries-less `source` scope that rereads a capture in document order. The same primitive as the
+  MCP shell's `calm_search`.
+- `calm-capture feedback <ref> <outcome>` — report an outcome (`success` / `retry` / `degraded`)
+  against a capture's feedback ref.
+- `calm-capture hook` — the harness-facing adapter: reads a hook payload on stdin, emits the
+  rewrite (or a pass-through) on stdout. The harness invokes this, not you.
+- `calm-capture init --harness=claude` — installs the hook for Claude Code and validates
+  connectivity and credentials at install time.
+
+Every non-degraded capture prints a compact trailer pairing the source label with the feedback
+ref, so recall and outcome reporting are both discoverable from the result:
+
+```text
+↳ source=calm:v1:shell:sh#1@ab12cd · feedback: calm-capture feedback <ref>
+```
+
+**Install for Claude Code.** `init` writes a durable config home under `$CALM_HOME` (default
+`~/.calm`) — `adapter.yaml` plus a `0600` credentials file it references — and a plugin under
+`$CALM_HOME/plugins/claude/`, validates the credential pairing against CALM, then prints the
+one-time install step:
+
+```bash
+export CALM_ADAPTER_CALM_URL=http://localhost:8080
+export CALM_ADAPTER_CALM_API_KEY="[file:$(pwd)/.calm/calm_api.key]"
+bin/calm-capture init --harness=claude
+# then, as init prints:
+claude plugin marketplace add ~/.calm/plugins/claude
+claude plugin install calm-capture
+```
+
+The plugin installs a PreToolUse (Bash) hook that rewrites each shell command through
+`calm-capture exec`, and a SessionStart hook that injects the retrieval card and reclaims idle
+capture state. The rewrite never approves a command — normal permission prompts still run, and the
+wrapped command stays legible in the approval dialog. Because the plugin consent screen does not
+itemize hooks, `init` is the disclosure surface: it prints exactly what installs and never writes a
+permission rule itself. One caution it repeats — never choose "don't ask again" for the
+`calm-capture exec` wrapper, which would write a blanket allow rule that auto-approves every
+wrapped command.
 
 ## Configuration
 
@@ -361,7 +428,7 @@ estimate model tokens. See
 Everything reproducible goes through `task`:
 
 ```bash
-task build              # build both binaries (calm + calm-adapter)
+task build              # build all binaries (calm + calm-adapter + calm-capture)
 task test               # Go unit + integration (needs `task dev:up`)
 task test:unit          # fast inner-loop tests, no Postgres needed
 task example:eval:check # Python eval-harness tests
@@ -382,13 +449,15 @@ migrations.
 cmd/
   calm/             service entry (thin: config, deps, server.Run)
     config/         operator config templates (example.yaml, dev.yaml)
-  calm-adapter/     MCP adapter binary
+  calm-adapter/     MCP adapter binary (MCP shell)
+  calm-capture/     capture-CLI binary (hook rewrite + retrieval/feedback/init)
 examples/
   eval-harness/     Python stdlib LLM-eval showcase and byte benchmark
 internal/
-  adapter/          MCP adapter packages — CALM client port, MCP stdio
-                    protocol, local exec, extraction (consumed only by
-                    cmd/calm-adapter)
+  adapter/          the capture engine + two shells (MCP adapter, calm-capture
+                    CLI) — CALM client port, capture pipeline, extraction,
+                    on-disk session state (consumed by cmd/calm-adapter and
+                    cmd/calm-capture)
   api/              generated handler interface + thin handlers + DTOs
   auth/             API-key registry, namespace resolver, shared
                     token mint/hash helpers, wire-header constants

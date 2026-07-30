@@ -74,34 +74,24 @@ func TestState_FilePermissionsOwnerOnly(t *testing.T) {
 	}
 }
 
-func TestStateDir_HonorsCalmHomeAndSanitizesSessionID(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CALM_HOME", home)
-	m, err := New(Config{SessionID: "abc-123", Logger: logging.Nop()})
+func TestStateDir_ComposesUnderRootAndSanitizesSessionID(t *testing.T) {
+	root := t.TempDir()
+	m, err := New(Config{SessionID: "abc-123", RootDir: root, Logger: logging.Nop()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if want := filepath.Join(home, "sessions", "abc-123"); m.store.dir != want {
-		t.Errorf("dir = %q; want %q (honors CALM_HOME, safe id verbatim)", m.store.dir, want)
+	if want := filepath.Join(root, "sessions", "abc-123"); m.store.dir != want {
+		t.Errorf("dir = %q; want %q (safe id verbatim under the resolved root)", m.store.dir, want)
 	}
 
-	root := t.TempDir()
-	m2, err := New(Config{SessionID: "abc-123", RootDir: root, Logger: logging.Nop()})
-	if err != nil {
-		t.Fatalf("New override: %v", err)
-	}
-	if want := filepath.Join(root, "sessions", "abc-123"); m2.store.dir != want {
-		t.Errorf("override dir = %q; want %q (RootDir beats CALM_HOME)", m2.store.dir, want)
-	}
-
-	m3, err := New(Config{SessionID: "../../etc/passwd", RootDir: root, Logger: logging.Nop()})
+	m2, err := New(Config{SessionID: "../../etc/passwd", RootDir: root, Logger: logging.Nop()})
 	if err != nil {
 		t.Fatalf("New hostile: %v", err)
 	}
-	if parent := filepath.Dir(m3.store.dir); parent != filepath.Join(root, "sessions") {
-		t.Errorf("hostile id escaped sessions root: %q", m3.store.dir)
+	if parent := filepath.Dir(m2.store.dir); parent != filepath.Join(root, "sessions") {
+		t.Errorf("hostile id escaped sessions root: %q", m2.store.dir)
 	}
-	if name := filepath.Base(m3.store.dir); strings.ContainsAny(name, `/\.`) || len(name) != 64 {
+	if name := filepath.Base(m2.store.dir); strings.ContainsAny(name, `/\.`) || len(name) != 64 {
 		t.Errorf("hostile id not hashed to a safe name: %q", name)
 	}
 }

@@ -35,7 +35,7 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load(os.Getenv("CALM_ADAPTER_CONFIG_FILE"))
+	cfg, err := config.Load(os.Getenv("CALM_ADAPTER_CONFIG_FILE"), "")
 	if err != nil {
 		return err
 	}
