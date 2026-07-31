@@ -49,8 +49,14 @@ func (d Deps) searchCmd(ctx context.Context, args []string) int {
 	if view.AuthFailed {
 		return d.degradedStderr(obs.DegradedReasonAuthFailed)
 	}
+	if !view.Established {
+		// A never-established conversation has an empty corpus, not a degraded
+		// backend: report an honest empty result and never reach CALM.
+		_, _ = fmt.Fprintln(d.Stdout, "no captures recorded in this conversation yet")
+		return 0
+	}
 	if view.Token == "" {
-		return d.degradedStderr(obs.DegradedReasonCalmUnreachable)
+		return d.degradedStderr(obs.DegradedReasonSessionLost)
 	}
 
 	// Strip and validate the fused staleness suffix locally before forwarding —

@@ -141,6 +141,135 @@ func padCommand(marker string) string {
 	return "printf '%s' '" + marker + " " + strings.Repeat("pad ", 256) + "'"
 }
 
+func posttoolusePayload(t *testing.T, sessionID, cwd, stdout string) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{
+		"session_id":      sessionID,
+		"cwd":             cwd,
+		"permission_mode": "default",
+		"hook_event_name": "PostToolUse",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]string{"command": "printf observed-output", "description": "emit output"},
+		"tool_response": map[string]any{
+			"stdout": stdout, "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false,
+		},
+		"tool_use_id": "toolu_obs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func posttoolusefailurePayload(t *testing.T, sessionID, cwd, errStr string) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{
+		"session_id":      sessionID,
+		"cwd":             cwd,
+		"permission_mode": "default",
+		"hook_event_name": "PostToolUseFailure",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]string{"command": "sh -c 'exit 3'", "description": "fail"},
+		"error":           errStr,
+		"is_interrupt":    false,
+		"tool_use_id":     "toolu_obsfail",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// observationStdout decodes a PostToolUse replacement envelope and returns its
+// updatedToolOutput.stdout — the presentation the harness shows in place of the
+// raw result.
+func observationStdout(t *testing.T, out string) string {
+	t.Helper()
+	var resp struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			UpdatedToolOutput struct {
+				Stdout string `json:"stdout"`
+			} `json:"updatedToolOutput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("hook did not emit an observation envelope: %v\n%s", err, out)
+	}
+	if resp.HookSpecificOutput.HookEventName != "PostToolUse" {
+		t.Fatalf("envelope hookEventName = %q; want PostToolUse\n%s", resp.HookSpecificOutput.HookEventName, out)
+	}
+	return resp.HookSpecificOutput.UpdatedToolOutput.Stdout
+}
+
+// A PostToolUse result is captured into CALM and the raw result is replaced with
+// a labeled presentation; the original output is retrievable verbatim under that
+// label, and the next SessionStart card lists the observed capture.
+func TestPostToolUseObservationRoundTrip(t *testing.T) {
+	base := hookBase(t, realCalmClient(t))
+	sid := uniqueSessionID(t)
+	marker := "obsroundtripmarker"
+	stdout := marker + " " + strings.Repeat("pad ", 256)
+
+	emitted, code := runHookCLI(t, base, posttoolusePayload(t, sid, "/work", stdout))
+	if code != 0 {
+		t.Fatalf("hook exit = %d; want 0", code)
+	}
+	source := execSource(t, observationStdout(t, emitted))
+
+	found, _, code := runCLI(t, base, "search", "--session", sid, "source="+source)
+	if code != 0 {
+		t.Fatalf("search exit = %d; want 0", code)
+	}
+	if !strings.Contains(found, marker) {
+		t.Fatalf("observed output not retrievable verbatim under %q:\n%s", source, found)
+	}
+
+	card, code := runHookCLI(t, base, sessionStartPayload(t, sid, "compact"))
+	if code != 0 {
+		t.Fatalf("SessionStart exit = %d; want 0", code)
+	}
+	if !strings.Contains(card, source) {
+		t.Errorf("SessionStart card must list the observed capture %q; got:\n%s", source, card)
+	}
+}
+
+// never-worse: with CALM unreachable, observation captures nothing and emits
+// nothing — the native result stands, exit 0.
+func TestPostToolUseNeverWorse(t *testing.T) {
+	down, err := calm.NewGenapiClient("http://127.0.0.1:1", testMasterKey, nil)
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	base := hookBase(t, down)
+	out, code := runHookCLI(t, base, posttoolusePayload(t, uniqueSessionID(t), "/work", "downmarker"))
+	if code != 0 || out != "" {
+		t.Errorf("CALM-down observation must emit nothing at exit 0; got code=%d out=%q", code, out)
+	}
+}
+
+// A PostToolUseFailure is capture-only: the hook emits nothing (the native error
+// result stands), but the failing command's output is indexed and retrievable.
+func TestPostToolUseFailureIndexed(t *testing.T) {
+	base := hookBase(t, realCalmClient(t))
+	sid := uniqueSessionID(t)
+	marker := "obsfailmarker"
+	errStr := "Exit code 3\n" + marker + " " + strings.Repeat("pad ", 256)
+
+	out, code := runHookCLI(t, base, posttoolusefailurePayload(t, sid, "/work", errStr))
+	if code != 0 || out != "" {
+		t.Fatalf("failure observation must emit nothing at exit 0; got code=%d out=%q", code, out)
+	}
+
+	found, _, code := runCLI(t, base, "search", "--session", sid, marker)
+	if code != 0 {
+		t.Fatalf("search exit = %d; want 0", code)
+	}
+	if !strings.Contains(found, marker) {
+		t.Fatalf("failing output not indexed/retrievable:\n%s", found)
+	}
+}
+
 // The whole hook-arm value loop: a PreToolUse payload rewrites into a wrapped
 // exec that captures against real CALM, the presentation carries the recall
 // trailer, and the capture is retrievable via search.
@@ -190,8 +319,8 @@ func TestSessionStartCardReflectsCorpus(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("SessionStart(compact) exit = %d; want 0", code)
 	}
-	if !strings.Contains(card, "calm-capture search") {
-		t.Errorf("card must teach recall; got:\n%s", card)
+	if !strings.Contains(card, "search --session '"+sid+"'") {
+		t.Errorf("card must teach the session-qualified recall; got:\n%s", card)
 	}
 	if !strings.Contains(card, recent) {
 		t.Errorf("card must surface the seeded identity %q; got:\n%s", recent, card)

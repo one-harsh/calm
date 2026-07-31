@@ -415,15 +415,19 @@ func (m *Manager) storeFailure(ctx context.Context, what string, err error) *cap
 	return &capture.Signal{Reason: obs.DegradedReasonCaptureFailed, Detail: err.Error()}
 }
 
-// View is the retrieval path's read-only slice of session state: the current
-// token, the auth latch, the epoch, and a hydrated staleness registry. It never
-// establishes a session nor allocates a sequence — retrieval fails with its
-// unavailability signal before the first capture (DESIGN.md §4).
+// View is the retrieval path's read-only slice of session state: whether the
+// session was ever established, the current token, the auth latch, the epoch,
+// and a hydrated staleness registry. It never establishes a session nor
+// allocates a sequence (DESIGN.md §4).
 type View struct {
-	Token      string
-	AuthFailed bool
-	Epoch      int64
-	Registry   *capture.Registry
+	Token string
+	// Established separates a never-established conversation (empty corpus, not a
+	// degradation) from a lost/stale session, so retrieval reports an honest
+	// empty result rather than calm_unreachable.
+	Established bool
+	AuthFailed  bool
+	Epoch       int64
+	Registry    *capture.Registry
 }
 
 func (m *Manager) View(ctx context.Context) (View, error) {
@@ -445,7 +449,7 @@ func (m *Manager) View(ctx context.Context) (View, error) {
 		return View{Registry: reg}, nil
 	}
 	reg.Load(st.Registry)
-	return View{Token: st.SessionToken, AuthFailed: st.AuthFailed, Epoch: st.Epoch, Registry: reg}, nil
+	return View{Token: st.SessionToken, Established: true, AuthFailed: st.AuthFailed, Epoch: st.Epoch, Registry: reg}, nil
 }
 
 // Inventory is a read-only slice of the capture registry for the session-start

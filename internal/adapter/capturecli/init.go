@@ -6,7 +6,6 @@ package capturecli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
+	"github.com/one-harsh/calm/internal/adapter/capturecli/harness"
 	"github.com/one-harsh/calm/internal/adapter/config"
 	"github.com/one-harsh/calm/internal/secrets"
 )
@@ -74,9 +74,9 @@ func (d Deps) probe(ctx context.Context) int {
 	}
 }
 
-func (d Deps) installHarness(ctx context.Context, harness string, force bool) int {
-	if harness != "claude" {
-		_, _ = fmt.Fprintf(d.Stderr, "calm-capture init: unsupported harness %q (supported: claude)\n", harness)
+func (d Deps) installHarness(ctx context.Context, harnessName string, force bool) int {
+	if harnessName != "claude" {
+		_, _ = fmt.Fprintf(d.Stderr, "calm-capture init: unsupported harness %q (supported: claude)\n", harnessName)
 		return 2
 	}
 	if code := d.writeConfigHome(force); code != 0 {
@@ -89,7 +89,11 @@ func (d Deps) installHarness(ctx context.Context, harness string, force bool) in
 	if code != 0 {
 		return code
 	}
-	d.scanForOtherHooks()
+	home, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+	for _, p := range harness.Claude.OtherHookLayers(home, cwd) {
+		_, _ = fmt.Fprintf(d.Stderr, "warning: %s already references %s — stacked capture layers corrupt capture identity; review and remove the other layer\n", p, binaryName)
+	}
 	d.printClaudeGuidance(pluginDir)
 	return 0
 }
@@ -201,7 +205,7 @@ func (d Deps) writeClaudePlugin(binPath string) (string, int) {
 	}{
 		{filepath.Join(metaDir, "plugin.json"), []byte(claudePluginManifest)},
 		{filepath.Join(metaDir, "marketplace.json"), []byte(claudeMarketplace)},
-		{filepath.Join(hooksDir, "hooks.json"), hooksConfigJSON(binPath)},
+		{filepath.Join(hooksDir, "hooks.json"), harness.Claude.HooksJSON(shellSingleQuote(binPath) + " hook")},
 	}
 	for _, f := range files {
 		if err := os.WriteFile(f.path, f.content, 0o644); err != nil { //nolint:gosec // plugin manifests are non-secret, world-readable by design
@@ -212,31 +216,10 @@ func (d Deps) writeClaudePlugin(binPath string) (string, int) {
 	return base, 0
 }
 
-// scanForOtherHooks warns (AD07) when another layer already references
-// calm-capture: stacked wraps corrupt capture identity. Warn-only — the exec
-// re-entrancy sentinel is the load-bearing guard, and layers can appear after
-// install.
-func (d Deps) scanForOtherHooks() {
-	home, _ := os.UserHomeDir()
-	cwd, _ := os.Getwd()
-	for _, p := range []string{
-		filepath.Join(home, ".claude", "settings.json"),
-		filepath.Join(cwd, ".claude", "settings.json"),
-		filepath.Join(cwd, ".claude", "settings.local.json"),
-	} {
-		data, err := os.ReadFile(p) //nolint:gosec // operator's own settings, read to warn only
-		if err != nil {
-			continue
-		}
-		if bytes.Contains(data, []byte(binaryName)) {
-			_, _ = fmt.Fprintf(d.Stderr, "warning: %s already references %s — stacked capture layers corrupt capture identity; review and remove the other layer\n", p, binaryName)
-		}
-	}
-}
-
 // printClaudeGuidance is the disclosure surface: the plugin consent screen does
-// not itemize hooks, so init states exactly what installs, the permission
-// consequence, and the hardened warning — and never writes a permission rule.
+// not itemize hooks, so init states exactly what installs and the cross-layer
+// warning. Observation runs after the tool, so it approves nothing and writes no
+// permission rule.
 func (d Deps) printClaudeGuidance(pluginDir string) {
 	w := d.Stderr
 	_, _ = fmt.Fprintf(w, "\nClaude Code plugin written to %s\n", pluginDir)
@@ -244,10 +227,11 @@ func (d Deps) printClaudeGuidance(pluginDir string) {
 	_, _ = fmt.Fprintf(w, "   claude plugin marketplace add %s\n", shellSingleQuote(pluginDir))
 	_, _ = fmt.Fprintln(w, "   claude plugin install calm-capture")
 	_, _ = fmt.Fprintln(w, "\nWhat this plugin installs (the consent screen does not itemize hooks):")
-	_, _ = fmt.Fprintln(w, "   • PreToolUse (Bash): rewrites each shell command to run through calm-capture exec so its output is captured.")
+	_, _ = fmt.Fprintln(w, "   • PostToolUse (Bash): captures each shell command's output into CALM and replaces the raw result with a compact, searchable presentation.")
+	_, _ = fmt.Fprintln(w, "   • PostToolUseFailure (Bash): indexes a failing command's output into CALM; the native error result is left untouched.")
 	_, _ = fmt.Fprintln(w, "   • SessionStart: injects the retrieval card and reclaims idle capture state.")
-	_, _ = fmt.Fprintln(w, "\nPermissions: the rewrite never approves a command — normal permission prompts still run. An allowlisted command may prompt again for its rewritten form; the wrapped command stays legible in the approval dialog's description.")
-	_, _ = fmt.Fprintln(w, "   ! Never choose \"don't ask again\" for the calm-capture exec wrapper — that writes a blanket allow rule that auto-approves every wrapped command.")
+	_, _ = fmt.Fprintln(w, "\nObservation runs after the tool completes, so it approves nothing and never writes a permission rule — normal permission prompts are unchanged.")
+	_, _ = fmt.Fprintln(w, "   ! Do not also install a PreToolUse calm-capture layer (or any other capture hook): stacked capture layers corrupt capture identity.")
 }
 
 func renderAdapterYAML(cfg config.Config, apiKeyRef string) string {
@@ -284,20 +268,3 @@ const claudeMarketplace = `{
   ]
 }
 `
-
-func hooksConfigJSON(binPath string) []byte {
-	// The harness runs this command through a shell, so a binary path with
-	// spaces must be quoted or the shell splits it and the wrapped command fails.
-	cmd, _ := json.Marshal(shellSingleQuote(binPath) + " hook")
-	return []byte(fmt.Sprintf(`{
-  "hooks": {
-    "PreToolUse": [
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": %s }] }
-    ],
-    "SessionStart": [
-      { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": %s }] }
-    ]
-  }
-}
-`, cmd, cmd))
-}

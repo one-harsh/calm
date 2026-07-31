@@ -24,7 +24,6 @@ import (
 const (
 	CaptureActiveEnv string = "CALM_CAPTURE_ACTIVE"
 	binaryName       string = "calm-capture"
-	recallCommand    string = "calm-capture search"
 	defaultSessionID string = "default"
 
 	opTimeout = 10 * time.Second
@@ -89,6 +88,13 @@ func sessionIDOr(v string) string {
 		return defaultSessionID
 	}
 	return v
+}
+
+// recallFor builds the retrieval hint for cards and trailers. It embeds the
+// absolute binPath and session id because a bare `calm-capture search` is off
+// PATH from the model's seat and resolves the wrong session dir.
+func recallFor(binPath, sessionID string) string {
+	return shellSingleQuote(binPath) + " search --session " + shellSingleQuote(sessionID)
 }
 
 func (d Deps) degradedStderr(reason string) int {

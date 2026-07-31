@@ -160,8 +160,8 @@ Two ways to route a coding agent's actions through CALM — use either or both:
 - **MCP tools** — the `calm-adapter` MCP server exposes `calm_*` tools the host calls
   directly. Utilization is discretionary (the agent picks the tool), so it pairs with a
   `CLAUDE.md` directive.
-- **A shell hook** — the `calm-capture` CLI, installed as a harness-native hook, rewrites
-  every native shell command to run through capture. Utilization is structural: the hook
+- **A shell hook** — the `calm-capture` CLI, installed as a harness-native hook, captures
+  every native shell command's output automatically. Utilization is structural: the hook
   fires on every shell execution, no directive needed.
 
 The adapter's own design contract lives in

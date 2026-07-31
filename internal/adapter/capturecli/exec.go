@@ -23,13 +23,6 @@ import (
 
 const drainTimeout time.Duration = 2 * time.Second
 
-// `execCmd` is the capture path:
-//  1. drain leftovers
-//  2. run the wrapped command with the re-entrancy sentinel set
-//  3. capture through the engine
-//  4. write the presentation to stdout
-//  5. flush this capture's events
-//  6. exit with the wrapped command's code
 func (d Deps) execCmd(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -52,7 +45,8 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 		return passthroughRun(ctx, argv, d.Stdout, d.Stderr)
 	}
 
-	mgr, err := d.manager(sessionIDOr(*sessionID))
+	sid := sessionIDOr(*sessionID)
+	mgr, err := d.manager(sid)
 	if err != nil {
 		_, _ = fmt.Fprintln(d.Stdout, "calm-capture exec:", err)
 		return 2
@@ -72,7 +66,7 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 		return 1
 	}
 
-	engine := capture.NewEngine(d.Client, mgr, mgr, d.Logger, recallCommand, capture.WithDiscoveryCard())
+	engine := capture.NewEngine(d.Client, mgr, mgr, d.Logger, recallFor(hookBinPath(), sid), capture.WithDiscoveryCard())
 	raw := capture.CommandPayload(r)
 	out := engine.Capture(ctx, capture.Spec{
 		Ingest:  raw,
@@ -101,10 +95,8 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 	return r.ExitCode
 }
 
-// composeExec is the presented stdout: the engine's visible output plus one
-// trailing line — the canonical degradation sentence when degraded, otherwise
-// a compact trailer whose source label makes even a small (inline) capture
-// recall-discoverable, with the feedback ref for outcome reporting.
+// composeExec appends the recall trailer (or the degradation sentence when
+// degraded) so even a small inline capture stays recall-discoverable.
 func composeExec(out capture.Outcome) string {
 	if out.Reason != "" {
 		v := out.Visible
@@ -188,9 +180,8 @@ func PassthroughExec(ctx context.Context, args []string, stdout, stderr io.Write
 	return r.ExitCode
 }
 
-// passthroughRun executes the command with no capture, no presentation, and no
-// degradation sentence: raw stdout and stderr pass to the caller's streams
-// (buffered split, not interleaved) and the exit code returns verbatim.
+// passthroughRun runs the command with no capture: raw stdout/stderr and the exit
+// code pass through verbatim.
 func passthroughRun(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	cwd, _ := os.Getwd()
 	r, err := runWrapped(ctx, argv, cwd)

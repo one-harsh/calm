@@ -715,6 +715,35 @@ func TestProgram(t *testing.T) {
 	}
 }
 
+// InvokesProgram must see through shell plumbing that Program collapses to "sh":
+// any pipeline/list segment whose argv[0] basename is the program counts, while a
+// redirection stays within its segment and a mere mention is not an invocation.
+func TestInvokesProgram(t *testing.T) {
+	cases := []struct {
+		command string
+		want    bool
+	}{
+		{`'/path with space/calm-capture' search --session 'x' "q" 2>&1 | head -50`, true}, // the live pipeline evasion
+		{"calm-capture search q", true},
+		{"FOO=bar calm-capture search q", true},       // assignment prefix stripped
+		{"cat log.txt | calm-capture search q", true}, // any segment counts
+		{"echo done && calm-capture feedback ref success", true},
+		{"echo a || calm-capture search q", true},
+		{"echo a ; calm-capture search q", true},
+		{"grep calm-capture docs.md", false}, // a mention is not an invocation
+		{"seq 1 10 | head -3", false},
+		{"git status", false},
+		{"calm-capture.exe search x", true},            // Windows argv[0]
+		{"/opt/tools/CALM-CAPTURE.EXE search x", true}, // case-insensitive + .exe
+		{"calm-capture.exextra x", false},              // .exe alias must be exact, not a prefix
+	}
+	for _, tc := range cases {
+		if got := InvokesProgram(tc.command, "calm-capture"); got != tc.want {
+			t.Errorf("InvokesProgram(%q) = %v; want %v", tc.command, got, tc.want)
+		}
+	}
+}
+
 func TestTokenize_BackslashEscaping(t *testing.T) {
 	cases := []struct {
 		in   string

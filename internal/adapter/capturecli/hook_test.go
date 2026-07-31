@@ -52,7 +52,7 @@ func decodeRewrite(t *testing.T, out string) (command, description string) {
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatalf("response is not a rewrite JSON: %v\n%s", err, out)
 	}
-	if resp.HookSpecificOutput.HookEventName != eventPreToolUse {
+	if resp.HookSpecificOutput.HookEventName != "PreToolUse" {
 		t.Errorf("hookEventName = %q; want PreToolUse", resp.HookSpecificOutput.HookEventName)
 	}
 	return resp.HookSpecificOutput.UpdatedInput.Command, resp.HookSpecificOutput.UpdatedInput.Description
@@ -61,8 +61,8 @@ func decodeRewrite(t *testing.T, out string) (command, description string) {
 func bashPayload(t *testing.T, sessionID, command string) []byte {
 	t.Helper()
 	p := map[string]any{
-		"hook_event_name": eventPreToolUse,
-		"tool_name":       toolBash,
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Bash",
 		"tool_input":      map[string]string{"command": command},
 	}
 	if sessionID != "" {
@@ -148,11 +148,22 @@ func TestHook_PreToolUse_MissingSessionID_PassThrough(t *testing.T) {
 	}
 }
 
+// AD07: calm-capture piped or chained (which Program collapses to "sh") is still
+// recognized, so a plumbed retrieval is never rewritten and re-captured.
+func TestHook_PreToolUse_PipedCalmCapture_PassThrough(t *testing.T) {
+	d, _, _ := newDeps(t, calm.NewMockClient(t))
+	cmd := `'/opt/bin/calm-capture' search --session 'x' "seq" 2>&1 | head -50`
+	out, code := dispatchHook(t, d, bashPayload(t, "s1", cmd))
+	if code != 0 || out != "" {
+		t.Errorf("piped calm-capture must pass through empty; got code=%d out=%q", code, out)
+	}
+}
+
 func TestHook_MalformedAndUnknown_PassThrough(t *testing.T) {
 	d, _, _ := newDeps(t, calm.NewMockClient(t))
 	for _, in := range []string{
 		`{ not json`,
-		`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"x"}}`,
+		`{"hook_event_name":"PostToolBatch","tool_name":"Bash","tool_input":{"command":"x"}}`,
 		``,
 	} {
 		out, code := dispatchHook(t, d, []byte(in))
@@ -252,9 +263,8 @@ func TestShellSingleQuote_RoundTripThroughSh(t *testing.T) {
 	}
 }
 
-// A command that merely names calm-capture (grep, cat, a commit message) is not
-// a wrapper invocation and must still be captured — the guard keys on program
-// identity, not a substring of the command.
+// A command that merely names calm-capture (grep, cat) is not a wrapper
+// invocation and must still be captured — the guard keys on program identity.
 func TestHook_PreToolUse_MentionsBinaryName_StillCaptures(t *testing.T) {
 	d, _, _ := newDeps(t, calm.NewMockClient(t))
 	out, code := dispatchHook(t, d, bashPayload(t, "s1", "grep -r calm-capture docs/"))
@@ -277,7 +287,6 @@ func TestHook_PreToolUse_QuotesBinaryPath(t *testing.T) {
 		stdout:  out,
 		logger:  logging.Nop(),
 		binPath: binPath,
-		recall:  recallCommand,
 	})
 	if code != 0 {
 		t.Fatalf("exit = %d; want 0", code)

@@ -29,10 +29,18 @@ it:
   how such hosts invoke external tools). What gets captured is whatever
   the host routes through *these* tools — CALM can't see the host's own
   native ones.
-- **Capture CLI** (`capturecli/`) — the `calm-capture` binary a
-  harness-native hook rewrites shell commands onto, so capture happens on
-  *every* command with no directive needed, plus the agent-facing
-  `search` / `feedback` retrieval and the operator's `init` installer.
+- **Capture CLI** (`capturecli/`) — the `calm-capture` binary that
+  harness-native hooks put on *every* shell command, so capture is
+  automatic — no directive, no agent cooperation. The hook uses the
+  strongest mode the harness supports:
+
+  | Harness | How capture happens |
+  |---|---|
+  | Claude Code | After each command runs, the hook swaps the raw output for the compact version. Permission prompts, allow rules, and approvals stay exactly as native — the hook only observes. |
+  | Cursor, Codex | Their hooks can't substitute a tool's output, so the hook rewrites the command to run through `calm-capture exec`, which runs it and captures. |
+
+  The same binary carries the agent-facing `search` / `feedback`
+  retrieval and the operator's `init` installer.
 
 **This is one CALM workload, not the universal shape of CALM
 integration.** The adapter solves the *hardest* case — a coding-agent
@@ -65,7 +73,8 @@ understand what the adapter does.*
 | `capture/` | The shell-agnostic capture engine — the `Session`/`EventSink` seam, the capture pipeline, response presentation, the staleness registry, and the discovery / session-start cards. |
 | `calm/` | CALM HTTP client port (Client interface, genapi wrapper, transport logging, mockery mock). |
 | `mcp/` | MCP stdio protocol layer — server lifecycle, tool registry, the tool handlers (shell, retrieval, file, git), result formatting. |
-| `capturecli/` | The `calm-capture` CLI shell — `exec`/`search`/`feedback`/`hook`/`init` dispatch, the PreToolUse rewrite and source-shaped session-start card injection. |
+| `capturecli/` | The `calm-capture` CLI shell — `exec`/`search`/`feedback`/`hook`/`init` dispatch, the post-execution observation arm and pre-execution rewrite, source-shaped session-start card injection. |
+| `capturecli/harness/` | The mode-shaped seam between a harness's wire format and the capture flow — neutral observation/wrap/session-start events, with per-harness parse/render (Claude today). |
 | `session/` | The CLI's on-disk session-state strategy — one directory per harness conversation under `$CALM_HOME`, crash-released advisory lock, event spool, opportunistic reclamation with no daemon (AD05). |
 | `extract/` | Shell-command parsing → source label + event derivation per LABELING.md (registry of `{matcher, builder}` rules, normalization, dual-write planning). |
 | `exec/` | Local process execution wrapper used by the shell-substrate tool and the CLI's `exec`. |

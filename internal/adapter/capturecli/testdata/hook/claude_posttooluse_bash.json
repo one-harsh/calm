@@ -1,0 +1,25 @@
+{
+    "session_id": "00000000-0000-0000-0000-000000000003",
+    "transcript_path": "/work/.transcript.jsonl",
+    "cwd": "/work",
+    "prompt_id": "00000000-0000-0000-0000-0000000000c3",
+    "permission_mode": "default",
+    "effort": {
+        "level": "xhigh"
+    },
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+        "command": "echo AI28-marker-x7q4z",
+        "description": "Echo the marker string"
+    },
+    "tool_response": {
+        "stdout": "AI28-marker-x7q4z",
+        "stderr": "",
+        "interrupted": false,
+        "isImage": false,
+        "noOutputExpected": false
+    },
+    "tool_use_id": "toolu_00000000000000000000000002",
+    "duration_ms": 384
+}

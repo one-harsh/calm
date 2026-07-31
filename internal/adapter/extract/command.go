@@ -83,6 +83,88 @@ func Program(command string) string {
 	return c.program
 }
 
+// InvokesProgram reports whether any pipeline/list segment of command runs program
+// as its argv[0] basename. Program collapses a compound line to "sh", so a
+// re-entrancy guard keyed on it is evaded by plumbing (`… | head`, `a && b`);
+// checking each segment recognizes calm-capture even when piped or chained.
+func InvokesProgram(command, program string) bool {
+	for _, seg := range splitSegments(command) {
+		toks := stripAssignmentPrefixes(tokenize(seg))
+		if len(toks) == 0 {
+			continue
+		}
+		base := filepath.Base(toks[0])
+		// Unconditional .exe alias + case-fold: a false match from odd casing on
+		// unix only passes capture through — lost capture, never corruption.
+		if strings.EqualFold(base, program) || strings.EqualFold(base, program+".exe") {
+			return true
+		}
+	}
+	return false
+}
+
+// splitSegments cuts command at unquoted command separators (|, ||, |&, &&, ;,
+// newline) and returns each segment's raw text for re-tokenizing. A lone & is
+// left in place so a redirection like 2>&1 stays intact and never becomes a
+// boundary; quotes and backslash escapes suppress separators inside them,
+// mirroring tokenize's quoting rules.
+func splitSegments(command string) []string {
+	var segs []string
+	var b strings.Builder
+	var quote rune
+	pendingEsc := false
+	dqEsc := false
+	rs := []rune(command)
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		switch {
+		case pendingEsc:
+			b.WriteByte('\\')
+			b.WriteRune(r)
+			pendingEsc = false
+		case dqEsc:
+			b.WriteRune(r)
+			dqEsc = false
+		case quote != 0:
+			switch {
+			case quote == '"' && r == '\\':
+				b.WriteRune(r)
+				dqEsc = true
+			case r == quote:
+				b.WriteRune(r)
+				quote = 0
+			default:
+				b.WriteRune(r)
+			}
+		case r == '\\':
+			pendingEsc = true
+		case r == '\'' || r == '"':
+			b.WriteRune(r)
+			quote = r
+		case r == ';' || r == '\n':
+			segs = append(segs, b.String())
+			b.Reset()
+		case r == '|':
+			segs = append(segs, b.String())
+			b.Reset()
+			if i+1 < len(rs) && (rs[i+1] == '|' || rs[i+1] == '&') {
+				i++ // consume the second byte of || or |&
+			}
+		case r == '&' && i+1 < len(rs) && rs[i+1] == '&':
+			segs = append(segs, b.String())
+			b.Reset()
+			i++ // consume the second & of &&
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if pendingEsc {
+		b.WriteByte('\\')
+	}
+	segs = append(segs, b.String())
+	return segs
+}
+
 // tokenize is a best-effort normalizer, not a shell: it tolerates an
 // unterminated quote; escaped whitespace glues and a double-quoted \" or \\
 // escapes, so an assignment value never splits a fragment into the program

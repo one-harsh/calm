@@ -21,23 +21,22 @@ func expectLatch(c *calm.MockClient) {
 		Return("", &calm.StatusError{Op: "create", Code: 401, Status: "401"}).Once()
 }
 
-// Retrieval never establishes: with no session on disk, search fails with the
-// unavailability phrasing and a nonzero exit, and the strict mock proves no
-// create was attempted.
-func TestSearch_NoSession_UnavailableNoCreate(t *testing.T) {
+// A brand-new conversation is an empty corpus, not a degraded backend: search
+// prints an empty result at exit 0 and never calls CALM.
+func TestSearch_NeverEstablished_EmptyNoCreate(t *testing.T) {
 	c := calm.NewMockClient(t) // strict: any CALM call fails the test
 	d, stdout, stderr := newDeps(t, c)
 
 	code := Dispatch(context.Background(), d, []string{"search", "--session", "conv", "find me"})
 
-	if code == 0 {
-		t.Fatalf("exit = 0; want nonzero for unavailable retrieval")
+	if code != 0 {
+		t.Fatalf("exit = %d; want 0 for an empty corpus", code)
 	}
-	if !strings.Contains(stderr.String(), obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable)) {
-		t.Errorf("stderr must carry the unavailability phrasing; got:\n%s", stderr.String())
+	if !strings.Contains(stdout.String(), "no captures recorded in this conversation yet") {
+		t.Errorf("stdout must carry the empty-corpus teaching line; got:\n%s", stdout.String())
 	}
-	if stdout.Len() != 0 {
-		t.Errorf("no results to stdout when unavailable; got:\n%s", stdout.String())
+	if stderr.Len() != 0 {
+		t.Errorf("an empty corpus is not a degradation; stderr must be empty, got:\n%s", stderr.String())
 	}
 }
 
@@ -133,9 +132,7 @@ func TestSearch_FeedbackRefTrailer(t *testing.T) {
 	}
 }
 
-// A zero-hit search still has a correlation row, so its result carries the
-// feedback ref — both ranked and document-order — right where attribution of a
-// miss is most valuable.
+// A zero-hit search still carries the feedback ref (ranked and document-order).
 func TestSearch_ZeroHitCarriesFeedbackRef(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectEstablish(c, "tok1")
@@ -241,9 +238,8 @@ func TestSearch_Latched_AuthFailed(t *testing.T) {
 	}
 }
 
-// AD03 parity with the MCP shell: a search-observed 404 runs the one CAS'd
-// replacement create — this query reports session_lost, the conversation heals
-// for the next capture.
+// AD03: a search-observed 404 runs one CAS'd replacement create — this query
+// reports session_lost, the conversation heals for the next capture.
 func TestSearch_SessionNotFound_RecoversConversation(t *testing.T) {
 	c := calm.NewMockClient(t)
 	expectEstablish(c, "tok1")

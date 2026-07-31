@@ -80,7 +80,7 @@ func TestInitHarness_Idempotent(t *testing.T) {
 	}
 	// The hook command invokes the absolute binary path resolved at install.
 	hooks, _ := os.ReadFile(filepath.Join(d.Root, "plugins", "claude", "hooks", "hooks.json"))
-	if !strings.Contains(string(hooks), " hook") || !strings.Contains(string(hooks), "PreToolUse") {
+	if !strings.Contains(string(hooks), " hook") || !strings.Contains(string(hooks), "PostToolUse") {
 		t.Errorf("hooks.json must wire the hook command; got:\n%s", hooks)
 	}
 }
@@ -169,7 +169,7 @@ func TestInitHarness_WarnsOnOtherLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"),
-		[]byte(`{"hooks":{"PreToolUse":[{"hooks":[{"command":"calm-capture hook"}]}]}}`), 0o644); err != nil {
+		[]byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"calm-capture hook"}]}]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,8 +183,8 @@ func TestInitHarness_WarnsOnOtherLayer(t *testing.T) {
 	}
 }
 
-// init prints the disclosure the plugin consent screen omits: what installs, the
-// permission consequence, and the hardened don't-ask-again warning.
+// init prints the disclosure the plugin consent screen omits: what installs and
+// the cross-layer warning.
 func TestInitHarness_PrintsDisclosure(t *testing.T) {
 	scrubAdapterEnv(t)
 	c := calm.NewMockClient(t)
@@ -195,13 +195,54 @@ func TestInitHarness_PrintsDisclosure(t *testing.T) {
 	out := stderr.String()
 	for _, want := range []string{
 		"claude plugin marketplace add",
-		"PreToolUse",
+		"PostToolUse",
+		"PostToolUseFailure",
 		"SessionStart",
-		`don't ask again`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("disclosure must mention %q; got:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "don't ask again") {
+		t.Errorf("observation writes no permission rule, so the allow-rule warning must be gone; got:\n%s", out)
+	}
+}
+
+// init installs the observation hook set — PostToolUse and PostToolUseFailure
+// (both Bash, with a timeout backstop) plus SessionStart — and no PreToolUse
+// rewrite layer; the guidance discloses the three hooks and drops the allow-rule
+// warning (observation touches no permission surface).
+func TestInitHarness_InstallsObservationHookSet(t *testing.T) {
+	scrubAdapterEnv(t)
+	c := calm.NewMockClient(t)
+	c.EXPECT().RegisterClient(mock.Anything, mock.Anything).Return(true, nil).Maybe()
+	d, _, stderr := newDeps(t, c)
+
+	if code := Dispatch(context.Background(), d, []string{"init", "--harness=claude"}); code != 0 {
+		t.Fatalf("install exit = %d; want 0", code)
+	}
+	hooks, err := os.ReadFile(filepath.Join(d.Root, "plugins", "claude", "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatalf("read hooks.json: %v", err)
+	}
+	got := string(hooks)
+	for _, want := range []string{"PostToolUse", "PostToolUseFailure", "SessionStart", `"timeout": 30`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("hooks.json must contain %q; got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "PreToolUse") {
+		t.Errorf("observation installs no PreToolUse rewrite layer; got:\n%s", got)
+	}
+
+	guidance := stderr.String()
+	for _, want := range []string{"PostToolUse", "PostToolUseFailure", "SessionStart"} {
+		if !strings.Contains(guidance, want) {
+			t.Errorf("guidance must mention %q; got:\n%s", want, guidance)
+		}
+	}
+	if strings.Contains(guidance, "don't ask again") {
+		t.Errorf("guidance must not print the allow-rule warning; got:\n%s", guidance)
 	}
 }
 

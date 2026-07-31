@@ -1,0 +1,20 @@
+{
+    "session_id": "00000000-0000-0000-0000-000000000004",
+    "transcript_path": "/work/.transcript.jsonl",
+    "cwd": "/work",
+    "prompt_id": "00000000-0000-0000-0000-0000000000c4",
+    "permission_mode": "default",
+    "effort": {
+        "level": "xhigh"
+    },
+    "hook_event_name": "PostToolUseFailure",
+    "tool_name": "Bash",
+    "tool_input": {
+        "command": "sh -c 'echo out-line; echo err-line >&2; exit 3'",
+        "description": "Echo to stdout and stderr, exit with code 3"
+    },
+    "tool_use_id": "toolu_00000000000000000000000003",
+    "error": "Exit code 3\nout-line\nerr-line",
+    "is_interrupt": false,
+    "duration_ms": 61
+}

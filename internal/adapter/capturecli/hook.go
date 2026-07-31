@@ -5,7 +5,6 @@ package capturecli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,13 +15,10 @@ import (
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/capture"
+	"github.com/one-harsh/calm/internal/adapter/capturecli/harness"
 	"github.com/one-harsh/calm/internal/adapter/extract"
 	"github.com/one-harsh/calm/internal/adapter/session"
 )
-
-// hook is the harness-facing adapter: one stdin JSON payload → one stdout response.
-// On the rewrite and pass-through paths it is a pure transform — no CALM client,
-// no session lock.
 
 const (
 	hookPassThrough = 0
@@ -30,25 +26,7 @@ const (
 	// hookStdinLimit bounds the payload read so a hostile stdin cannot exhaust
 	// memory on the hot path.
 	hookStdinLimit = 1 << 20
-
-	eventPreToolUse   = "PreToolUse"
-	eventSessionStart = "SessionStart"
-	toolBash          = "Bash"
-
-	sourceStartup = "startup"
-	sourceClear   = "clear"
-	sourceCompact = "compact"
 )
-
-type hookPayload struct {
-	HookEventName string `json:"hook_event_name"`
-	SessionID     string `json:"session_id"`
-	Source        string `json:"source"`
-	ToolName      string `json:"tool_name"`
-	ToolInput     struct {
-		Command string `json:"command"`
-	} `json:"tool_input"`
-}
 
 type hookConfig struct {
 	stdin   io.Reader
@@ -56,8 +34,10 @@ type hookConfig struct {
 	root    string // "" → degraded: static card, no inventory, no reclamation
 	ttl     time.Duration
 	logger  *logging.Logger
-	binPath string // absolute calm-capture path the rewrite invokes
-	recall  string
+	binPath string
+	// deps carries the capture stack the observation path needs; zero-valued on
+	// the degraded floor, where the observation path passes through.
+	deps Deps
 }
 
 func (d Deps) hookCmd(ctx context.Context) int {
@@ -68,118 +48,103 @@ func (d Deps) hookCmd(ctx context.Context) int {
 		ttl:     d.sessionTTL(),
 		logger:  d.Logger,
 		binPath: hookBinPath(),
-		recall:  recallCommand,
+		deps:    d,
 	})
 }
 
-// HookDegraded is the hook's bootstrap-failure floor (no usable config/logger/client),
-// the rewrite and pass-through paths still run — they need nothing but stdin and stdout.
+// HookDegraded is the hook's bootstrap-failure floor: the rewrite and pass-through
+// paths still run — they need nothing but stdin and stdout.
 func HookDegraded(ctx context.Context, stdin io.Reader, stdout io.Writer) int {
 	return runHook(ctx, hookConfig{
 		stdin:   stdin,
 		stdout:  stdout,
 		logger:  logging.Nop(),
 		binPath: hookBinPath(),
-		recall:  recallCommand,
 	})
 }
 
 func runHook(ctx context.Context, c hookConfig) int {
-	p, err := readHookPayload(c.stdin)
+	stdin, err := readStdin(c.stdin)
 	if err != nil {
 		return hookPassThrough
 	}
-	switch p.HookEventName {
-	case eventPreToolUse:
-		return c.handlePreToolUse(p)
-	case eventSessionStart:
-		return c.handleSessionStart(ctx, p)
+	ev := harness.Claude.Parse(stdin)
+	switch ev.Kind {
+	case harness.KindRewrite:
+		return c.handleRewrite(ev.Rewrite)
+	case harness.KindObserve:
+		return c.handleObserve(ctx, ev.Observe)
+	case harness.KindSessionStart:
+		return c.handleSessionStart(ctx, ev.SessionStart)
 	default:
 		return hookPassThrough
 	}
 }
 
-func readHookPayload(r io.Reader) (hookPayload, error) {
-	var p hookPayload
+func readStdin(r io.Reader) ([]byte, error) {
 	if r == nil {
-		return p, errors.New("hook: nil stdin")
+		return nil, errors.New("hook: nil stdin")
 	}
-	data, err := io.ReadAll(io.LimitReader(r, hookStdinLimit))
-	if err != nil {
-		return p, err
-	}
-	if err := json.Unmarshal(data, &p); err != nil {
-		return p, err
-	}
-	return p, nil
+	return io.ReadAll(io.LimitReader(r, hookStdinLimit))
 }
 
-type hookUpdatedInput struct {
-	Command     string `json:"command"`
-	Description string `json:"description"`
-}
-
-type hookSpecificOutput struct {
-	HookEventName string           `json:"hookEventName"`
-	UpdatedInput  hookUpdatedInput `json:"updatedInput"`
-}
-
-type preToolUseResponse struct {
-	HookSpecificOutput hookSpecificOutput `json:"hookSpecificOutput"`
-}
-
-func (c hookConfig) handlePreToolUse(p hookPayload) int {
-	command := p.ToolInput.Command
-	if p.ToolName != toolBash || p.SessionID == "" || strings.TrimSpace(command) == "" {
+func (c hookConfig) handleRewrite(ev harness.RewriteEvent) int {
+	if ev.SessionID == "" || strings.TrimSpace(ev.Command) == "" {
 		return hookPassThrough
 	}
-	// AD07: a command that already invokes calm-capture passes through — no reentrancy.
-	if extract.Program(command) == binaryName {
+	// AD07: a command that invokes calm-capture in any pipeline segment passes
+	// through — plumbing must not re-wrap capture's own output.
+	if extract.InvokesProgram(ev.Command, binaryName) {
 		return hookPassThrough
 	}
-
 	// The rewrite is reparsed by the harness's shell, so the single-quoted argv
 	// resolves to one shell string (exec's single-string path) and captures the
-	// compound command whole. The original command rides in description so the
-	// approval dialog — which shows the rewritten string — still names what runs.
-	rewrite := shellSingleQuote(c.binPath) + " exec --session " + shellSingleQuote(p.SessionID) + " -- " + shellSingleQuote(command)
-	data, err := json.Marshal(preToolUseResponse{
-		HookSpecificOutput: hookSpecificOutput{
-			HookEventName: eventPreToolUse,
-			UpdatedInput:  hookUpdatedInput{Command: rewrite, Description: command},
-		},
-	})
-	if err != nil {
+	// compound command whole. The original rides in description so the approval
+	// dialog — which shows the rewritten string — still names what runs.
+	rewrite := shellSingleQuote(c.binPath) + " exec --session " + shellSingleQuote(ev.SessionID) + " -- " + shellSingleQuote(ev.Command)
+	wire := harness.Claude.RenderRewrite(harness.RewriteResponse{Command: rewrite, Description: ev.Command})
+	if wire == nil {
 		return hookPassThrough
 	}
-	_, _ = fmt.Fprintln(c.stdout, string(data))
+	_, _ = fmt.Fprintln(c.stdout, string(wire))
 	return 0
 }
 
-func (c hookConfig) handleSessionStart(ctx context.Context, p hookPayload) int {
-	// a bootstrap-degraded hook (no usable config) can neither capture nor
-	// search, so it claims nothing.
+func (c hookConfig) handleSessionStart(ctx context.Context, ev harness.SessionStartEvent) int {
 	if c.root == "" {
 		return 0
 	}
-	switch p.Source {
-	case sourceStartup, sourceClear:
+	switch ev.Disposition {
+	case harness.DispositionFreshCard:
 		c.reclaim(ctx)
-		c.writeCard(ctx, p.SessionID, false)
-	case sourceCompact:
+		c.writeCard(ctx, ev.SessionID, false)
+		c.warnOtherLayers()
+	case harness.DispositionRefresherCard:
 		c.reclaim(ctx)
-		c.writeCard(ctx, p.SessionID, true)
+		c.writeCard(ctx, ev.SessionID, true)
+		c.warnOtherLayers()
 	}
 	return 0
+}
+
+// warnOtherLayers re-checks for a stacked capture layer at runtime (AD07): a
+// layer can appear after install, so the card names it and the project-scope one wins.
+func (c hookConfig) warnOtherLayers() {
+	home, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+	for _, p := range harness.Claude.OtherHookLayers(home, cwd) {
+		_, _ = fmt.Fprintf(c.stdout, "warning: %s already references %s — stacked capture layers corrupt capture identity; the project-scope layer wins, so remove the user-scope one\n", p, binaryName)
+	}
 }
 
 func (c hookConfig) writeCard(ctx context.Context, sessionID string, refresher bool) {
 	captures, entries := c.readInventory(ctx, sessionID)
+	recall := recallFor(c.binPath, sessionID)
 	if refresher {
-		_, _ = fmt.Fprintln(c.stdout, capture.SessionRefresherCard(c.recall, entries))
+		_, _ = fmt.Fprintln(c.stdout, capture.SessionRefresherCard(recall, entries))
 		return
 	}
-	_, _ = fmt.Fprintln(c.stdout, capture.SessionStartCard(c.recall, captures, entries))
+	_, _ = fmt.Fprintln(c.stdout, capture.SessionStartCard(recall, captures, entries))
 }
 
 func (c hookConfig) readInventory(ctx context.Context, sessionID string) (int64, []capture.InventoryEntry) {
@@ -213,10 +178,9 @@ func hookBinPath() string {
 	return binaryName
 }
 
-// `shellSingleQuote` wraps `s` in POSIX single quotes, escaping embedded single
-// quotes as '\” so the harness's shell reparses s to its exact bytes. The
-// rewrite is parsed by the shell, not our tokenizer, so this must be POSIX-exact
-// (POSIX harness shells only; Windows shells are out of scope for the hook arm).
+// shellSingleQuote wraps s in POSIX single quotes so the harness's shell reparses
+// s to its exact bytes. Parsed by the shell, not our tokenizer, so it must be
+// POSIX-exact (POSIX harness shells only; Windows shells are out of scope).
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
