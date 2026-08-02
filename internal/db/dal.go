@@ -19,19 +19,31 @@ type ClientRepo interface {
 	LookupByToken(ctx context.Context, namespace string, tokenHash []byte) (name string, err error)
 	List(ctx context.Context, namespace string) ([]ClientSummary, error)
 	CountSessions(ctx context.Context, namespace, name string) (int, error)
-	Delete(ctx context.Context, namespace, name string) (DeleteClientResult, error)
+
+	// Client-delete cascade primitives — composed in clientreg's WithTx.
+	LockByName(ctx context.Context, namespace, name string) error
+	CascadeCountsForClient(ctx context.Context, namespace, name string) (deletedSessions int, c CascadeCounts, err error)
+	DeleteRow(ctx context.Context, namespace, name string) error
+	BumpActivity(ctx context.Context, namespace, name string, ts time.Time) error
 }
 
 type SessionRepo interface {
-	Create(ctx context.Context, sess *Session) error
+	Insert(ctx context.Context, sess *Session) error
+	InsertLabels(ctx context.Context, sessionID int64, labels map[string]string) error
 	Get(ctx context.Context, namespace string, sessionTokenHash []byte) (Session, error)
 	Touch(ctx context.Context, namespace string, sessionTokenHash []byte, lastActivity time.Time) error
-	Delete(ctx context.Context, namespace string, sessionTokenHash []byte) (DeleteSessionResult, error)
-	DeleteByID(ctx context.Context, namespace string, sessionID int64) (DeleteSessionResult, error)
 	List(ctx context.Context, filter ListSessionsFilter) ([]ManagedSession, error)
 	Count(ctx context.Context, filter ListSessionsFilter) (int, error)
-	DeleteAll(ctx context.Context, filter ListSessionsFilter) (DeleteSessionsResult, error)
 	ScanExpired(ctx context.Context, now time.Time) ([]SessionRef, error)
+
+	// Session-delete cascade primitives — composed in the session service's WithTx.
+	LockByTokenHash(ctx context.Context, namespace string, sessionTokenHash []byte) (id int64, client string, err error)
+	LockByID(ctx context.Context, namespace string, sessionID int64) (client string, lastActivity time.Time, err error)
+	LockAllByFilter(ctx context.Context, filter ListSessionsFilter) ([]int64, error)
+	CascadeCounts(ctx context.Context, sessionID int64) (CascadeCounts, error)
+	CascadeCountsForIDs(ctx context.Context, ids []int64) (CascadeCounts, error)
+	DeleteByIDRow(ctx context.Context, sessionID int64) error
+	DeleteRows(ctx context.Context, ids []int64) error
 }
 
 type EventsRepo interface {

@@ -44,7 +44,7 @@ func TestCreateSession_HappyMinimal(t *testing.T) {
 		TTLMinutes:       60,
 		SessionTokenHash: auth.HashToken("ns-a", raw),
 	}
-	if err := store.Sessions().Create(context.Background(), sess); err != nil {
+	if err := store.Sessions().Insert(context.Background(), sess); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	if sess.ID <= 0 {
@@ -76,8 +76,11 @@ func TestCreateSession_HappyWithLabels(t *testing.T) {
 		SessionTokenHash: auth.HashToken("ns-a", raw),
 		Labels:           labels,
 	}
-	if err := store.Sessions().Create(context.Background(), sess); err != nil {
+	if err := store.Sessions().Insert(context.Background(), sess); err != nil {
 		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := store.Sessions().InsertLabels(context.Background(), sess.ID, sess.Labels); err != nil {
+		t.Fatalf("InsertLabels: %v", err)
 	}
 	got := countRows(
 		t, sqlDB,
@@ -151,7 +154,7 @@ func TestCreateSession_ExistingClientIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint token: %v", err)
 	}
-	if err := store.Sessions().Create(context.Background(), &db.Session{
+	if err := store.Sessions().Insert(context.Background(), &db.Session{
 		Namespace: "ns-a", Client: "alice", TTLMinutes: 60,
 		SessionTokenHash: auth.HashToken("ns-a", raw),
 	}); err != nil {
@@ -171,7 +174,7 @@ func TestCreateSession_EmptySessionTokenHash(t *testing.T) {
 	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
-	err := store.Sessions().Create(context.Background(), &db.Session{Namespace: "ns-a", TTLMinutes: 60})
+	err := store.Sessions().Insert(context.Background(), &db.Session{Namespace: "ns-a", TTLMinutes: 60})
 	if !errors.Is(err, db.ErrSessionTokenHashRequired) {
 		t.Errorf("want ErrSessionTokenHashRequired, got %v", err)
 	}
@@ -186,7 +189,7 @@ func TestCreateSession_EmptyNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mint token: %v", err)
 	}
-	err = store.Sessions().Create(context.Background(), &db.Session{
+	err = store.Sessions().Insert(context.Background(), &db.Session{
 		TTLMinutes:       60,
 		SessionTokenHash: auth.HashToken("", raw),
 	})
@@ -452,7 +455,7 @@ func TestDeleteSession_HappyPathFullCascade(t *testing.T) {
 	seedVocab(t, sqlDB, seeded.ID, "alpha", 1)
 	seedVocab(t, sqlDB, seeded.ID, "beta", 2)
 
-	res, err := store.Sessions().Delete(context.Background(), "ns-a", auth.HashToken("ns-a", seeded.SessionToken))
+	res, err := sessionSvc(store).Delete(context.Background(), "ns-a", seeded.SessionToken)
 	if err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
@@ -488,7 +491,7 @@ func TestDeleteSession_NotFound(t *testing.T) {
 	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
-	_, err := store.Sessions().Delete(context.Background(), "ns-a", auth.HashToken("ns-a", "missing"))
+	_, err := sessionSvc(store).Delete(context.Background(), "ns-a", "missing")
 	if !errors.Is(err, db.ErrSessionNotFound) {
 		t.Errorf("want ErrSessionNotFound, got %v", err)
 	}
@@ -505,7 +508,7 @@ func TestDeleteSession_CrossNamespaceNotFound(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	seeded := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 
-	_, err := store.Sessions().Delete(context.Background(), "ns-b", auth.HashToken("ns-b", seeded.SessionToken))
+	_, err := sessionSvc(store).Delete(context.Background(), "ns-b", seeded.SessionToken)
 	if !errors.Is(err, db.ErrSessionNotFound) {
 		t.Errorf("want ErrSessionNotFound, got %v", err)
 	}
@@ -531,7 +534,7 @@ func TestDeleteSession_SameClientDifferentNamespaceIsolated(t *testing.T) {
 	srcB := seedSource(t, sqlDB, seededB.ID, "src")
 	seedChunk(t, sqlDB, srcB, "title", "content", "prose")
 
-	if _, err := store.Sessions().Delete(context.Background(), "ns-a", auth.HashToken("ns-a", seededA.SessionToken)); err != nil {
+	if _, err := sessionSvc(store).Delete(context.Background(), "ns-a", seededA.SessionToken); err != nil {
 		t.Fatalf("DeleteSession ns-a: %v", err)
 	}
 
@@ -555,7 +558,7 @@ func TestDeleteSession_NoChildrenCleanDelete(t *testing.T) {
 	seedClient(t, sqlDB, "ns-a", db.DefaultClient)
 	seeded := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 
-	res, err := store.Sessions().Delete(context.Background(), "ns-a", auth.HashToken("ns-a", seeded.SessionToken))
+	res, err := sessionSvc(store).Delete(context.Background(), "ns-a", seeded.SessionToken)
 	if err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
@@ -579,7 +582,7 @@ func TestDeleteSession_BumpsClientLastActivityAt(t *testing.T) {
 	seeded := seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 
 	before := time.Now().UTC()
-	if _, err := store.Sessions().Delete(context.Background(), "ns-a", auth.HashToken("ns-a", seeded.SessionToken)); err != nil {
+	if _, err := sessionSvc(store).Delete(context.Background(), "ns-a", seeded.SessionToken); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
 	after := time.Now().UTC()
@@ -618,7 +621,7 @@ func TestDeleteByID_ClientLastActivityFollowsSessionNotScanTime(t *testing.T) {
 	seeded := seedSessionWithActivity(t, sqlDB, "ns-a", db.DefaultClient, 60, sessionAge)
 
 	scanMoment := time.Now().UTC()
-	if _, err := store.Sessions().DeleteByID(context.Background(), "ns-a", seeded.ID); err != nil {
+	if _, err := sessionSvc(store).DeleteByID(context.Background(), "ns-a", seeded.ID); err != nil {
 		t.Fatalf("DeleteByID: %v", err)
 	}
 
@@ -666,7 +669,7 @@ func TestDeleteSession_MonotonicClientLastActivityAt(t *testing.T) {
 		t.Fatalf("pre-seed last_activity_at: %v", err)
 	}
 
-	if _, err := store.Sessions().Delete(context.Background(), "ns-a", auth.HashToken("ns-a", seeded.SessionToken)); err != nil {
+	if _, err := sessionSvc(store).Delete(context.Background(), "ns-a", seeded.SessionToken); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
 
@@ -697,7 +700,7 @@ func TestDeleteSession_NegativeIsolation(t *testing.T) {
 	srcB := seedSource(t, sqlDB, seededB.ID, "b")
 	seedChunk(t, sqlDB, srcB, "tb", "cb", "prose")
 
-	if _, err := store.Sessions().Delete(context.Background(), "ns-a", auth.HashToken("ns-a", seededA.SessionToken)); err != nil {
+	if _, err := sessionSvc(store).Delete(context.Background(), "ns-a", seededA.SessionToken); err != nil {
 		t.Fatalf("DeleteSession sess-A: %v", err)
 	}
 
@@ -714,7 +717,7 @@ func TestDeleteSession_EmptyNamespace(t *testing.T) {
 	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
-	_, err := store.Sessions().Delete(context.Background(), "", auth.HashToken("", "anything"))
+	_, _, err := store.Sessions().LockByTokenHash(context.Background(), "", nil)
 	if !errors.Is(err, db.ErrNamespaceRequired) {
 		t.Errorf("want ErrNamespaceRequired, got %v", err)
 	}
@@ -725,7 +728,7 @@ func TestDeleteSession_EmptyHash(t *testing.T) {
 	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
-	_, err := store.Sessions().Delete(context.Background(), "ns-a", nil)
+	_, _, err := store.Sessions().LockByTokenHash(context.Background(), "ns-a", nil)
 	if !errors.Is(err, db.ErrSessionTokenHashRequired) {
 		t.Errorf("want ErrSessionTokenHashRequired, got %v", err)
 	}
@@ -1028,7 +1031,7 @@ func TestDeleteSessions_EmptyNamespace(t *testing.T) {
 	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
-	_, err := store.Sessions().DeleteAll(context.Background(), db.ListSessionsFilter{})
+	_, err := sessionSvc(store).DeleteAll(context.Background(), db.ListSessionsFilter{})
 	if !errors.Is(err, db.ErrNamespaceRequired) {
 		t.Errorf("want ErrNamespaceRequired, got %v", err)
 	}
@@ -1039,7 +1042,7 @@ func TestDeleteSessions_NoMatch(t *testing.T) {
 	t.Parallel()
 	store, _, teardown := openConcreteStore(t)
 	defer teardown()
-	res, err := store.Sessions().DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
+	res, err := sessionSvc(store).DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
 	if err != nil {
 		t.Fatalf("DeleteSessions: %v", err)
 	}
@@ -1066,7 +1069,7 @@ func TestDeleteSessions_HappyBulkCascade(t *testing.T) {
 		seedEvent(t, sqlDB, s.ID, "evt", 3, []byte(`{}`))
 	}
 
-	res, err := store.Sessions().DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
+	res, err := sessionSvc(store).DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
 	if err != nil {
 		t.Fatalf("DeleteSessions: %v", err)
 	}
@@ -1095,7 +1098,7 @@ func TestDeleteSessions_ClientFilter(t *testing.T) {
 	seedSession(t, sqlDB, "ns-a", "alice", 60)
 	seedSession(t, sqlDB, "ns-a", "bob", 60)
 
-	res, err := store.Sessions().DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a", Client: "alice"})
+	res, err := sessionSvc(store).DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a", Client: "alice"})
 	if err != nil {
 		t.Fatalf("DeleteSessions: %v", err)
 	}
@@ -1122,7 +1125,7 @@ func TestDeleteSessions_LabelFilter(t *testing.T) {
 	seedSessionLabel(t, sqlDB, prod2.ID, "env", "prod")
 	seedSessionLabel(t, sqlDB, dev1.ID, "env", "dev")
 
-	res, err := store.Sessions().DeleteAll(context.Background(), db.ListSessionsFilter{
+	res, err := sessionSvc(store).DeleteAll(context.Background(), db.ListSessionsFilter{
 		Namespace: "ns-a",
 		Labels:    map[string]string{"env": "prod"},
 	})
@@ -1149,7 +1152,7 @@ func TestDeleteSessions_CrossNamespaceIsolation(t *testing.T) {
 	seedSession(t, sqlDB, "ns-a", db.DefaultClient, 60)
 	seededB := seedSession(t, sqlDB, "ns-b", db.DefaultClient, 60)
 
-	res, err := store.Sessions().DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
+	res, err := sessionSvc(store).DeleteAll(context.Background(), db.ListSessionsFilter{Namespace: "ns-a"})
 	if err != nil {
 		t.Fatalf("DeleteSessions ns-a: %v", err)
 	}

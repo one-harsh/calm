@@ -48,7 +48,46 @@ func (s *Service) CountSessions(ctx context.Context, namespace, name string) (in
 }
 
 func (s *Service) Delete(ctx context.Context, namespace, name string) (db.DeleteClientResult, error) {
-	return s.store.Clients().Delete(ctx, namespace, name)
+	if namespace == "" {
+		return db.DeleteClientResult{}, db.ErrNamespaceRequired
+	}
+	if name == "" {
+		return db.DeleteClientResult{}, db.ErrClientNameRequired
+	}
+	if name == db.DefaultClient {
+		return db.DeleteClientResult{}, db.ErrClientProtected
+	}
+
+	result := db.DeleteClientResult{Client: name}
+	err := s.store.WithTx(ctx, func(r db.Repos) error {
+		if err := r.Clients.LockByName(ctx, namespace, name); err != nil {
+			return err
+		}
+		s.logger.WithContext(ctx).Debug("delete client: lock acquired")
+		deletedSessions, cascade, err := r.Clients.CascadeCountsForClient(ctx, namespace, name)
+		if err != nil {
+			return err
+		}
+		result.DeletedSessions = deletedSessions
+		result.Cascaded = cascade
+		s.logger.WithContext(ctx).Debug(
+			"delete client: cascade computed",
+			logging.IntField("sessions", deletedSessions),
+			logging.IntField("sources", cascade.Sources),
+			logging.IntField("chunks", cascade.Chunks),
+			logging.IntField("events", cascade.Events),
+			logging.IntField("labels", cascade.Labels),
+		)
+		if err := r.Clients.DeleteRow(ctx, namespace, name); err != nil {
+			return err
+		}
+		s.logger.WithContext(ctx).Debug("delete client: committed")
+		return nil
+	})
+	if err != nil {
+		return db.DeleteClientResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Service) Register(ctx context.Context, namespace, name string) (RegisterResult, error) {

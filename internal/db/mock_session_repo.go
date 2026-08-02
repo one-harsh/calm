@@ -25,6 +25,120 @@ func (_m *MockSessionRepo) EXPECT() *MockSessionRepo_Expecter {
 	return &MockSessionRepo_Expecter{mock: &_m.Mock}
 }
 
+// CascadeCounts provides a mock function with given fields: ctx, sessionID
+func (_m *MockSessionRepo) CascadeCounts(ctx context.Context, sessionID int64) (CascadeCounts, error) {
+	ret := _m.Called(ctx, sessionID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CascadeCounts")
+	}
+
+	var r0 CascadeCounts
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, int64) (CascadeCounts, error)); ok {
+		return rf(ctx, sessionID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, int64) CascadeCounts); ok {
+		r0 = rf(ctx, sessionID)
+	} else {
+		r0 = ret.Get(0).(CascadeCounts)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, int64) error); ok {
+		r1 = rf(ctx, sessionID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockSessionRepo_CascadeCounts_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CascadeCounts'
+type MockSessionRepo_CascadeCounts_Call struct {
+	*mock.Call
+}
+
+// CascadeCounts is a helper method to define mock.On call
+//   - ctx context.Context
+//   - sessionID int64
+func (_e *MockSessionRepo_Expecter) CascadeCounts(ctx interface{}, sessionID interface{}) *MockSessionRepo_CascadeCounts_Call {
+	return &MockSessionRepo_CascadeCounts_Call{Call: _e.mock.On("CascadeCounts", ctx, sessionID)}
+}
+
+func (_c *MockSessionRepo_CascadeCounts_Call) Run(run func(ctx context.Context, sessionID int64)) *MockSessionRepo_CascadeCounts_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(int64))
+	})
+	return _c
+}
+
+func (_c *MockSessionRepo_CascadeCounts_Call) Return(_a0 CascadeCounts, _a1 error) *MockSessionRepo_CascadeCounts_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockSessionRepo_CascadeCounts_Call) RunAndReturn(run func(context.Context, int64) (CascadeCounts, error)) *MockSessionRepo_CascadeCounts_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// CascadeCountsForIDs provides a mock function with given fields: ctx, ids
+func (_m *MockSessionRepo) CascadeCountsForIDs(ctx context.Context, ids []int64) (CascadeCounts, error) {
+	ret := _m.Called(ctx, ids)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CascadeCountsForIDs")
+	}
+
+	var r0 CascadeCounts
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, []int64) (CascadeCounts, error)); ok {
+		return rf(ctx, ids)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, []int64) CascadeCounts); ok {
+		r0 = rf(ctx, ids)
+	} else {
+		r0 = ret.Get(0).(CascadeCounts)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, []int64) error); ok {
+		r1 = rf(ctx, ids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockSessionRepo_CascadeCountsForIDs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CascadeCountsForIDs'
+type MockSessionRepo_CascadeCountsForIDs_Call struct {
+	*mock.Call
+}
+
+// CascadeCountsForIDs is a helper method to define mock.On call
+//   - ctx context.Context
+//   - ids []int64
+func (_e *MockSessionRepo_Expecter) CascadeCountsForIDs(ctx interface{}, ids interface{}) *MockSessionRepo_CascadeCountsForIDs_Call {
+	return &MockSessionRepo_CascadeCountsForIDs_Call{Call: _e.mock.On("CascadeCountsForIDs", ctx, ids)}
+}
+
+func (_c *MockSessionRepo_CascadeCountsForIDs_Call) Run(run func(ctx context.Context, ids []int64)) *MockSessionRepo_CascadeCountsForIDs_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].([]int64))
+	})
+	return _c
+}
+
+func (_c *MockSessionRepo_CascadeCountsForIDs_Call) Return(_a0 CascadeCounts, _a1 error) *MockSessionRepo_CascadeCountsForIDs_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockSessionRepo_CascadeCountsForIDs_Call) RunAndReturn(run func(context.Context, []int64) (CascadeCounts, error)) *MockSessionRepo_CascadeCountsForIDs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Count provides a mock function with given fields: ctx, filter
 func (_m *MockSessionRepo) Count(ctx context.Context, filter ListSessionsFilter) (int, error) {
 	ret := _m.Called(ctx, filter)
@@ -82,17 +196,17 @@ func (_c *MockSessionRepo_Count_Call) RunAndReturn(run func(context.Context, Lis
 	return _c
 }
 
-// Create provides a mock function with given fields: ctx, sess
-func (_m *MockSessionRepo) Create(ctx context.Context, sess *Session) error {
-	ret := _m.Called(ctx, sess)
+// DeleteByIDRow provides a mock function with given fields: ctx, sessionID
+func (_m *MockSessionRepo) DeleteByIDRow(ctx context.Context, sessionID int64) error {
+	ret := _m.Called(ctx, sessionID)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Create")
+		panic("no return value specified for DeleteByIDRow")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, *Session) error); ok {
-		r0 = rf(ctx, sess)
+	if rf, ok := ret.Get(0).(func(context.Context, int64) error); ok {
+		r0 = rf(ctx, sessionID)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -100,204 +214,78 @@ func (_m *MockSessionRepo) Create(ctx context.Context, sess *Session) error {
 	return r0
 }
 
-// MockSessionRepo_Create_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Create'
-type MockSessionRepo_Create_Call struct {
+// MockSessionRepo_DeleteByIDRow_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteByIDRow'
+type MockSessionRepo_DeleteByIDRow_Call struct {
 	*mock.Call
 }
 
-// Create is a helper method to define mock.On call
+// DeleteByIDRow is a helper method to define mock.On call
 //   - ctx context.Context
-//   - sess *Session
-func (_e *MockSessionRepo_Expecter) Create(ctx interface{}, sess interface{}) *MockSessionRepo_Create_Call {
-	return &MockSessionRepo_Create_Call{Call: _e.mock.On("Create", ctx, sess)}
+//   - sessionID int64
+func (_e *MockSessionRepo_Expecter) DeleteByIDRow(ctx interface{}, sessionID interface{}) *MockSessionRepo_DeleteByIDRow_Call {
+	return &MockSessionRepo_DeleteByIDRow_Call{Call: _e.mock.On("DeleteByIDRow", ctx, sessionID)}
 }
 
-func (_c *MockSessionRepo_Create_Call) Run(run func(ctx context.Context, sess *Session)) *MockSessionRepo_Create_Call {
+func (_c *MockSessionRepo_DeleteByIDRow_Call) Run(run func(ctx context.Context, sessionID int64)) *MockSessionRepo_DeleteByIDRow_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(*Session))
+		run(args[0].(context.Context), args[1].(int64))
 	})
 	return _c
 }
 
-func (_c *MockSessionRepo_Create_Call) Return(_a0 error) *MockSessionRepo_Create_Call {
+func (_c *MockSessionRepo_DeleteByIDRow_Call) Return(_a0 error) *MockSessionRepo_DeleteByIDRow_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockSessionRepo_Create_Call) RunAndReturn(run func(context.Context, *Session) error) *MockSessionRepo_Create_Call {
+func (_c *MockSessionRepo_DeleteByIDRow_Call) RunAndReturn(run func(context.Context, int64) error) *MockSessionRepo_DeleteByIDRow_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
-// Delete provides a mock function with given fields: ctx, namespace, sessionTokenHash
-func (_m *MockSessionRepo) Delete(ctx context.Context, namespace string, sessionTokenHash []byte) (DeleteSessionResult, error) {
-	ret := _m.Called(ctx, namespace, sessionTokenHash)
+// DeleteRows provides a mock function with given fields: ctx, ids
+func (_m *MockSessionRepo) DeleteRows(ctx context.Context, ids []int64) error {
+	ret := _m.Called(ctx, ids)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Delete")
+		panic("no return value specified for DeleteRows")
 	}
 
-	var r0 DeleteSessionResult
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) (DeleteSessionResult, error)); ok {
-		return rf(ctx, namespace, sessionTokenHash)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) DeleteSessionResult); ok {
-		r0 = rf(ctx, namespace, sessionTokenHash)
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, []int64) error); ok {
+		r0 = rf(ctx, ids)
 	} else {
-		r0 = ret.Get(0).(DeleteSessionResult)
+		r0 = ret.Error(0)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, []byte) error); ok {
-		r1 = rf(ctx, namespace, sessionTokenHash)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
+	return r0
 }
 
-// MockSessionRepo_Delete_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Delete'
-type MockSessionRepo_Delete_Call struct {
+// MockSessionRepo_DeleteRows_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteRows'
+type MockSessionRepo_DeleteRows_Call struct {
 	*mock.Call
 }
 
-// Delete is a helper method to define mock.On call
+// DeleteRows is a helper method to define mock.On call
 //   - ctx context.Context
-//   - namespace string
-//   - sessionTokenHash []byte
-func (_e *MockSessionRepo_Expecter) Delete(ctx interface{}, namespace interface{}, sessionTokenHash interface{}) *MockSessionRepo_Delete_Call {
-	return &MockSessionRepo_Delete_Call{Call: _e.mock.On("Delete", ctx, namespace, sessionTokenHash)}
+//   - ids []int64
+func (_e *MockSessionRepo_Expecter) DeleteRows(ctx interface{}, ids interface{}) *MockSessionRepo_DeleteRows_Call {
+	return &MockSessionRepo_DeleteRows_Call{Call: _e.mock.On("DeleteRows", ctx, ids)}
 }
 
-func (_c *MockSessionRepo_Delete_Call) Run(run func(ctx context.Context, namespace string, sessionTokenHash []byte)) *MockSessionRepo_Delete_Call {
+func (_c *MockSessionRepo_DeleteRows_Call) Run(run func(ctx context.Context, ids []int64)) *MockSessionRepo_DeleteRows_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].([]byte))
+		run(args[0].(context.Context), args[1].([]int64))
 	})
 	return _c
 }
 
-func (_c *MockSessionRepo_Delete_Call) Return(_a0 DeleteSessionResult, _a1 error) *MockSessionRepo_Delete_Call {
-	_c.Call.Return(_a0, _a1)
+func (_c *MockSessionRepo_DeleteRows_Call) Return(_a0 error) *MockSessionRepo_DeleteRows_Call {
+	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockSessionRepo_Delete_Call) RunAndReturn(run func(context.Context, string, []byte) (DeleteSessionResult, error)) *MockSessionRepo_Delete_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// DeleteAll provides a mock function with given fields: ctx, filter
-func (_m *MockSessionRepo) DeleteAll(ctx context.Context, filter ListSessionsFilter) (DeleteSessionsResult, error) {
-	ret := _m.Called(ctx, filter)
-
-	if len(ret) == 0 {
-		panic("no return value specified for DeleteAll")
-	}
-
-	var r0 DeleteSessionsResult
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, ListSessionsFilter) (DeleteSessionsResult, error)); ok {
-		return rf(ctx, filter)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, ListSessionsFilter) DeleteSessionsResult); ok {
-		r0 = rf(ctx, filter)
-	} else {
-		r0 = ret.Get(0).(DeleteSessionsResult)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, ListSessionsFilter) error); ok {
-		r1 = rf(ctx, filter)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockSessionRepo_DeleteAll_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteAll'
-type MockSessionRepo_DeleteAll_Call struct {
-	*mock.Call
-}
-
-// DeleteAll is a helper method to define mock.On call
-//   - ctx context.Context
-//   - filter ListSessionsFilter
-func (_e *MockSessionRepo_Expecter) DeleteAll(ctx interface{}, filter interface{}) *MockSessionRepo_DeleteAll_Call {
-	return &MockSessionRepo_DeleteAll_Call{Call: _e.mock.On("DeleteAll", ctx, filter)}
-}
-
-func (_c *MockSessionRepo_DeleteAll_Call) Run(run func(ctx context.Context, filter ListSessionsFilter)) *MockSessionRepo_DeleteAll_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(ListSessionsFilter))
-	})
-	return _c
-}
-
-func (_c *MockSessionRepo_DeleteAll_Call) Return(_a0 DeleteSessionsResult, _a1 error) *MockSessionRepo_DeleteAll_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockSessionRepo_DeleteAll_Call) RunAndReturn(run func(context.Context, ListSessionsFilter) (DeleteSessionsResult, error)) *MockSessionRepo_DeleteAll_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// DeleteByID provides a mock function with given fields: ctx, namespace, sessionID
-func (_m *MockSessionRepo) DeleteByID(ctx context.Context, namespace string, sessionID int64) (DeleteSessionResult, error) {
-	ret := _m.Called(ctx, namespace, sessionID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for DeleteByID")
-	}
-
-	var r0 DeleteSessionResult
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, int64) (DeleteSessionResult, error)); ok {
-		return rf(ctx, namespace, sessionID)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, int64) DeleteSessionResult); ok {
-		r0 = rf(ctx, namespace, sessionID)
-	} else {
-		r0 = ret.Get(0).(DeleteSessionResult)
-	}
-
-	if rf, ok := ret.Get(1).(func(context.Context, string, int64) error); ok {
-		r1 = rf(ctx, namespace, sessionID)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockSessionRepo_DeleteByID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteByID'
-type MockSessionRepo_DeleteByID_Call struct {
-	*mock.Call
-}
-
-// DeleteByID is a helper method to define mock.On call
-//   - ctx context.Context
-//   - namespace string
-//   - sessionID int64
-func (_e *MockSessionRepo_Expecter) DeleteByID(ctx interface{}, namespace interface{}, sessionID interface{}) *MockSessionRepo_DeleteByID_Call {
-	return &MockSessionRepo_DeleteByID_Call{Call: _e.mock.On("DeleteByID", ctx, namespace, sessionID)}
-}
-
-func (_c *MockSessionRepo_DeleteByID_Call) Run(run func(ctx context.Context, namespace string, sessionID int64)) *MockSessionRepo_DeleteByID_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(int64))
-	})
-	return _c
-}
-
-func (_c *MockSessionRepo_DeleteByID_Call) Return(_a0 DeleteSessionResult, _a1 error) *MockSessionRepo_DeleteByID_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockSessionRepo_DeleteByID_Call) RunAndReturn(run func(context.Context, string, int64) (DeleteSessionResult, error)) *MockSessionRepo_DeleteByID_Call {
+func (_c *MockSessionRepo_DeleteRows_Call) RunAndReturn(run func(context.Context, []int64) error) *MockSessionRepo_DeleteRows_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -360,6 +348,101 @@ func (_c *MockSessionRepo_Get_Call) RunAndReturn(run func(context.Context, strin
 	return _c
 }
 
+// Insert provides a mock function with given fields: ctx, sess
+func (_m *MockSessionRepo) Insert(ctx context.Context, sess *Session) error {
+	ret := _m.Called(ctx, sess)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Insert")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *Session) error); ok {
+		r0 = rf(ctx, sess)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockSessionRepo_Insert_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Insert'
+type MockSessionRepo_Insert_Call struct {
+	*mock.Call
+}
+
+// Insert is a helper method to define mock.On call
+//   - ctx context.Context
+//   - sess *Session
+func (_e *MockSessionRepo_Expecter) Insert(ctx interface{}, sess interface{}) *MockSessionRepo_Insert_Call {
+	return &MockSessionRepo_Insert_Call{Call: _e.mock.On("Insert", ctx, sess)}
+}
+
+func (_c *MockSessionRepo_Insert_Call) Run(run func(ctx context.Context, sess *Session)) *MockSessionRepo_Insert_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*Session))
+	})
+	return _c
+}
+
+func (_c *MockSessionRepo_Insert_Call) Return(_a0 error) *MockSessionRepo_Insert_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockSessionRepo_Insert_Call) RunAndReturn(run func(context.Context, *Session) error) *MockSessionRepo_Insert_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// InsertLabels provides a mock function with given fields: ctx, sessionID, labels
+func (_m *MockSessionRepo) InsertLabels(ctx context.Context, sessionID int64, labels map[string]string) error {
+	ret := _m.Called(ctx, sessionID, labels)
+
+	if len(ret) == 0 {
+		panic("no return value specified for InsertLabels")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, int64, map[string]string) error); ok {
+		r0 = rf(ctx, sessionID, labels)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockSessionRepo_InsertLabels_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'InsertLabels'
+type MockSessionRepo_InsertLabels_Call struct {
+	*mock.Call
+}
+
+// InsertLabels is a helper method to define mock.On call
+//   - ctx context.Context
+//   - sessionID int64
+//   - labels map[string]string
+func (_e *MockSessionRepo_Expecter) InsertLabels(ctx interface{}, sessionID interface{}, labels interface{}) *MockSessionRepo_InsertLabels_Call {
+	return &MockSessionRepo_InsertLabels_Call{Call: _e.mock.On("InsertLabels", ctx, sessionID, labels)}
+}
+
+func (_c *MockSessionRepo_InsertLabels_Call) Run(run func(ctx context.Context, sessionID int64, labels map[string]string)) *MockSessionRepo_InsertLabels_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(int64), args[2].(map[string]string))
+	})
+	return _c
+}
+
+func (_c *MockSessionRepo_InsertLabels_Call) Return(_a0 error) *MockSessionRepo_InsertLabels_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockSessionRepo_InsertLabels_Call) RunAndReturn(run func(context.Context, int64, map[string]string) error) *MockSessionRepo_InsertLabels_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // List provides a mock function with given fields: ctx, filter
 func (_m *MockSessionRepo) List(ctx context.Context, filter ListSessionsFilter) ([]ManagedSession, error) {
 	ret := _m.Called(ctx, filter)
@@ -415,6 +498,195 @@ func (_c *MockSessionRepo_List_Call) Return(_a0 []ManagedSession, _a1 error) *Mo
 }
 
 func (_c *MockSessionRepo_List_Call) RunAndReturn(run func(context.Context, ListSessionsFilter) ([]ManagedSession, error)) *MockSessionRepo_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// LockAllByFilter provides a mock function with given fields: ctx, filter
+func (_m *MockSessionRepo) LockAllByFilter(ctx context.Context, filter ListSessionsFilter) ([]int64, error) {
+	ret := _m.Called(ctx, filter)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LockAllByFilter")
+	}
+
+	var r0 []int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, ListSessionsFilter) ([]int64, error)); ok {
+		return rf(ctx, filter)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, ListSessionsFilter) []int64); ok {
+		r0 = rf(ctx, filter)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]int64)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, ListSessionsFilter) error); ok {
+		r1 = rf(ctx, filter)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockSessionRepo_LockAllByFilter_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LockAllByFilter'
+type MockSessionRepo_LockAllByFilter_Call struct {
+	*mock.Call
+}
+
+// LockAllByFilter is a helper method to define mock.On call
+//   - ctx context.Context
+//   - filter ListSessionsFilter
+func (_e *MockSessionRepo_Expecter) LockAllByFilter(ctx interface{}, filter interface{}) *MockSessionRepo_LockAllByFilter_Call {
+	return &MockSessionRepo_LockAllByFilter_Call{Call: _e.mock.On("LockAllByFilter", ctx, filter)}
+}
+
+func (_c *MockSessionRepo_LockAllByFilter_Call) Run(run func(ctx context.Context, filter ListSessionsFilter)) *MockSessionRepo_LockAllByFilter_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ListSessionsFilter))
+	})
+	return _c
+}
+
+func (_c *MockSessionRepo_LockAllByFilter_Call) Return(_a0 []int64, _a1 error) *MockSessionRepo_LockAllByFilter_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockSessionRepo_LockAllByFilter_Call) RunAndReturn(run func(context.Context, ListSessionsFilter) ([]int64, error)) *MockSessionRepo_LockAllByFilter_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// LockByID provides a mock function with given fields: ctx, namespace, sessionID
+func (_m *MockSessionRepo) LockByID(ctx context.Context, namespace string, sessionID int64) (string, time.Time, error) {
+	ret := _m.Called(ctx, namespace, sessionID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LockByID")
+	}
+
+	var r0 string
+	var r1 time.Time
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64) (string, time.Time, error)); ok {
+		return rf(ctx, namespace, sessionID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, int64) string); ok {
+		r0 = rf(ctx, namespace, sessionID)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, int64) time.Time); ok {
+		r1 = rf(ctx, namespace, sessionID)
+	} else {
+		r1 = ret.Get(1).(time.Time)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, string, int64) error); ok {
+		r2 = rf(ctx, namespace, sessionID)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// MockSessionRepo_LockByID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LockByID'
+type MockSessionRepo_LockByID_Call struct {
+	*mock.Call
+}
+
+// LockByID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - sessionID int64
+func (_e *MockSessionRepo_Expecter) LockByID(ctx interface{}, namespace interface{}, sessionID interface{}) *MockSessionRepo_LockByID_Call {
+	return &MockSessionRepo_LockByID_Call{Call: _e.mock.On("LockByID", ctx, namespace, sessionID)}
+}
+
+func (_c *MockSessionRepo_LockByID_Call) Run(run func(ctx context.Context, namespace string, sessionID int64)) *MockSessionRepo_LockByID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(int64))
+	})
+	return _c
+}
+
+func (_c *MockSessionRepo_LockByID_Call) Return(client string, lastActivity time.Time, err error) *MockSessionRepo_LockByID_Call {
+	_c.Call.Return(client, lastActivity, err)
+	return _c
+}
+
+func (_c *MockSessionRepo_LockByID_Call) RunAndReturn(run func(context.Context, string, int64) (string, time.Time, error)) *MockSessionRepo_LockByID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// LockByTokenHash provides a mock function with given fields: ctx, namespace, sessionTokenHash
+func (_m *MockSessionRepo) LockByTokenHash(ctx context.Context, namespace string, sessionTokenHash []byte) (int64, string, error) {
+	ret := _m.Called(ctx, namespace, sessionTokenHash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LockByTokenHash")
+	}
+
+	var r0 int64
+	var r1 string
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) (int64, string, error)); ok {
+		return rf(ctx, namespace, sessionTokenHash)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, []byte) int64); ok {
+		r0 = rf(ctx, namespace, sessionTokenHash)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, []byte) string); ok {
+		r1 = rf(ctx, namespace, sessionTokenHash)
+	} else {
+		r1 = ret.Get(1).(string)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, string, []byte) error); ok {
+		r2 = rf(ctx, namespace, sessionTokenHash)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// MockSessionRepo_LockByTokenHash_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LockByTokenHash'
+type MockSessionRepo_LockByTokenHash_Call struct {
+	*mock.Call
+}
+
+// LockByTokenHash is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - sessionTokenHash []byte
+func (_e *MockSessionRepo_Expecter) LockByTokenHash(ctx interface{}, namespace interface{}, sessionTokenHash interface{}) *MockSessionRepo_LockByTokenHash_Call {
+	return &MockSessionRepo_LockByTokenHash_Call{Call: _e.mock.On("LockByTokenHash", ctx, namespace, sessionTokenHash)}
+}
+
+func (_c *MockSessionRepo_LockByTokenHash_Call) Run(run func(ctx context.Context, namespace string, sessionTokenHash []byte)) *MockSessionRepo_LockByTokenHash_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockSessionRepo_LockByTokenHash_Call) Return(id int64, client string, err error) *MockSessionRepo_LockByTokenHash_Call {
+	_c.Call.Return(id, client, err)
+	return _c
+}
+
+func (_c *MockSessionRepo_LockByTokenHash_Call) RunAndReturn(run func(context.Context, string, []byte) (int64, string, error)) *MockSessionRepo_LockByTokenHash_Call {
 	_c.Call.Return(run)
 	return _c
 }

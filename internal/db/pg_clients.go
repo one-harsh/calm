@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	logging "github.com/one-harsh/context-logging"
@@ -183,82 +184,80 @@ func (r *clientRepo) CountSessions(ctx context.Context, namespace, name string) 
 	return count, nil
 }
 
-func (r *clientRepo) Delete(ctx context.Context, namespace, name string) (DeleteClientResult, error) {
+// LockByName locks the client row (FOR UPDATE) so a cascade count and delete
+// composed in the same transaction observe a stable child-row set.
+func (r *clientRepo) LockByName(ctx context.Context, namespace, name string) error {
 	if namespace == "" {
-		return DeleteClientResult{}, ErrNamespaceRequired
+		return ErrNamespaceRequired
 	}
 	if name == "" {
-		return DeleteClientResult{}, ErrClientNameRequired
+		return ErrClientNameRequired
 	}
-	if name == DefaultClient {
-		return DeleteClientResult{}, ErrClientProtected
+	var one int
+	err := r.queryer.QueryRowContext(
+		ctx,
+		`SELECT 1 FROM clients WHERE namespace = $1 AND name = $2 FOR UPDATE`,
+		namespace, name,
+	).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrClientNotFound
 	}
-
-	result := DeleteClientResult{Client: name}
-	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
-		// FOR UPDATE blocks concurrent child inserts so count and cascade see the same row set.
-		var one int
-		err := tx.QueryRowContext(
-			ctx,
-			`SELECT 1 FROM clients WHERE namespace = $1 AND name = $2 FOR UPDATE`,
-			namespace, name,
-		).Scan(&one)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrClientNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("%w: lock client %q/%q: %w", ErrStorageBackend, namespace, name, err)
-		}
-		r.logger.WithContext(ctx).Debug("delete client: lock acquired")
-
-		err = tx.QueryRowContext(
-			ctx,
-			`WITH target_sessions AS (
-			   SELECT id FROM sessions WHERE namespace = $1 AND client = $2
-			 )
-			 SELECT
-			   (SELECT COUNT(*) FROM target_sessions),
-			   (SELECT COUNT(*) FROM sources
-			      WHERE session_id IN (SELECT id FROM target_sessions)),
-			   (SELECT COUNT(*) FROM chunks WHERE source_id IN
-			      (SELECT id FROM sources
-			         WHERE session_id IN (SELECT id FROM target_sessions))),
-			   (SELECT COUNT(*) FROM session_events
-			      WHERE session_id IN (SELECT id FROM target_sessions)),
-			   (SELECT COUNT(*) FROM session_labels
-			      WHERE session_id IN (SELECT id FROM target_sessions))`,
-			namespace, name,
-		).Scan(
-			&result.DeletedSessions,
-			&result.Cascaded.Sources,
-			&result.Cascaded.Chunks,
-			&result.Cascaded.Events,
-			&result.Cascaded.Labels,
-		)
-		if err != nil {
-			return fmt.Errorf("%w: count cascade for %q/%q: %w", ErrStorageBackend, namespace, name, err)
-		}
-		r.logger.WithContext(ctx).Debug(
-			"delete client: cascade computed",
-			logging.IntField("sessions", result.DeletedSessions),
-			logging.IntField("sources", result.Cascaded.Sources),
-			logging.IntField("chunks", result.Cascaded.Chunks),
-			logging.IntField("events", result.Cascaded.Events),
-			logging.IntField("labels", result.Cascaded.Labels),
-		)
-
-		if _, err := tx.ExecContext(
-			ctx,
-			`DELETE FROM clients WHERE namespace = $1 AND name = $2`,
-			namespace, name,
-		); err != nil {
-			return fmt.Errorf("%w: delete client %q/%q: %w", ErrStorageBackend, namespace, name, err)
-		}
-		r.logger.WithContext(ctx).Debug("delete client: committed")
-		return nil
-	})
 	if err != nil {
-		return DeleteClientResult{}, err
+		return fmt.Errorf("%w: lock client %q/%q: %w", ErrStorageBackend, namespace, name, err)
 	}
-	return result, nil
+	return nil
+}
+
+// CascadeCountsForClient returns the sessions (and their descendants) that a
+// delete of this client will cascade.
+func (r *clientRepo) CascadeCountsForClient(ctx context.Context, namespace, name string) (deletedSessions int, c CascadeCounts, err error) {
+	err = r.queryer.QueryRowContext(
+		ctx,
+		`WITH target_sessions AS (
+		   SELECT id FROM sessions WHERE namespace = $1 AND client = $2
+		 )
+		 SELECT
+		   (SELECT COUNT(*) FROM target_sessions),
+		   (SELECT COUNT(*) FROM sources
+		      WHERE session_id IN (SELECT id FROM target_sessions)),
+		   (SELECT COUNT(*) FROM chunks WHERE source_id IN
+		      (SELECT id FROM sources
+		         WHERE session_id IN (SELECT id FROM target_sessions))),
+		   (SELECT COUNT(*) FROM session_events
+		      WHERE session_id IN (SELECT id FROM target_sessions)),
+		   (SELECT COUNT(*) FROM session_labels
+		      WHERE session_id IN (SELECT id FROM target_sessions))`,
+		namespace, name,
+	).Scan(&deletedSessions, &c.Sources, &c.Chunks, &c.Events, &c.Labels)
+	if err != nil {
+		return 0, CascadeCounts{}, fmt.Errorf("%w: count cascade for %q/%q: %w", ErrStorageBackend, namespace, name, err)
+	}
+	return deletedSessions, c, nil
+}
+
+// DeleteRow removes the client row; sessions (and their children) go via ON DELETE CASCADE.
+func (r *clientRepo) DeleteRow(ctx context.Context, namespace, name string) error {
+	if _, err := r.queryer.ExecContext(
+		ctx,
+		`DELETE FROM clients WHERE namespace = $1 AND name = $2`,
+		namespace, name,
+	); err != nil {
+		return fmt.Errorf("%w: delete client %q/%q: %w", ErrStorageBackend, namespace, name, err)
+	}
+	return nil
+}
+
+// BumpActivity advances last_activity_at to the newer of its current value and ts.
+// ts is sampled on the caller's clock, so a bump carrying an older ts can land
+// after a newer one; GREATEST keeps the column monotonic under that reordering.
+func (r *clientRepo) BumpActivity(ctx context.Context, namespace, name string, ts time.Time) error {
+	if _, err := r.queryer.ExecContext(
+		ctx,
+		`UPDATE clients SET last_activity_at = GREATEST(last_activity_at, $3)
+		 WHERE namespace = $1 AND name = $2`,
+		namespace, name, ts,
+	); err != nil {
+		return fmt.Errorf("%w: bump clients.last_activity_at for %q/%q: %w", ErrStorageBackend, namespace, name, err)
+	}
+	return nil
 }

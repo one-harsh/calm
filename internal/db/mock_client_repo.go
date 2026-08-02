@@ -7,6 +7,7 @@ package db
 
 import (
 	context "context"
+	time "time"
 
 	mock "github.com/stretchr/testify/mock"
 )
@@ -22,6 +23,120 @@ type MockClientRepo_Expecter struct {
 
 func (_m *MockClientRepo) EXPECT() *MockClientRepo_Expecter {
 	return &MockClientRepo_Expecter{mock: &_m.Mock}
+}
+
+// BumpActivity provides a mock function with given fields: ctx, namespace, name, ts
+func (_m *MockClientRepo) BumpActivity(ctx context.Context, namespace string, name string, ts time.Time) error {
+	ret := _m.Called(ctx, namespace, name, ts)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BumpActivity")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, time.Time) error); ok {
+		r0 = rf(ctx, namespace, name, ts)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockClientRepo_BumpActivity_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BumpActivity'
+type MockClientRepo_BumpActivity_Call struct {
+	*mock.Call
+}
+
+// BumpActivity is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - name string
+//   - ts time.Time
+func (_e *MockClientRepo_Expecter) BumpActivity(ctx interface{}, namespace interface{}, name interface{}, ts interface{}) *MockClientRepo_BumpActivity_Call {
+	return &MockClientRepo_BumpActivity_Call{Call: _e.mock.On("BumpActivity", ctx, namespace, name, ts)}
+}
+
+func (_c *MockClientRepo_BumpActivity_Call) Run(run func(ctx context.Context, namespace string, name string, ts time.Time)) *MockClientRepo_BumpActivity_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(time.Time))
+	})
+	return _c
+}
+
+func (_c *MockClientRepo_BumpActivity_Call) Return(_a0 error) *MockClientRepo_BumpActivity_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockClientRepo_BumpActivity_Call) RunAndReturn(run func(context.Context, string, string, time.Time) error) *MockClientRepo_BumpActivity_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// CascadeCountsForClient provides a mock function with given fields: ctx, namespace, name
+func (_m *MockClientRepo) CascadeCountsForClient(ctx context.Context, namespace string, name string) (int, CascadeCounts, error) {
+	ret := _m.Called(ctx, namespace, name)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CascadeCountsForClient")
+	}
+
+	var r0 int
+	var r1 CascadeCounts
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) (int, CascadeCounts, error)); ok {
+		return rf(ctx, namespace, name)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) int); ok {
+		r0 = rf(ctx, namespace, name)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string, string) CascadeCounts); ok {
+		r1 = rf(ctx, namespace, name)
+	} else {
+		r1 = ret.Get(1).(CascadeCounts)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, string, string) error); ok {
+		r2 = rf(ctx, namespace, name)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// MockClientRepo_CascadeCountsForClient_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CascadeCountsForClient'
+type MockClientRepo_CascadeCountsForClient_Call struct {
+	*mock.Call
+}
+
+// CascadeCountsForClient is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - name string
+func (_e *MockClientRepo_Expecter) CascadeCountsForClient(ctx interface{}, namespace interface{}, name interface{}) *MockClientRepo_CascadeCountsForClient_Call {
+	return &MockClientRepo_CascadeCountsForClient_Call{Call: _e.mock.On("CascadeCountsForClient", ctx, namespace, name)}
+}
+
+func (_c *MockClientRepo_CascadeCountsForClient_Call) Run(run func(ctx context.Context, namespace string, name string)) *MockClientRepo_CascadeCountsForClient_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *MockClientRepo_CascadeCountsForClient_Call) Return(deletedSessions int, c CascadeCounts, err error) *MockClientRepo_CascadeCountsForClient_Call {
+	_c.Call.Return(deletedSessions, c, err)
+	return _c
+}
+
+func (_c *MockClientRepo_CascadeCountsForClient_Call) RunAndReturn(run func(context.Context, string, string) (int, CascadeCounts, error)) *MockClientRepo_CascadeCountsForClient_Call {
+	_c.Call.Return(run)
+	return _c
 }
 
 // CountSessions provides a mock function with given fields: ctx, namespace, name
@@ -82,60 +197,50 @@ func (_c *MockClientRepo_CountSessions_Call) RunAndReturn(run func(context.Conte
 	return _c
 }
 
-// Delete provides a mock function with given fields: ctx, namespace, name
-func (_m *MockClientRepo) Delete(ctx context.Context, namespace string, name string) (DeleteClientResult, error) {
+// DeleteRow provides a mock function with given fields: ctx, namespace, name
+func (_m *MockClientRepo) DeleteRow(ctx context.Context, namespace string, name string) error {
 	ret := _m.Called(ctx, namespace, name)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Delete")
+		panic("no return value specified for DeleteRow")
 	}
 
-	var r0 DeleteClientResult
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) (DeleteClientResult, error)); ok {
-		return rf(ctx, namespace, name)
-	}
-	if rf, ok := ret.Get(0).(func(context.Context, string, string) DeleteClientResult); ok {
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
 		r0 = rf(ctx, namespace, name)
 	} else {
-		r0 = ret.Get(0).(DeleteClientResult)
+		r0 = ret.Error(0)
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
-		r1 = rf(ctx, namespace, name)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
+	return r0
 }
 
-// MockClientRepo_Delete_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Delete'
-type MockClientRepo_Delete_Call struct {
+// MockClientRepo_DeleteRow_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteRow'
+type MockClientRepo_DeleteRow_Call struct {
 	*mock.Call
 }
 
-// Delete is a helper method to define mock.On call
+// DeleteRow is a helper method to define mock.On call
 //   - ctx context.Context
 //   - namespace string
 //   - name string
-func (_e *MockClientRepo_Expecter) Delete(ctx interface{}, namespace interface{}, name interface{}) *MockClientRepo_Delete_Call {
-	return &MockClientRepo_Delete_Call{Call: _e.mock.On("Delete", ctx, namespace, name)}
+func (_e *MockClientRepo_Expecter) DeleteRow(ctx interface{}, namespace interface{}, name interface{}) *MockClientRepo_DeleteRow_Call {
+	return &MockClientRepo_DeleteRow_Call{Call: _e.mock.On("DeleteRow", ctx, namespace, name)}
 }
 
-func (_c *MockClientRepo_Delete_Call) Run(run func(ctx context.Context, namespace string, name string)) *MockClientRepo_Delete_Call {
+func (_c *MockClientRepo_DeleteRow_Call) Run(run func(ctx context.Context, namespace string, name string)) *MockClientRepo_DeleteRow_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run(args[0].(context.Context), args[1].(string), args[2].(string))
 	})
 	return _c
 }
 
-func (_c *MockClientRepo_Delete_Call) Return(_a0 DeleteClientResult, _a1 error) *MockClientRepo_Delete_Call {
-	_c.Call.Return(_a0, _a1)
+func (_c *MockClientRepo_DeleteRow_Call) Return(_a0 error) *MockClientRepo_DeleteRow_Call {
+	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockClientRepo_Delete_Call) RunAndReturn(run func(context.Context, string, string) (DeleteClientResult, error)) *MockClientRepo_Delete_Call {
+func (_c *MockClientRepo_DeleteRow_Call) RunAndReturn(run func(context.Context, string, string) error) *MockClientRepo_DeleteRow_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -195,6 +300,54 @@ func (_c *MockClientRepo_List_Call) Return(_a0 []ClientSummary, _a1 error) *Mock
 }
 
 func (_c *MockClientRepo_List_Call) RunAndReturn(run func(context.Context, string) ([]ClientSummary, error)) *MockClientRepo_List_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// LockByName provides a mock function with given fields: ctx, namespace, name
+func (_m *MockClientRepo) LockByName(ctx context.Context, namespace string, name string) error {
+	ret := _m.Called(ctx, namespace, name)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LockByName")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
+		r0 = rf(ctx, namespace, name)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockClientRepo_LockByName_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'LockByName'
+type MockClientRepo_LockByName_Call struct {
+	*mock.Call
+}
+
+// LockByName is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - name string
+func (_e *MockClientRepo_Expecter) LockByName(ctx interface{}, namespace interface{}, name interface{}) *MockClientRepo_LockByName_Call {
+	return &MockClientRepo_LockByName_Call{Call: _e.mock.On("LockByName", ctx, namespace, name)}
+}
+
+func (_c *MockClientRepo_LockByName_Call) Run(run func(ctx context.Context, namespace string, name string)) *MockClientRepo_LockByName_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *MockClientRepo_LockByName_Call) Return(_a0 error) *MockClientRepo_LockByName_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockClientRepo_LockByName_Call) RunAndReturn(run func(context.Context, string, string) error) *MockClientRepo_LockByName_Call {
 	_c.Call.Return(run)
 	return _c
 }

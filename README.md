@@ -112,7 +112,7 @@ Implemented end to end:
 - ingest and compact representation
 - ranked and document-order retrieval
 - session events and snapshots
-- workload feedback and outcome-labeled metrics
+- workload feedback and outcome attribution
 - namespace and session isolation
 - coding-agent MCP adapter
 - Claude Code shell-output capture
@@ -126,20 +126,102 @@ The public HTTP contract is defined in [docs/api/openapi.yaml](docs/api/openapi.
 
 ### Prerequisites
 
-- Go 1.25.x
-- [go-task](https://taskfile.dev/)
-- Docker
-- `curl` 7.76 or newer (the walkthrough uses `--fail-with-body`)
-- `jq`
-- `openssl`
-- Python 3 with `pip` (evaluation-harness example only)
+Every command in this repo runs through [go-task](https://taskfile.dev/),
+so the steps below are the same on macOS, Linux, and Windows (WSL2).
 
-Clone the repository and start the development database:
+| Tool | Why | Needed for |
+|------|-----|-----------|
+| **Go 1.25.x** (pinned in `.go-version`) | builds the service | everything |
+| **[go-task](https://taskfile.dev/)** | the task runner every command uses | everything |
+| **Docker** | dev Postgres (`task dev:up`) | running + integration tests |
+| **`curl` 7.76+ and `jq`** | the walkthrough below uses `--fail-with-body` | walkthrough only |
+| **`openssl`** | generates the local namespace key | walkthrough only |
+| **C compiler** (`gcc`/`clang`) | Go's race detector needs cgo | `task test`, `task ci` only¹ |
+| **Python 3 + `httpx`** | the eval-harness example | eval-harness walkthrough, `task ci` |
+
+¹ The shipping binary is pure Go, `CGO_ENABLED=0`, statically linked — no C
+dependency. The C compiler is *only* for the `-race` test build; if you skip it,
+`go test -race` reports `-race requires cgo`.
+
+The Go version is pinned in `.go-version`, a [goenv](https://github.com/go-nv/goenv)
+file — the steps below install goenv so `goenv install` (run once inside the repo)
+picks up the exact version automatically. Prefer a plain Go install? Just install
+1.25.x from [go.dev/dl](https://go.dev/dl/) and skip goenv.
+
+Pick your platform:
+
+<details>
+<summary><b>Windows (WSL2 — Ubuntu/Debian)</b></summary>
+
+Run everything inside the WSL distro (not PowerShell).
 
 ```bash
-git clone https://github.com/one-harsh/calm.git
-cd calm
+sudo apt-get update && sudo apt-get install -y gcc git docker.io python3-pip
+sudo usermod -aG docker "$USER"                   # run docker without sudo
+sudo service docker start                         # start the daemon (WSL has no systemd by default)
+pip install --break-system-packages httpx         # PEP 668: Ubuntu blocks system pip (or use a venv)
+sh -c "$(curl -sSL https://taskfile.dev/install.sh)" -- -d -b ~/.local/bin  # go-task
 
+{ echo 'export PATH="$HOME/.local/bin:$PATH"'      # go-task lands here
+  echo 'export GOENV_ROOT="$HOME/.goenv"'          # goenv — honors .go-version
+  echo 'export PATH="$GOENV_ROOT/bin:$PATH"'
+  echo 'eval "$(goenv init -)"'; } >> ~/.bashrc
+git clone https://github.com/go-nv/goenv.git ~/.goenv
+```
+
+Then run `wsl --shutdown` from Windows and reopen the distro (applies the `docker`
+group and loads `task`/goenv onto `PATH`). Prefer **Docker Desktop** for Windows?
+Install it and enable its **WSL integration** for the distro instead of the `docker.io`
+engine above — the daemon then runs on the Windows host.
+</details>
+
+<details>
+<summary><b>macOS (Homebrew)</b></summary>
+
+```bash
+brew install goenv go-task python
+brew install --cask docker        # or: brew install colima  (no Docker Desktop)
+xcode-select --install            # C compiler for -race (skip if already installed)
+pip3 install --break-system-packages httpx   # PEP 668: brew python blocks system pip (or use a venv)
+echo 'eval "$(goenv init -)"' >> ~/.zprofile && exec "$SHELL"
+open -a Docker                    # launch Docker Desktop once  (colima users: `colima start`)
+```
+</details>
+
+<details>
+<summary><b>Linux (Debian/Ubuntu)</b></summary>
+
+```bash
+sudo apt-get update && sudo apt-get install -y gcc git docker.io python3-pip
+sudo systemctl enable --now docker                # start the daemon + on boot
+sudo usermod -aG docker "$USER"                   # run docker without sudo (log out/in to apply)
+pip install --break-system-packages httpx         # PEP 668: Ubuntu blocks system pip (or use a venv)
+sh -c "$(curl -sSL https://taskfile.dev/install.sh)" -- -d -b ~/.local/bin  # go-task
+
+{ echo 'export PATH="$HOME/.local/bin:$PATH"'      # go-task lands here
+  echo 'export GOENV_ROOT="$HOME/.goenv"'          # goenv — honors .go-version
+  echo 'export PATH="$GOENV_ROOT/bin:$PATH"'
+  echo 'eval "$(goenv init -)"'; } >> ~/.bashrc
+git clone https://github.com/go-nv/goenv.git ~/.goenv
+```
+
+Log out and back in (applies the `docker` group), then `exec "$SHELL"` or reopen the
+terminal to load `task`/goenv onto `PATH`.
+Fedora/Arch: same set from `dnf`/`pacman` (`gcc`, `docker`, `goenv`, `go-task`, `python-httpx`).
+</details>
+
+Then clone the repository and fetch the Go dev tools (gofumpt, goimports,
+mockery v2, golangci-lint v2, oapi-codegen v2, addlicense):
+
+```bash
+git clone https://github.com/one-harsh/calm.git && cd calm
+goenv install        # reads .go-version, installs the pinned Go 1.25.x (skip if not using goenv)
+task tools:install
+```
+
+Start the development database:
+
+```bash
 task dev:up
 ```
 
@@ -158,6 +240,13 @@ Start CALM:
 ```bash
 task run:calm
 ```
+
+`task run:calm` builds and runs the service against
+[`cmd/calm/config/dev.yaml`](cmd/calm/config/dev.yaml), which references
+`[env:CALM_DEFAULT_KEY]` for the default namespace's credential — the
+service refuses to start if the variable is not exported. Keeping the key in
+`.calm/calm_api.key` lets the integrations below read the *same* key from
+that file, so the server and any adapter always agree.
 
 In another terminal, from the repository root, load the same key and check the service:
 
