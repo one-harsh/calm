@@ -4,10 +4,12 @@
 # need to change. `namespaces` is required; the service refuses to start
 # with an empty list.
 #
-# Env-var override: any field can be overridden by CALM_<PATH_IN_UPPERCASE>,
+# Env-var override: any scalar field can be overridden by CALM_<PATH_IN_UPPERCASE>,
 # with `.` and `-` replaced by `_`. Examples:
 #   CALM_SERVER_ADDRESS=":9090"       overrides server.address
 #   CALM_STORAGE_DSN="postgres://..." overrides storage.dsn
+# Slice fields (the `namespaces` list) are not env-overridable — changing a
+# namespace entry requires editing this file.
 
 service:
   service_name: calm

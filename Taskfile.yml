@@ -358,15 +358,30 @@ tasks:
       Local: defaults to checking just HEAD~1..HEAD — the commit a developer
       just made before running `task ci`.
 
-      CI: the GitHub workflow sets DCO_BASE to origin/<base_ref> for
+      CI: the GitHub workflow sets DCO_BASE to the PR's base SHA for
       pull_request events and to github.event.before for push events,
       so every commit being introduced gets verified.
+
+      Merge commits are exempt (--no-merges), matching the probot DCO app:
+      on pull_request events HEAD is GitHub's synthetic merge ref, which
+      can never carry a sign-off.
+
+      DCO_EXEMPT_WEBFLOW=1 (set by CI on push events only) additionally
+      exempts commits committed by GitHub's web-flow (noreply@github.com):
+      squash-merge commits are assembled by GitHub from PR_TITLE + PR_BODY,
+      dropping the authors' trailers, and their content was already verified
+      per-commit on the pull_request run. PR runs never set it, so unsigned
+      web-UI commits (e.g. "Commit suggestion") still fail there and get
+      amended before merge.
     vars:
       BASE: '{{.DCO_BASE | default "HEAD~1"}}'
     cmds:
       - |
         missing=""
-        for sha in $(git rev-list {{.BASE}}..HEAD); do
+        for sha in $(git rev-list --no-merges {{.BASE}}..HEAD); do
+          if [ -n "${DCO_EXEMPT_WEBFLOW:-}" ] && [ "$(git show -s --format=%ce "$sha")" = "noreply@github.com" ]; then
+            continue
+          fi
           if ! git show -s --format=%B "$sha" | git interpret-trailers --parse | grep -qi '^Signed-off-by:'; then
             subj=$(git show -s --format=%s "$sha")
             missing="${missing}  ${sha} ${subj}\n"

@@ -39,8 +39,27 @@ it:
   | Claude Code | After each command runs, the hook swaps the raw output for the compact version. Permission prompts, allow rules, and approvals stay exactly as native — the hook only observes. |
   | Cursor, Codex | Their hooks can't substitute a tool's output, so the hook rewrites the command to run through `calm-capture exec`, which runs it and captures. |
 
-  The same binary carries the agent-facing `search` / `feedback`
-  retrieval and the operator's `init` installer.
+  The same binary carries the full command surface:
+
+  - `calm-capture search [source=<label>] <terms>` — retrieve captured
+    output (the same primitive as the MCP shell's `calm_search`); with
+    `source=` and no terms, rereads a capture in document order.
+  - `calm-capture feedback <ref> <outcome>` — report an outcome
+    (`success` / `retry` / `degraded`) against a captured call.
+  - `calm-capture exec -- '<command>'` — run a command and capture its
+    output (the rewrite target for hooks that can't substitute output).
+  - `calm-capture hook` — the harness-facing entry point: reads a hook
+    payload on stdin, replies on stdout. The harness invokes this, not you.
+  - `calm-capture init --harness=claude` — installs the Claude Code hook
+    (deployment steps in the top-level README).
+
+  Every non-degraded capture prints a trailer pairing the source label
+  with the feedback ref, so recall and outcome reporting are both
+  discoverable from the result:
+
+  ```text
+  ↳ source=calm:v1:shell:sh#1@ab12cd · feedback: calm-capture feedback <ref>
+  ```
 
 **This is one CALM workload, not the universal shape of CALM
 integration.** The adapter solves the *hardest* case — a coding-agent
