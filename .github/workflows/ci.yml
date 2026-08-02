@@ -5,10 +5,7 @@ name: CI
 
 on:
   push:
-    branches-ignore:
-      - 'gh-pages'
-    tags-ignore:
-      - '**'
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -26,8 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # PR: fetch exactly (commits + 1) so `HEAD~N..HEAD` resolves for the
-          # DCO range — no waste, scales naturally with PR size.
+          # PR: HEAD is the synthetic merge ref, so the deepest PR commit sits
+          # at depth (commits + 1) and the base SHA is the merge's first parent
+          # at depth 2 — fetch-depth: commits plus the --deepen=1 below covers
+          # both for the `base.sha..HEAD` DCO range. No waste, scales with PR size.
           # Push: 50-commit bound (event payload doesn't expose a delta count
           # reliably; pushes >20 truncate, first-push-to-branch and
           # force-push edge cases need a fallback either way).
@@ -44,7 +43,10 @@ jobs:
 
       - name: DCO sign-off check
         env:
-          DCO_BASE: ${{ github.event_name == 'pull_request' && format('HEAD~{0}', github.event.pull_request.commits) || github.event.before }}
+          DCO_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          # Push-to-main only: exempt GitHub-assembled squash commits (verified
+          # per-commit on the PR run). Never set on PR runs — see dco:check.
+          DCO_EXEMPT_WEBFLOW: ${{ github.event_name == 'push' && '1' || '' }}
         run: task dco:check
 
   lint:
