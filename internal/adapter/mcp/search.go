@@ -21,7 +21,6 @@ const toolNameSearch = "calm_search"
 
 const searchTimeout = 10 * time.Second
 
-// CALM's /v1/search bounds per openapi.yaml SearchRequest.
 const (
 	maxSearchQueries = 10
 	maxSearchLimit   = 50
@@ -74,8 +73,6 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 	if len(a.Queries) == 0 && a.Source == "" {
 		return ToolResult{}, &ArgError{Detail: "queries or source is required"}
 	}
-	// Queries absent + source present selects document-order mode (sequential
-	// reread); queries present is ranked retrieval, and offset is ignored.
 	documentOrder := len(a.Queries) == 0
 	if documentOrder {
 		if a.Offset < 0 {
@@ -108,10 +105,7 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 		return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable}
 	}
 
-	// Strip and validate the fused staleness suffix per LABELING.md §2 before
-	// forwarding — CALM's grammar doesn't parse `@<token>`, and a stale token
-	// must resolve locally as session_lost rather than reach CALM and come
-	// back as calm_unreachable. Base-only labels pass through unchanged.
+	// Fused-token validation keeps stale content distinct from backend failure.
 	calmSource := a.Source
 	if a.Source != "" {
 		stripped, ok := s.registry.ValidateAndStrip(a.Source)
@@ -144,21 +138,21 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 		)
 		return ToolResult{IsError: true}, &DegradedSignal{Reason: obs.DegradedReasonCalmUnreachable, Detail: err.Error()}
 	}
-
-	// An empty result — no matches, or an offset past the end — is a healthy
-	// page, not a degradation: it renders as a non-error result through the same
-	// formatters, distinct from the calm_unreachable/session_lost error shapes.
-	if documentOrder {
-		return TextResult(capture.FormatDocumentOrder(res, a.Offset, a.Source, searchVocab), false), nil
+	if res.CorrelationID != "" {
+		logging.BindSummary(ctx, obs.CorrelationID(res.CorrelationID))
 	}
-	return TextResult(capture.FormatSearchResults(res, a.Source, searchVocab), false), nil
+
+	// Empty pages are healthy retrieval results, not degradation.
+	var out string
+	if documentOrder {
+		out = capture.FormatDocumentOrder(res, a.Offset, a.Source, searchVocab)
+	} else {
+		out = capture.FormatSearchResults(res, a.Source, searchVocab)
+	}
+	logging.BindSummary(ctx, obs.ResponseRawBytes(len(out)))
+	return TextResult(out, false), nil
 }
 
-// searchVocab is the MCP shell's search-presentation vocabulary. Its
-// document-order strings name the JSON `budget_bytes` knob and the `calm_search`
-// tool; its empty FeedbackPrefix renders no per-result feedback line — the MCP
-// shell surfaces the feedback ref through its outcome tool, keeping inline
-// economics.
 var searchVocab = capture.SearchVocab{
 	TruncatedMarker:  "[truncated — raise budget_bytes or use a ranked query for the rest]",
 	ContinuationLine: "more chunks remain — call calm_search again with source and offset: ",

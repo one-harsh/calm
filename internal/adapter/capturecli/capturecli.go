@@ -90,24 +90,50 @@ func sessionIDOr(v string) string {
 	return v
 }
 
-// recallFor builds the retrieval hint for cards and trailers. It embeds the
-// absolute binPath and session id because a bare `calm-capture search` is off
-// PATH from the model's seat and resolves the wrong session dir.
+// A bare command is off PATH from the model's seat and resolves the wrong session.
 func recallFor(binPath, sessionID string) string {
 	return shellSingleQuote(binPath) + " search --session " + shellSingleQuote(sessionID)
 }
 
-func (d Deps) degradedStderr(reason string) int {
-	_, _ = fmt.Fprintln(d.Stderr, obs.DegradedPhrase(reason))
+func withCallSummary(ctx context.Context) context.Context {
+	ctx, reqID := obs.WithCallContext(ctx)
+	ctx = logging.Bind(
+		ctx,
+		obs.WorkloadRequestID(reqID),
+		logging.BoolField(obs.KeyCaptured, false),
+		logging.BoolField(obs.KeyDegraded, false),
+	)
+	return logging.BindSummary(
+		ctx,
+		obs.PresentationModeFieldSummary,
+		obs.ResponseVisibleBytes(0),
+		obs.ResponseRawBytes(0),
+	)
+}
+
+func bindDegraded(ctx context.Context, reason string) {
+	logging.BindSummary(
+		ctx,
+		logging.BoolField(obs.KeyDegraded, true),
+		obs.DegradedReasonField(reason),
+	)
+}
+
+func (d Deps) degradedStderr(ctx context.Context, reason string) int {
+	n, _ := fmt.Fprintln(d.Stderr, obs.DegradedPhrase(reason))
+	bindDegraded(ctx, reason)
+	logging.BindSummary(ctx, obs.ResponseVisibleBytes(n), obs.ResponseRawBytes(n))
 	return 1
 }
 
-func (d Deps) degradedSig(sig *capture.Signal) int {
+func (d Deps) degradedSig(ctx context.Context, sig *capture.Signal) int {
 	line := obs.DegradedPhrase(sig.Reason)
 	if sig.Detail != "" {
 		line += "\n" + sig.Detail
 	}
-	_, _ = fmt.Fprintln(d.Stderr, line)
+	n, _ := fmt.Fprintln(d.Stderr, line)
+	bindDegraded(ctx, sig.Reason)
+	logging.BindSummary(ctx, obs.ResponseVisibleBytes(n), obs.ResponseRawBytes(n))
 	return 1
 }
 

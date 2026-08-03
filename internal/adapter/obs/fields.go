@@ -1,27 +1,15 @@
 // Copyright 2026 The CALM Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package obs defines the adapter's observability surface: context-bound
-// per-call identity (see context.go), structured-log field keys, closed-enum
-// values for those fields, and open-domain field constructors.
-//
-// The adapter's output splits into two surfaces per DESIGN.md §7 — visible
-// text the agent reads, and OTel emission for the operator. This file owns
-// the structured-log/metric field shape used for the OTel emission surface;
-// the closed-enum degraded_reason values are reused as the canonical strings
-// in visible-text degradation phrasing so both surfaces stay in lockstep.
-//
-// TODO: when CALM-core adopts an OTel MeterProvider (today CALM emits metrics
-// as structured log fields, not OTel instruments), migrate from log-fields to
-// real metric instruments alongside CALM.
+// Package obs keeps agent-visible degradation and operator telemetry on one
+// closed vocabulary without putting telemetry in model context.
+// TODO: migrate measurement fields to instruments when CALM adopts a MeterProvider.
 package obs
 
 import (
 	logging "github.com/one-harsh/context-logging"
 )
 
-// Per-call categorical / identifier log field keys (flat snake_case per
-// project convention for identifier-style fields).
 const (
 	KeyCaptured          = "captured"
 	KeyDegraded          = "degraded"
@@ -29,10 +17,11 @@ const (
 	KeyCorrelationID     = "correlation_id"
 	KeySourceLabel       = "source_label"
 	KeyWorkloadRequestID = "workload_request_id"
+	// KeyReplaced reports delivery, not merely the engine's presentation choice.
+	KeyReplaced = "replaced"
 )
 
-// Closed enum for degraded_reason. Values surface verbatim in visible-text
-// degradation phrasing (per DESIGN.md §7) and in OTel structured log fields.
+// Values surface verbatim in both degradation text and operator telemetry.
 const (
 	DegradedReasonCalmUnreachable       = "calm_unreachable"
 	DegradedReasonAuthFailed            = "auth_failed"
@@ -50,6 +39,25 @@ var (
 	DegradedReasonFieldCapturePartial        = logging.StringField(KeyDegradedReason, DegradedReasonCapturePartial)
 	DegradedReasonFieldFeedbackWindowExpired = logging.StringField(KeyDegradedReason, DegradedReasonFeedbackWindowExpired)
 )
+
+func DegradedReasonField(reason string) logging.LoggingField {
+	switch reason {
+	case DegradedReasonCalmUnreachable:
+		return DegradedReasonFieldCalmUnreachable
+	case DegradedReasonAuthFailed:
+		return DegradedReasonFieldAuthFailed
+	case DegradedReasonSessionLost:
+		return DegradedReasonFieldSessionLost
+	case DegradedReasonCaptureFailed:
+		return DegradedReasonFieldCaptureFailed
+	case DegradedReasonCapturePartial:
+		return DegradedReasonFieldCapturePartial
+	case DegradedReasonFeedbackWindowExpired:
+		return DegradedReasonFieldFeedbackWindowExpired
+	default:
+		return logging.StringField(KeyDegradedReason, reason)
+	}
+}
 
 func DegradedPhrase(reason string) string {
 	switch reason {
@@ -70,9 +78,7 @@ func DegradedPhrase(reason string) string {
 	}
 }
 
-// Per-call measurement field keys (dotted-schema scoped to entity + action).
-// The OTel-Prometheus exporter converts . → _ at emission, so PromQL sees the
-// underscored form.
+// Prometheus export converts dotted measurement keys to underscores.
 const (
 	KeyResponseVisibleBytes = "adapter.response.visible_bytes"
 	KeyResponseRawBytes     = "adapter.response.raw_bytes"
@@ -90,6 +96,9 @@ var (
 	PresentationModeFieldInline  = logging.StringField(KeyPresentationMode, PresentationModeInline)
 	PresentationModeFieldSummary = logging.StringField(KeyPresentationMode, PresentationModeSummary)
 	PresentationModeFieldRanged  = logging.StringField(KeyPresentationMode, PresentationModeRanged)
+
+	ReplacedFieldTrue  = logging.BoolField(KeyReplaced, true)
+	ReplacedFieldFalse = logging.BoolField(KeyReplaced, false)
 )
 
 func ResponseVisibleBytes(n int) logging.LoggingField {

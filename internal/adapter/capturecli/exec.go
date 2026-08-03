@@ -45,24 +45,32 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 		return passthroughRun(ctx, argv, d.Stdout, d.Stderr)
 	}
 
+	start := time.Now()
+	ctx = withCallSummary(ctx)
+	defer func() {
+		d.Logger.SummaryWithContext(ctx).Info(
+			"command completed",
+			obs.CallDurationMs(time.Since(start).Milliseconds()),
+		)
+	}()
+
 	sid := sessionIDOr(*sessionID)
 	mgr, err := d.manager(sid)
 	if err != nil {
-		_, _ = fmt.Fprintln(d.Stdout, "calm-capture exec:", err)
+		n, _ := fmt.Fprintln(d.Stdout, "calm-capture exec:", err)
+		logging.BindSummary(ctx, obs.ResponseVisibleBytes(n))
 		return 2
 	}
 
 	d.drain(ctx, mgr)
 
 	cwd, _ := os.Getwd()
-	// The wrapped command runs unbounded: its duration is native cost, and the
-	// harness/model own command timeouts — the wrap must not impose one the
-	// native path lacks (never-worse). Only CALM-added work carries bounds.
-	// The child's environment carries the AD07 sentinel so a nested
-	// calm-capture exec inside it passes through instead of re-wrapping.
+	// never-worse: preserve native timeout ownership; only CALM work is bounded.
+	// AD07: the child sentinel prevents nested capture wrappers.
 	r, runErr := runWrapped(ctx, argv, cwd, CaptureActiveEnv+"=1")
 	if runErr != nil {
-		_, _ = fmt.Fprintln(d.Stdout, "failed to run command:", runErr)
+		n, _ := fmt.Fprintln(d.Stdout, "failed to run command:", runErr)
+		logging.BindSummary(ctx, obs.ResponseVisibleBytes(n))
 		return 1
 	}
 
@@ -80,9 +88,13 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 		},
 	})
 
-	// Response-first: the presentation bytes reach stdout before any flush
-	// network I/O, so the agent's read never waits on delivery (DESIGN.md §9).
-	_, _ = fmt.Fprint(d.Stdout, composeExec(out))
+	if out.Reason != "" {
+		bindDegraded(ctx, out.Reason)
+	}
+	// Response-first: deferred delivery cannot delay the agent-visible result.
+	visible := composeExec(out)
+	n, _ := fmt.Fprint(d.Stdout, visible)
+	logging.BindSummary(ctx, obs.ResponseVisibleBytes(n))
 
 	d.drain(ctx, mgr)
 	if d.gcSample() {
@@ -95,8 +107,7 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 	return r.ExitCode
 }
 
-// composeExec appends the recall trailer (or the degradation sentence when
-// degraded) so even a small inline capture stays recall-discoverable.
+// Even inline captures need an address because the capture shell has no tool description.
 func composeExec(out capture.Outcome) string {
 	if out.Reason != "" {
 		v := out.Visible
@@ -125,11 +136,8 @@ func (d Deps) drain(ctx context.Context, mgr *session.Manager) {
 	mgr.Drain(dctx)
 }
 
-// argvAssignmentGuard rejects argv-form invocations whose first word is an
-// assignment prefix (`exec -- FOO=bar cmd`, multiple args): argv form would try
-// to run `FOO=bar` as a program. It writes the single-string guidance to out
-// and returns true when it fires. Single-string form (one arg) is unaffected —
-// the shell applies the assignment and the engine strips it from the label.
+// Multi-argument exec cannot apply shell assignment prefixes; direct callers
+// must use the single-string form instead.
 func argvAssignmentGuard(argv []string, out io.Writer) bool {
 	if len(argv) > 1 && extract.IsAssignmentPrefix(argv[0]) {
 		_, _ = fmt.Fprintln(out, "calm-capture exec: assignment prefix needs the single-string form: exec -- 'FOO=bar cmd …'")
@@ -138,13 +146,8 @@ func argvAssignmentGuard(argv []string, out io.Writer) bool {
 	return false
 }
 
-// PassthroughExec is exec's bootstrap-failure floor: with no usable config,
-// logger, or client, the wrapped command still runs and its output still
-// returns — a broken CALM setup must never block the local action
-// (never-worse). Output matches the engine's degraded shape: the raw payload
-// plus the one capture_failed sentence. The underlying bootstrap error stays
-// off both streams (capture surfaces); `init` is the operator's affordance
-// for surfacing it.
+// PassthroughExec is the never-worse bootstrap floor: it runs the local action
+// without exposing bootstrap diagnostics on captured streams.
 func PassthroughExec(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -158,9 +161,7 @@ func PassthroughExec(ctx context.Context, args []string, stdout, stderr io.Write
 		_, _ = fmt.Fprintln(stdout, "calm-capture exec: no command after --")
 		return 2
 	}
-	// The guard runs on the degraded floors too: an argv-form assignment must
-	// get the single-string guidance even when capture is already down, never
-	// the raw "executable file not found".
+	// Bootstrap degradation must not change argv validation semantics.
 	if argvAssignmentGuard(argv, stdout) {
 		return 2
 	}
@@ -180,8 +181,6 @@ func PassthroughExec(ctx context.Context, args []string, stdout, stderr io.Write
 	return r.ExitCode
 }
 
-// passthroughRun runs the command with no capture: raw stdout/stderr and the exit
-// code pass through verbatim.
 func passthroughRun(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 	cwd, _ := os.Getwd()
 	r, err := runWrapped(ctx, argv, cwd)
@@ -194,11 +193,8 @@ func passthroughRun(ctx context.Context, argv []string, stdout, stderr io.Writer
 	return r.ExitCode
 }
 
-// runWrapped executes the wrapped argv. A single argument is a pre-quoted
-// shell string (the hook-rewrite form) and runs through the shell; several
-// arguments are verbatim argv and run without one — joining them into a shell
-// string would re-tokenize and corrupt quoting (`printf '%s\n' 'hello world'`
-// becomes hellonworldn).
+// One argument is the hook's shell program; multiple arguments are already
+// tokenized and must bypass the shell to preserve quoting.
 func runWrapped(ctx context.Context, argv []string, cwd string, extraEnv ...string) (exec.Result, error) {
 	if len(argv) == 1 {
 		return exec.Run(ctx, argv[0], cwd, extraEnv...)

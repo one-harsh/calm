@@ -26,20 +26,17 @@ const (
 )
 
 type Config struct {
-	Tools             []Tool
-	Calm              calm.Client
-	Logger            *logging.Logger
-	ServerName        string
-	ServerVersion     string
-	DefaultClient     string
-	SessionTTLMinutes int
-	// LaunchDir is the directory the host launched the adapter in; its
-	// project anchor becomes the primary workspace (DESIGN.md §5).
-	LaunchDir string
-	// SessionIdempotencyKey makes the initialize-time session create
-	// retry-safe. Recovery creates derive per-attempt keys from it so
-	// CALM's dedup window can never replay a dead session.
+	Tools                 []Tool
+	Calm                  calm.Client
+	Logger                *logging.Logger
+	ServerName            string
+	ServerVersion         string
+	DefaultClient         string
+	SessionTTLMinutes     int
+	LaunchDir             string
 	SessionIdempotencyKey string
+	// KeepSession preserves correlation rows until inactivity-TTL reclamation.
+	KeepSession bool
 }
 
 type Server struct {
@@ -52,47 +49,30 @@ type Server struct {
 	defaultClient string
 	ttlMinutes    int
 	idemKey       string
-	// grepEngine is probed once at construction; the tool description names it.
-	grepEngine string
-	// workspaces is the session's discovery-driven workspace registry
-	// (DESIGN.md §5); anchor discovery, selection, and WorkspaceID population
-	// live in workspace.go.
-	workspaces *workspaceSet
-	seq        atomic.Int64
+	keepSession   bool
+	grepEngine    string
+	workspaces    *workspaceSet
+	seq           atomic.Int64
 
 	wmu sync.Mutex // serializes writes to the protocol channel
 	out io.Writer
 
 	mu sync.Mutex
-	// session is empty when CALM is unavailable (never-worse: degraded mode).
-	// AD03: replaced in-process by recoverSession on session loss.
+	// AD03: empty means degraded; recovery replaces it in process.
 	session string
-	// sessionClient is the client name the session was minted under; recovery
-	// creates reuse it so the replacement session keeps the same attribution.
+	// Recovery must preserve the client attribution used to mint the session.
 	sessionClient string
-	// authFailed latches when CALM affirmatively rejects credentials (direct
-	// 401/403, or a recovery create rejected with 4xx). Sticky for the process:
-	// the API key is fixed at startup, so retrying is a doomed round-trip per
-	// call. Un-stick = adapter restart.
+	// Credential rejection is terminal because the API key is fixed at startup.
 	authFailed  bool
 	recoverySeq int
-	// lastEstablishAttempt throttles ensureSession's lazy create so a down
-	// CALM taxes at most one tool call per establishRetryInterval.
+	// A down CALM may tax at most one call per establishRetryInterval.
 	lastEstablishAttempt time.Time
-	// clientRegistered records a successful RegisterClient; ensureSession
-	// re-attempts registration until it lands — a create for an unregistered
-	// client is a guaranteed 400, which must not read as a credential verdict.
+	// Session creation before registration would misclassify a guaranteed 400.
 	clientRegistered bool
 
-	// registry tracks per-invocation staleness tokens for source labels per
-	// LABELING.md §2. Its own internal mutex covers reads/writes; there's no
-	// coupling with s.mu (which protects the session token above). recoverSession
-	// invokes registry.Reset so every prior fused label rejects as stale.
+	// AD03: recovery resets the registry so prior fused labels reject as stale.
 	registry *capture.Registry
 
-	// engine is the shell-agnostic capture pipeline; the Server presents itself
-	// as its capture.Session and capture.EventSink, and maps each capture.Outcome
-	// onto MCP tool results.
 	engine *capture.Engine
 }
 
@@ -106,11 +86,11 @@ func NewServer(cfg Config) *Server {
 		defaultClient: cfg.DefaultClient,
 		ttlMinutes:    cfg.SessionTTLMinutes,
 		idemKey:       cfg.SessionIdempotencyKey,
+		keepSession:   cfg.KeepSession,
 		workspaces:    newWorkspaceSet(cfg.LaunchDir),
 		registry:      capture.NewRegistry(),
 		grepEngine:    probeGrepEngine(),
 	}
-	// The MCP shell fuses calm_search — its retrieval tool — into recall hints.
 	s.engine = capture.NewEngine(cfg.Calm, s, s, cfg.Logger, toolNameSearch)
 	for _, t := range cfg.Tools {
 		s.addTool(t)
@@ -125,8 +105,7 @@ func (s *Server) addTool(t Tool) {
 }
 
 func (s *Server) registerBuiltins() {
-	// TODO: register the context-health tool:
-	// calm_report_outcome (calls /v1/feedback).
+	// TODO: register calm_report_outcome for /v1/feedback.
 	s.addToolIfAbsent(s.newRunCommandTool())
 	s.addToolIfAbsent(s.newSearchTool())
 	s.addToolIfAbsent(s.newReadFileTool())
@@ -145,9 +124,6 @@ func (s *Server) addToolIfAbsent(t Tool) {
 	s.addTool(t)
 }
 
-// sessionState returns the current session token plus the auth latch —
-// handlers short-circuit to auth_failed before any CALM traffic when the
-// latch is set.
 func (s *Server) sessionState() (token string, authFailed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -227,7 +203,7 @@ func (s *Server) dispatch(ctx context.Context, req *request) (any, *rpcError) {
 		return map[string]any{}, nil
 	default:
 		if req.isNotification() {
-			return nil, nil // ignore unknown notifications
+			return nil, nil
 		}
 		return nil, &rpcError{Code: codeMethodNotFound, Message: "method not found: " + req.Method}
 	}
@@ -282,7 +258,7 @@ func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (
 				logging.StringField("client", client), logging.BoolField("created", created))
 		}
 
-		// never-worse: session-create failure must not break the handshake (degraded → raw fallback).
+		// never-worse: session creation cannot break the MCP handshake.
 		sctx, cancel := context.WithTimeout(ctx, sessionOpTimeout)
 		token, err := s.calm.CreateSession(sctx, client, s.ttlMinutes, s.idemKey)
 		cancel()
@@ -294,10 +270,7 @@ func (s *Server) handleInitialize(ctx context.Context, params json.RawMessage) (
 				s.log.WithContext(ctx).Warn("CALM rejected credentials; CALM disabled for this conversation",
 					obs.DegradedReasonFieldAuthFailed, logging.StringField("client", client), logging.ErrorField(err))
 			} else {
-				// The client identity is fixed at initialize even when the create
-				// fails — ensureSession's lazy create keeps the same attribution.
-				// The throttle stamp keeps the first tool call from immediately
-				// re-paying the create timeout.
+				// Lazy recovery preserves attribution and does not immediately repay this timeout.
 				s.mu.Lock()
 				s.sessionClient = client
 				s.lastEstablishAttempt = time.Now()
@@ -364,13 +337,7 @@ func (s *Server) handleToolCall(ctx context.Context, params json.RawMessage) (an
 	return s.invokeTool(ctx, tool, p.Arguments), nil
 }
 
-// invokeTool runs a tool handler with panic isolation (R7 / never-worse): a
-// translation-layer fault is downgraded to an isError result, never a crash.
-// Also emits the per-call summary log per DESIGN.md §7. Handler errors are
-// translated by type: *DegradedSignal triggers canonical degradation
-// signaling (summary fields + phrasing prefix + optional [stderr] block);
-// *ArgError surfaces as a tool-level "invalid arguments" result; any other
-// error is treated as capture_failed degradation.
+// never-worse: handler faults become tool results; they cannot crash the server.
 func (s *Server) invokeTool(ctx context.Context, tool Tool, args json.RawMessage) (res ToolResult) {
 	start := time.Now()
 	ctx, reqID := obs.WithCallContext(ctx)
@@ -426,15 +393,11 @@ func (s *Server) invokeTool(ctx context.Context, tool Tool, args json.RawMessage
 	}
 }
 
-// translateDegraded binds degraded summary fields, prepends the canonical
-// phrasing to handler-supplied content, appends an optional [stderr] block,
-// and preserves the handler's IsError flag (action tools: false; retrieval
-// tools: true).
 func (s *Server) translateDegraded(ctx context.Context, out ToolResult, deg *DegradedSignal) ToolResult {
 	logging.BindSummary(
 		ctx,
 		logging.BoolField(obs.KeyDegraded, true),
-		degradedReasonField(deg.Reason),
+		obs.DegradedReasonField(deg.Reason),
 	)
 	text := obs.DegradedPhrase(deg.Reason)
 	if len(out.Content) > 0 && out.Content[0].Text != "" {
@@ -452,6 +415,10 @@ func (s *Server) shutdown() {
 	s.session = ""
 	s.mu.Unlock()
 	if token == "" {
+		return
+	}
+	if s.keepSession {
+		s.log.WithContext(context.Background()).Info("session kept on shutdown")
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sessionOpTimeout)

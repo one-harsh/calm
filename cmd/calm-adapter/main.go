@@ -65,12 +65,7 @@ func run() error {
 	logger = logger.WithCallerSkip(1)
 	defer func() { _ = logger.Sync() }()
 
-	// TODO: wire an OTel MeterProvider (Prometheus exporter, matching CALM's
-	// own OTel surface) and thread a Meter through the MCP layer. The metrics
-	// that make the Net context savings invariant operationally checkable
-	// (adapter.response.visible_bytes, adapter.response.raw_bytes,
-	// adapter.call.duration_ms, adapter.presentation.mode per DESIGN.md §7)
-	// cannot fire until then.
+	// TODO: replace measurement log fields with OTel instruments once CALM has a MeterProvider.
 
 	idempotencyKey, err := newIdempotencyKey()
 	if err != nil {
@@ -110,6 +105,7 @@ func run() error {
 		SessionTTLMinutes:     cfg.Calm.SessionTTLMinutes,
 		LaunchDir:             launchDir,
 		SessionIdempotencyKey: idempotencyKey,
+		KeepSession:           cfg.Calm.KeepSession,
 	})
 
 	logger.WithContext(ctx).Info("adapter starting")
@@ -120,8 +116,6 @@ func run() error {
 	return nil
 }
 
-// newIdempotencyKey returns a stable per-process key so a retried session create
-// (e.g. a lost response after CALM committed) collapses to one session, not an orphan.
 func newIdempotencyKey() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

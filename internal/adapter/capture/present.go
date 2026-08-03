@@ -27,11 +27,6 @@ type presentOptions struct {
 	discoveryCard bool
 }
 
-// present renders one delivered unit into the shell-facing Outcome, by
-// delivery state:
-//   - no summary — every ingest failed: raw payload, capture_failed
-//   - partial persist — captured presentation with label + ref, capture_partial
-//   - all persisted — captured presentation with label + ref, no reason
 func present(ctx context.Context, log *logging.Logger, d Delivery, spec Spec, seq int64, opts presentOptions) Outcome {
 	token := d.Unit.Plan.Token
 	anyFailed := false
@@ -70,22 +65,19 @@ func present(ctx context.Context, log *logging.Logger, d Delivery, spec Spec, se
 		}
 	}
 
-	// The retrieval-discovery card rides the session's first captured
-	// presentation once; the persisted sequence makes "first" knowable.
+	if out.Captured && d.Summary.CorrelationID != "" {
+		logging.BindSummary(ctx, obs.CorrelationID(d.Summary.CorrelationID))
+	}
+
+	// Persisted sequence, unlike process state, survives capture-shell invocations.
 	if opts.discoveryCard && seq == 1 && out.Captured {
 		out.Visible = withDiscoveryCard(out.Visible, opts.recall)
 	}
 	return out
 }
 
-// presentCapture picks the presentation mode. A deliberately-scoped read always
-// presents through the ranged view regardless of slice size — ranged presentation
-// is a window into a larger capture, so the fused recall label is informative at
-// any size (DESIGN.md's presentation contract). Everything else splits by raw
-// size: at or below inlineMaxBytes the raw payload wins label-less (summary
-// chrome would cost more context than the content); above it, the compact rep +
-// fused recall label. `recall` is the shell's retrieval-command name fused into
-// the recall hint.
+// A ranged read stays verbatim and labeled at every size; summarizing an already
+// scoped read would violate content-fidelity. Other captures optimize by size.
 func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r exec.Result, token string, rangedView bool, recall string) string {
 	if rangedView {
 		logging.BindSummary(ctx, obs.PresentationModeFieldRanged)
@@ -98,10 +90,8 @@ func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r e
 	return formatCompact(sum, r, token, recall)
 }
 
-// formatInline is inline mode: the raw payload verbatim with minimal framing — no
-// source label, no recall hint. The trailer appears only when it carries signal
-// (nonzero exit, timeout, truncation) or when raw is empty (so the response is
-// never blank text).
+// Successful non-empty output stays byte-identical; framing appears only when it
+// carries execution state or prevents a blank result.
 func formatInline(raw string, r exec.Result) string {
 	if r.ExitCode == 0 && !r.TimedOut && !r.Truncated && raw != "" {
 		return raw
@@ -121,8 +111,6 @@ func formatInline(raw string, r exec.Result) string {
 	return b.String()
 }
 
-// fuseSource fuses the per-call staleness token into the source label per LABELING.md;
-// a token-less capture keeps the bare base label.
 func fuseSource(source, token string) string {
 	if token == "" {
 		return source
@@ -130,20 +118,14 @@ func fuseSource(source, token string) string {
 	return source + "@" + token
 }
 
-// writeCaptureLabel emits the recall header shared by the large-output presentations,
-// so the fused source label — the agent's addressable way back to the full capture —
-// rides on every summary-family response. `recall` names the shell's retrieval command.
+// Summary-family responses must preserve the address back to full content.
 func writeCaptureLabel(b *strings.Builder, sum calm.IngestSummary, fusedSource, recall string) {
 	fmt.Fprintf(b, "Captured %d/%d sections under %q.\n", sum.SectionsIndexed, sum.SectionsTotal, fusedSource)
 	fmt.Fprintf(b, "Retrieve full output: %s source=%s\n", recall, fusedSource)
 }
 
-// formatRanged presents a deliberately-scoped calm_read_file slice: the requested
-// lines verbatim, never a summary — summarizing a range the agent already narrowed
-// would defeat the scoping (content-fidelity). The slice is capped at rangedMaxBytes;
-// past the cap a rune-safe prefix ends in a marker naming both recoveries — narrow the
-// range, or reread the full capture in document order — and the fused recall label
-// always rides along so retrieval identity survives.
+// The byte cap must preserve UTF-8 and name both recovery paths while retaining
+// the full capture's address.
 func formatRanged(sum calm.IngestSummary, raw string, token, recall string) string {
 	var b strings.Builder
 	fusedSource := fuseSource(sum.Source, token)

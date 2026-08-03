@@ -29,6 +29,8 @@ type CalmConfig struct {
 	Client            string         `mapstructure:"client"`
 	SessionTTLMinutes int            `mapstructure:"session_ttl_minutes"`
 	GCSampleRate      int            `mapstructure:"gc_sample_rate"`
+	// KeepSession preserves correlation rows until inactivity-TTL reclamation.
+	KeepSession bool `mapstructure:"keep_session"`
 }
 
 type LogConfig struct {
@@ -74,6 +76,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("calm.client", "calm-adapter")
 	v.SetDefault("calm.session_ttl_minutes", 120)
 	v.SetDefault("calm.gc_sample_rate", 20)
+	v.SetDefault("calm.keep_session", false)
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.file", "")

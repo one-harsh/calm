@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	logging "github.com/one-harsh/context-logging"
 
@@ -14,18 +15,15 @@ import (
 	"github.com/one-harsh/calm/internal/adapter/capturecli/harness"
 	"github.com/one-harsh/calm/internal/adapter/exec"
 	"github.com/one-harsh/calm/internal/adapter/extract"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 	"github.com/one-harsh/calm/internal/adapter/session"
 )
 
-// handleObserve captures an already-executed command and, when the harness honors
-// it, replaces the raw result with the engine's presentation. It mirrors execCmd
-// minus the run.
 func (c hookConfig) handleObserve(ctx context.Context, ev harness.ObserveEvent) int {
 	if ev.SessionID == "" || strings.TrimSpace(ev.Command) == "" || ev.IsImage {
 		return hookPassThrough
 	}
-	// AD07: a command that invokes calm-capture in any pipeline segment passes
-	// through — plumbing must not re-ingest capture's own output.
+	// AD07: capture plumbing must not ingest its own output.
 	if extract.InvokesProgram(ev.Command, binaryName) {
 		return hookPassThrough
 	}
@@ -33,15 +31,30 @@ func (c hookConfig) handleObserve(ctx context.Context, ev harness.ObserveEvent) 
 		return hookPassThrough
 	}
 
+	// Duration covers the full adapter path from harness delivery.
+	start := time.Now()
+	ctx = withCallSummary(ctx)
+	// The engine's selected presentation is not model-visible until rendering succeeds.
+	logging.BindSummary(ctx, obs.PresentationModeFieldInline, obs.ReplacedFieldFalse)
+	r := exec.Result{Stdout: ev.Stdout, Stderr: ev.Stderr, ExitCode: ev.ExitCode, Truncated: ev.Truncated}
+	raw := capture.CommandPayload(r)
+	logging.BindSummary(ctx, obs.ResponseRawBytes(len(raw)))
+	visible := raw
+	defer func() {
+		c.deps.Logger.SummaryWithContext(ctx).Info(
+			"observation completed",
+			obs.ResponseVisibleBytes(len(visible)),
+			obs.CallDurationMs(time.Since(start).Milliseconds()),
+		)
+	}()
+
 	mgr, err := c.deps.manager(ev.SessionID)
 	if err != nil {
 		return hookPassThrough
 	}
 	c.deps.drain(ctx, mgr)
 
-	r := exec.Result{Stdout: ev.Stdout, Stderr: ev.Stderr, ExitCode: ev.ExitCode, Truncated: ev.Truncated}
 	engine := capture.NewEngine(c.deps.Client, mgr, mgr, c.deps.Logger, recallFor(c.binPath, ev.SessionID), capture.WithDiscoveryCard())
-	raw := capture.CommandPayload(r)
 	out := engine.Capture(ctx, capture.Spec{
 		Ingest:  raw,
 		Visible: raw,
@@ -61,15 +74,22 @@ func (c hookConfig) handleObserve(ctx context.Context, ev harness.ObserveEvent) 
 		}
 	}
 
-	// never-worse: a degraded, uncaptured, or replacement-ignored (CanReplace)
-	// outcome leaves the native result untouched — capture-only, no replacement.
+	if out.Reason != "" {
+		bindDegraded(ctx, out.Reason)
+	}
+	// never-worse: record what reached context, not an unrendered engine choice.
 	if out.Reason != "" || !out.Captured || !ev.CanReplace {
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		return 0
 	}
-	wire := harness.Claude.RenderObserve(harness.ObserveResponse{Stdout: composeExec(out), Interrupted: ev.Interrupted})
+	presented := composeExec(out)
+	wire := harness.Claude.RenderObserve(harness.ObserveResponse{Stdout: presented, Interrupted: ev.Interrupted})
 	if wire == nil {
+		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		return hookPassThrough
 	}
 	_, _ = fmt.Fprintln(c.stdout, string(wire))
+	visible = presented
+	logging.BindSummary(ctx, obs.ReplacedFieldTrue)
 	return 0
 }

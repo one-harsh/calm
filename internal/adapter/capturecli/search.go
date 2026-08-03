@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/capture"
@@ -38,35 +41,42 @@ func (d Deps) searchCmd(ctx context.Context, args []string) int {
 	}
 	documentOrder := len(queries) == 0
 
+	start := time.Now()
+	ctx = withCallSummary(ctx)
+	defer func() {
+		d.Logger.SummaryWithContext(ctx).Info(
+			"search completed",
+			obs.CallDurationMs(time.Since(start).Milliseconds()),
+		)
+	}()
+
 	mgr, err := d.manager(sessionIDOr(*sessionID))
 	if err != nil {
-		return d.degradedStderr(obs.DegradedReasonCaptureFailed)
+		return d.degradedStderr(ctx, obs.DegradedReasonCaptureFailed)
 	}
 	view, err := mgr.View(ctx)
 	if err != nil {
-		return d.degradedStderr(obs.DegradedReasonCaptureFailed)
+		return d.degradedStderr(ctx, obs.DegradedReasonCaptureFailed)
 	}
 	if view.AuthFailed {
-		return d.degradedStderr(obs.DegradedReasonAuthFailed)
+		return d.degradedStderr(ctx, obs.DegradedReasonAuthFailed)
 	}
 	if !view.Established {
-		// A never-established conversation has an empty corpus, not a degraded
-		// backend: report an honest empty result and never reach CALM.
-		_, _ = fmt.Fprintln(d.Stdout, "no captures recorded in this conversation yet")
+		// No session means no corpus; this is an honest empty result, not backend failure.
+		n, _ := fmt.Fprintln(d.Stdout, "no captures recorded in this conversation yet")
+		logging.BindSummary(ctx, obs.ResponseVisibleBytes(n))
 		return 0
 	}
 	if view.Token == "" {
-		return d.degradedStderr(obs.DegradedReasonSessionLost)
+		return d.degradedStderr(ctx, obs.DegradedReasonSessionLost)
 	}
 
-	// Strip and validate the fused staleness suffix locally before forwarding —
-	// a stale token must resolve as session_lost, not reach CALM and return
-	// calm_unreachable. Base-only labels pass through.
+	// Fused-token validation keeps stale content distinct from backend failure.
 	calmSource := *source
 	if *source != "" {
 		stripped, ok := view.Registry.ValidateAndStrip(*source)
 		if !ok {
-			return d.degradedStderr(obs.DegradedReasonSessionLost)
+			return d.degradedStderr(ctx, obs.DegradedReasonSessionLost)
 		}
 		calmSource = stripped
 	}
@@ -79,21 +89,24 @@ func (d Deps) searchCmd(ctx context.Context, args []string) int {
 	defer cancel()
 	res, serr := d.Client.Search(sctx, view.Token, in)
 	if serr != nil {
-		// AD03 parity with the MCP shell: session-level failures route through
-		// the manager — a credential rejection latches, and a 404 runs the one
-		// CAS'd replacement create so the conversation heals for the next
-		// capture; this query still reports its own failure.
+		// AD03: this query reports failure while the manager heals subsequent calls.
 		if sig := mgr.OnCallError(ctx, view.Token, serr); sig != nil {
-			return d.degradedSig(sig)
+			return d.degradedSig(ctx, sig)
 		}
-		return d.degradedSig(&capture.Signal{Reason: obs.DegradedReasonCalmUnreachable, Detail: serr.Error()})
+		return d.degradedSig(ctx, &capture.Signal{Reason: obs.DegradedReasonCalmUnreachable, Detail: serr.Error()})
+	}
+	if res.CorrelationID != "" {
+		logging.BindSummary(ctx, obs.CorrelationID(res.CorrelationID))
 	}
 
+	var visible string
 	if documentOrder {
-		_, _ = fmt.Fprint(d.Stdout, capture.FormatDocumentOrder(res, *offset, *source, searchVocab))
-		return 0
+		visible = capture.FormatDocumentOrder(res, *offset, *source, searchVocab)
+	} else {
+		visible = capture.FormatSearchResults(res, *source, searchVocab)
 	}
-	_, _ = fmt.Fprint(d.Stdout, capture.FormatSearchResults(res, *source, searchVocab))
+	n, _ := fmt.Fprint(d.Stdout, visible)
+	logging.BindSummary(ctx, obs.ResponseVisibleBytes(n), obs.ResponseRawBytes(n))
 	return 0
 }
 
@@ -134,9 +147,7 @@ func numericOption(a, prefix string, dst *int) bool {
 	return true
 }
 
-// searchVocab is the capture shell's search-presentation vocabulary; its
-// FeedbackPrefix appends the correlation id as the handle `calm-capture
-// feedback` accepts.
+// The capture shell must make feedback discoverable without a tool description.
 var searchVocab = capture.SearchVocab{
 	TruncatedMarker:  "[truncated — raise budget-bytes or use a query for the rest]",
 	ContinuationLine: "more chunks remain — search again with source and offset: ",

@@ -1,7 +1,6 @@
 # Annotated calm-adapter config. Load via CALM_ADAPTER_CONFIG_FILE; a file is
 # optional (defaults + CALM_ADAPTER_-prefixed env overrides apply without one).
 calm:
-  # Base URL of the CALM service the adapter calls.
   url: http://localhost:8080
   # Namespace API key. Use a bracketed [env:VAR] reference so no secret is
   # committed; leave empty for a local CALM running without auth.
@@ -11,6 +10,8 @@ calm:
   client: calm-adapter
   # Inactivity TTL for the adapter's CALM session (clamped to the operator ceiling).
   session_ttl_minutes: 120
+  # Preserve correlation rows until inactivity-TTL reclamation.
+  keep_session: false
 log:
   level: info # debug | info | warn | error
   format: json # json | console

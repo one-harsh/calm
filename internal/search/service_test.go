@@ -214,6 +214,58 @@ func TestSearch_HitBreakdownOverIncludedHits(t *testing.T) {
 	}
 }
 
+func assertIntentZeroMatch(t *testing.T, queries []string, misses map[string]bool, want int) {
+	t.Helper()
+	corrID := mustCorrelationID(t)
+	hit := []db.SearchHit{{Title: "t", Snippet: "s", Source: "out", MatchLayer: "primary"}}
+	sources := db.NewMockSourcesRepo(t)
+	for _, q := range queries {
+		ret := hit
+		if misses[q] {
+			ret = nil
+		}
+		sources.EXPECT().Search(mock.Anything, "ns-a",
+			mock.MatchedBy(func(in db.SearchInput) bool { return in.Query == q })).
+			Return(ret, nil).Once()
+	}
+	corr := db.NewMockCorrelationsRepo(t)
+	corr.EXPECT().Insert(
+		mock.Anything, "ns-a", int64(1), corrID[:], "search",
+		mock.MatchedBy(func(meta []byte) bool {
+			var got map[string]any
+			if err := json.Unmarshal(meta, &got); err != nil {
+				return false
+			}
+			return got["intent_zero_match"] == float64(want)
+		}),
+	).Return(nil).Once()
+	dal := db.NewMockDAL(t)
+	dal.EXPECT().Sources().Return(sources).Maybe()
+	dal.EXPECT().Correlations().Return(corr).Maybe()
+	svc := New(dal, logging.Nop())
+
+	if _, err := svc.Search(context.Background(), "ns-a", 1, corrID,
+		db.SearchInput{SessionID: 1}, queries, bigBudget, VariantRankRound); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+}
+
+func TestSearch_IntentZeroMatchCountsMissedQueries(t *testing.T) {
+	assertIntentZeroMatch(t,
+		[]string{"hit1", "miss1", "hit2", "miss2"},
+		map[string]bool{"miss1": true, "miss2": true}, 2)
+}
+
+func TestSearch_IntentZeroMatchAllHitIsZero(t *testing.T) {
+	assertIntentZeroMatch(t, []string{"hit1", "hit2"}, nil, 0)
+}
+
+func TestSearch_IntentZeroMatchAllMissEqualsQueryCount(t *testing.T) {
+	assertIntentZeroMatch(t,
+		[]string{"m1", "m2", "m3"},
+		map[string]bool{"m1": true, "m2": true, "m3": true}, 3)
+}
+
 func TestNormalizeRelevance_ResponseWideBandsAndDifferentiation(t *testing.T) {
 	perQuery := [][]db.SearchHit{
 		{

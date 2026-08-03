@@ -61,8 +61,7 @@ type QueryResult struct {
 	BudgetOmitted int
 }
 
-// budgetBytes is the committed budget (default/clamp applied at the handler),
-// echoed verbatim on the Result. The correlation capture is best-effort.
+// budgetBytes is already defaulted and clamped by the handler.
 func (s *Service) Search(
 	ctx context.Context,
 	namespace string,
@@ -112,8 +111,14 @@ func (s *Service) Search(
 		totalOmitted += alloc.omitted[qi]
 	}
 
-	// Breakdown counts included (delivered) hits, not the pre-budget candidate set.
+	// Breakdown counts delivered hits; intent misses use pre-budget candidates.
 	primary, trigram, total, snippetFallbacks := hitBreakdown(result.Queries)
+	intentZeroMatch := 0
+	for _, hits := range perQuery {
+		if len(hits) == 0 {
+			intentZeroMatch++
+		}
+	}
 	if s.logger.Enabled(logging.DebugLevel) {
 		s.logger.WithContext(ctx).Debug(
 			"search executed",
@@ -129,7 +134,7 @@ func (s *Service) Search(
 			variant.LogField(),
 		)
 	}
-	s.captureCorrelation(ctx, namespace, sessionID, correlationID, result, primary, trigram, total, snippetFallbacks, totalOmitted)
+	s.captureCorrelation(ctx, namespace, sessionID, correlationID, result, primary, trigram, total, snippetFallbacks, totalOmitted, intentZeroMatch)
 	return result, nil
 }
 
@@ -227,7 +232,7 @@ func (s *Service) captureCorrelation(
 	sessionID int64,
 	correlationID uuid.UUID,
 	result Result,
-	primary, trigram, total, snippetFallbacks, resultsOmitted int,
+	primary, trigram, total, snippetFallbacks, resultsOmitted, intentZeroMatch int,
 ) {
 	meta, err := json.Marshal(map[string]any{
 		"mode":              modeRanked,
@@ -240,6 +245,7 @@ func (s *Service) captureCorrelation(
 		"budget_exceeded":   result.BudgetExceeded,
 		"byte_budget_used":  result.ByteBudgetUsed,
 		"results_omitted":   resultsOmitted,
+		"intent_zero_match": intentZeroMatch,
 	})
 	if err != nil {
 		s.logger.WithContext(ctx).Warn("correlation marshal failed",
@@ -262,8 +268,7 @@ func wireSize(h db.SearchHit) (int, error) {
 		Source:     h.Source,
 		MatchLayer: h.MatchLayer,
 	}
-	// omitempty keeps ranked hits (Truncated==false) byte-identical to before;
-	// a truncated document hit accounts for the extra ,"truncated":true bytes.
+	// Only document-order partial hits pay for the truncated marker.
 	if h.Truncated {
 		t := true
 		sh.Truncated = &t

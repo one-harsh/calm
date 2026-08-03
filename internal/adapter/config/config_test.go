@@ -12,11 +12,7 @@ import (
 	"github.com/one-harsh/calm/internal/adapter/config"
 )
 
-// clearAdapterEnv isolates the loader's env overlay from the developer's
-// shell: MCP hosts export CALM_ADAPTER_* for the registered adapter, and an
-// inherited value contaminates default/override assertions. Viper treats an
-// empty env value as unset (AllowEmptyEnv is off), so blanking suffices, and
-// t.Setenv restores the shell value afterward.
+// Viper treats empty environment values as unset, isolating tests from host config.
 func clearAdapterEnv(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
@@ -67,7 +63,6 @@ log:
 	if cfg.Calm.URL != "http://calm:9090" || cfg.Calm.Client != "claude-code" || cfg.Calm.SessionTTLMinutes != 30 {
 		t.Errorf("calm = %+v", cfg.Calm)
 	}
-	// api_key is left as a raw reference for main to resolve.
 	if cfg.Calm.APIKey != "[env:CALM_DEFAULT_KEY]" {
 		t.Errorf("api_key = %q; want the raw [env:…] reference", cfg.Calm.APIKey)
 	}
@@ -85,6 +80,25 @@ func TestLoad_EnvOverride(t *testing.T) {
 	}
 	if cfg.Calm.URL != "http://env-override:1234" {
 		t.Errorf("calm.url = %q; want env override", cfg.Calm.URL)
+	}
+}
+
+func TestLoad_KeepSessionDefaultAndFileOverride(t *testing.T) {
+	clearAdapterEnv(t)
+	cfg, err := config.Load("", "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Calm.KeepSession {
+		t.Error("keep_session default = true; want false")
+	}
+	p := writeYAML(t, "calm:\n  keep_session: true\n")
+	over, err := config.Load(p, "")
+	if err != nil {
+		t.Fatalf("Load override: %v", err)
+	}
+	if !over.Calm.KeepSession {
+		t.Error("keep_session override = false; want true from file")
 	}
 }
 
@@ -115,8 +129,6 @@ func TestLoad_ReadError(t *testing.T) {
 	}
 }
 
-// The workspace surface is discovery-driven (DESIGN.md §5): any workspace
-// key in config is an unknown key and fails loudly.
 func TestLoad_WorkspaceKeysRejected(t *testing.T) {
 	clearAdapterEnv(t)
 	oldKey := writeYAML(t, "calm:\n  workspace_root: /repos/alpha\n")
@@ -129,8 +141,6 @@ func TestLoad_WorkspaceKeysRejected(t *testing.T) {
 	}
 }
 
-// writeFallback plants adapter.yaml in a fresh root and returns the root, so a
-// cwd-independent `$CALM_HOME` fallback can be exercised.
 func writeFallback(t *testing.T, body string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -140,9 +150,6 @@ func writeFallback(t *testing.T, body string) string {
 	return root
 }
 
-// The config-delivery gate: with no config-file env, Load reads
-// `$CALM_HOME/adapter.yaml`; an explicit path still wins, a missing fallback is
-// defaults not error, and env vars still override file values.
 func TestLoad_RootFallbackMatrix(t *testing.T) {
 	t.Run("unset+fallback-present uses it", func(t *testing.T) {
 		clearAdapterEnv(t)

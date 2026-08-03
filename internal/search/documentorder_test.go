@@ -20,8 +20,6 @@ func docChunk(title, content, source string) db.DocChunk {
 	return db.DocChunk{Title: title, Content: content, Source: source}
 }
 
-// docHitSize is the wire size of a whole (non-truncated) document hit — the
-// per-chunk budget unit the assembler charges.
 func docHitSize(t *testing.T, ch db.DocChunk) int {
 	t.Helper()
 	size, err := wireSize(db.SearchHit{
@@ -33,8 +31,6 @@ func docHitSize(t *testing.T, ch db.DocChunk) int {
 	return size
 }
 
-// docService wires a Service whose ChunksInOrder returns the given page and
-// hasMore probe result; the correlation insert is accepted best-effort.
 func docService(t *testing.T, chunks []db.DocChunk, hasMore bool) *Service {
 	t.Helper()
 	sources := db.NewMockSourcesRepo(t)
@@ -88,8 +84,6 @@ func TestDocumentOrder_AllChunksFitOnePage(t *testing.T) {
 }
 
 func TestDocumentOrder_LimitBindsBeforeBudget(t *testing.T) {
-	// A full page (hasMore probe true) whose chunks all fit the budget: the limit
-	// bound, not the budget, ended the page. next_offset advances by the page size.
 	chunks := []db.DocChunk{
 		docChunk("a", "one", "cap.log"),
 		docChunk("b", "two", "cap.log"),
@@ -119,7 +113,7 @@ func TestDocumentOrder_BudgetBindsMidPage(t *testing.T) {
 		docChunk("c", "identical body", "cap.log"),
 	}
 	unit := docHitSize(t, chunks[0])
-	budget := 2 * unit // exactly two whole chunks fit; the third is dropped mid-page.
+	budget := 2 * unit
 	svc := docService(t, chunks, false)
 
 	got, err := svc.DocumentOrder(context.Background(), "ns-a", 1, mustCorrelationID(t), "cap.log", 5, 0, budget)
@@ -147,7 +141,7 @@ func TestDocumentOrder_FirstOfPageTruncates(t *testing.T) {
 	content := strings.Repeat("A", 600)
 	ch := docChunk("big", content, "cap.log")
 	whole := docHitSize(t, ch)
-	budget := whole / 2 // fits a prefix but not the whole chunk.
+	budget := whole / 2
 	svc := docService(t, []db.DocChunk{ch}, false)
 
 	got, err := svc.DocumentOrder(context.Background(), "ns-a", 1, mustCorrelationID(t), "cap.log", 5, 0, budget)
@@ -177,8 +171,6 @@ func TestDocumentOrder_FirstOfPageTruncates(t *testing.T) {
 }
 
 func TestDocumentOrder_TruncatedCountsAsConsumed(t *testing.T) {
-	// A truncated head followed by more chunks: next_offset advances past the
-	// truncated chunk (offset+1), never re-serving it.
 	big := docChunk("big", strings.Repeat("B", 600), "cap.log")
 	small := docChunk("small", "tail", "cap.log")
 	budget := docHitSize(t, big) / 2
@@ -202,7 +194,7 @@ func TestDocumentOrder_NextOffsetPresentAbsentMatrix(t *testing.T) {
 	}
 
 	t.Run("limit_full_probe", func(t *testing.T) {
-		svc := docService(t, fit(), true) // probe saw more beyond the page.
+		svc := docService(t, fit(), true)
 		got, _ := svc.DocumentOrder(context.Background(), "ns-a", 1, mustCorrelationID(t), "s", 2, 0, bigBudget)
 		if got.NextOffset == nil || *got.NextOffset != 2 {
 			t.Errorf("next_offset = %v; want 2", got.NextOffset)
@@ -219,7 +211,7 @@ func TestDocumentOrder_NextOffsetPresentAbsentMatrix(t *testing.T) {
 
 	t.Run("budget_drop", func(t *testing.T) {
 		chunks := []db.DocChunk{docChunk("a", "body", "s"), docChunk("b", "body", "s")}
-		budget := docHitSize(t, chunks[0]) // only the first fits.
+		budget := docHitSize(t, chunks[0])
 		svc := docService(t, chunks, false)
 		got, _ := svc.DocumentOrder(context.Background(), "ns-a", 1, mustCorrelationID(t), "s", 5, 0, budget)
 		if got.NextOffset == nil || *got.NextOffset != 1 {
@@ -256,8 +248,6 @@ func TestDocumentOrder_EmptySourceAndOffsetPastEnd(t *testing.T) {
 }
 
 func TestDocumentOrder_HeadChunkBelowScaffolding(t *testing.T) {
-	// A budget too small for even a one-rune prefix hit: empty page, exceeded,
-	// next_offset == offset so the caller raises budget and retries in place.
 	ch := docChunk("big", strings.Repeat("Q", 400), "s")
 	svc := docService(t, []db.DocChunk{ch}, false)
 
@@ -283,10 +273,8 @@ func TestDocumentOrder_HeadChunkBelowScaffolding(t *testing.T) {
 }
 
 func TestTruncatedDocHit_RuneSafeAndFits(t *testing.T) {
-	ch := docChunk("t", strings.Repeat("café ☃ ", 120), "s") // multi-byte runes.
+	ch := docChunk("t", strings.Repeat("café ☃ ", 120), "s")
 
-	// Budgets clear the per-hit JSON scaffolding (~80 bytes) so at least one rune
-	// fits; each step doubles to check the prefix grows monotonically.
 	prevBest := 0
 	for _, budget := range []int{120, 240, 480, 960} {
 		hit, size, ok := truncatedDocHit(ch, budget)
@@ -338,6 +326,34 @@ func TestDocumentOrder_CorrelationMetaCarriesModeAndHitsDocument(t *testing.T) {
 				got["hits_primary"] == float64(0) &&
 				got["hits_trigram"] == float64(0) &&
 				!hasAllocator
+		}),
+	).Return(nil).Once()
+	dal := db.NewMockDAL(t)
+	dal.EXPECT().Sources().Return(sources).Maybe()
+	dal.EXPECT().Correlations().Return(corr).Maybe()
+	svc := New(dal, logging.Nop())
+
+	if _, err := svc.DocumentOrder(context.Background(), "ns-a", 1, corrID, "s", 5, 0, bigBudget); err != nil {
+		t.Fatalf("DocumentOrder: %v", err)
+	}
+}
+
+func TestDocumentOrder_CorrelationMetaCarriesIntentZeroMatchZero(t *testing.T) {
+	chunks := []db.DocChunk{docChunk("a", "one", "s")}
+	corrID := mustCorrelationID(t)
+
+	sources := db.NewMockSourcesRepo(t)
+	sources.EXPECT().ChunksInOrder(mock.Anything, "ns-a", mock.Anything).Return(chunks, false, nil).Once()
+	corr := db.NewMockCorrelationsRepo(t)
+	corr.EXPECT().Insert(
+		mock.Anything, "ns-a", int64(1), corrID[:], "search",
+		mock.MatchedBy(func(meta []byte) bool {
+			var got map[string]any
+			if err := json.Unmarshal(meta, &got); err != nil {
+				return false
+			}
+			v, ok := got["intent_zero_match"]
+			return ok && v == float64(0)
 		}),
 	).Return(nil).Once()
 	dal := db.NewMockDAL(t)

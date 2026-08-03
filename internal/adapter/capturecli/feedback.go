@@ -9,6 +9,9 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"time"
+
+	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
 	"github.com/one-harsh/calm/internal/adapter/obs"
@@ -32,19 +35,28 @@ func (d Deps) feedbackCmd(ctx context.Context, args []string) int {
 		return 2
 	}
 
+	start := time.Now()
+	ctx = withCallSummary(ctx)
+	defer func() {
+		d.Logger.SummaryWithContext(ctx).Info(
+			"feedback completed",
+			obs.CallDurationMs(time.Since(start).Milliseconds()),
+		)
+	}()
+
 	mgr, err := d.manager(sessionIDOr(*sessionID))
 	if err != nil {
-		return d.degradedStderr(obs.DegradedReasonCaptureFailed)
+		return d.degradedStderr(ctx, obs.DegradedReasonCaptureFailed)
 	}
 	view, err := mgr.View(ctx)
 	if err != nil {
-		return d.degradedStderr(obs.DegradedReasonCaptureFailed)
+		return d.degradedStderr(ctx, obs.DegradedReasonCaptureFailed)
 	}
 	if view.AuthFailed {
-		return d.degradedStderr(obs.DegradedReasonAuthFailed)
+		return d.degradedStderr(ctx, obs.DegradedReasonAuthFailed)
 	}
 	if view.Token == "" {
-		return d.degradedStderr(obs.DegradedReasonCalmUnreachable)
+		return d.degradedStderr(ctx, obs.DegradedReasonCalmUnreachable)
 	}
 
 	fctx, cancel := context.WithTimeout(ctx, opTimeout)
@@ -57,26 +69,26 @@ func (d Deps) feedbackCmd(ctx context.Context, args []string) int {
 	if errors.As(ferr, &se) {
 		switch se.Code {
 		case http.StatusConflict:
-			_, _ = fmt.Fprintln(d.Stderr, "feedback already recorded for this reference.")
+			n, _ := fmt.Fprintln(d.Stderr, "feedback already recorded for this reference.")
+			logging.BindSummary(ctx, obs.ResponseVisibleBytes(n), obs.ResponseRawBytes(n))
 			return 1
 		case http.StatusGone:
-			return d.degradedStderr(obs.DegradedReasonFeedbackWindowExpired)
+			return d.degradedStderr(ctx, obs.DegradedReasonFeedbackWindowExpired)
 		case http.StatusUnauthorized, http.StatusForbidden:
-			// AD03: a credential rejection latches even when observed from
-			// feedback. The 404 case stays local — an unknown ref is not
-			// session death and must not trigger a replacement create.
+			// AD03: auth rejects latch; an unknown feedback ref does not replace a session.
 			if sig := mgr.OnCallError(ctx, view.Token, ferr); sig != nil {
-				return d.degradedSig(sig)
+				return d.degradedSig(ctx, sig)
 			}
-			return d.degradedStderr(obs.DegradedReasonAuthFailed)
+			return d.degradedStderr(ctx, obs.DegradedReasonAuthFailed)
 		case http.StatusNotFound:
-			return d.degradedStderr(obs.DegradedReasonSessionLost)
+			return d.degradedStderr(ctx, obs.DegradedReasonSessionLost)
 		case http.StatusBadRequest:
-			_, _ = fmt.Fprintln(d.Stderr, "feedback rejected: malformed reference.")
+			n, _ := fmt.Fprintln(d.Stderr, "feedback rejected: malformed reference.")
+			logging.BindSummary(ctx, obs.ResponseVisibleBytes(n), obs.ResponseRawBytes(n))
 			return 2
 		}
 	}
-	return d.degradedStderr(obs.DegradedReasonCalmUnreachable)
+	return d.degradedStderr(ctx, obs.DegradedReasonCalmUnreachable)
 }
 
 func validOutcome(o string) bool {

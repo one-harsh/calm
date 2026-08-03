@@ -60,12 +60,8 @@ func (s *Service) DocumentOrder(
 			consumed++
 			continue
 		}
-		// Chunk does not fit whole.
 		if len(hits) == 0 {
-			// Head chunk over budget: return an exact-text prefix that fills the
-			// budget (content-fidelity — exact prefix, no paraphrase). If not
-			// even one rune fits, the page is empty and the caller must raise
-			// budget_bytes.
+			// content-fidelity: truncate only to an exact rune prefix.
 			th, thSize, ok := truncatedDocHit(ch, budgetBytes)
 			if ok {
 				hits = append(hits, th)
@@ -79,8 +75,7 @@ func (s *Service) DocumentOrder(
 			budgetExceeded = true
 			break
 		}
-		// Mid-page non-fitter ends the page; document order forbids skipping it,
-		// so it leads the next page (budget_omitted stays 1 by construction).
+		// Document order forbids skipping a non-fitter; it leads the next page.
 		budgetOmitted = 1
 		budgetExceeded = true
 		break
@@ -89,13 +84,10 @@ func (s *Service) DocumentOrder(
 	var hasMore bool
 	switch {
 	case headNoFit:
-		// consumed==0, next_offset==offset: caller raises budget and retries at
-		// the same cursor — no loss, no loop.
+		// Preserve the cursor when no rune fits so a larger budget loses no content.
 		hasMore = true
 	case headTruncated:
-		// The truncated chunk's own tail past the budget is unreadable in this
-		// mode; more remains only if the page held further chunks or the probe
-		// saw rows beyond the limit.
+		// A truncated chunk's tail is intentionally not a second document-order page.
 		hasMore = len(chunks) > 1 || hasMoreBeyondLimit
 	case budgetOmitted == 1:
 		hasMore = true
@@ -137,12 +129,8 @@ func (s *Service) DocumentOrder(
 	return result, nil
 }
 
-// truncatedDocHit returns a document-order hit whose snippet is the longest
-// exact-text rune-prefix of the chunk whose truncated-flagged wire size fits
-// budget. Binary search is valid because serialized size is monotone
-// non-decreasing in prefix length — appending a rune never shortens the JSON.
-// It never splits a UTF-8 rune (the prefix is taken on rune boundaries); ok is
-// false when not even one rune fits.
+// Serialized size is monotone by rune count, so binary search finds the longest
+// content-fidelity prefix without splitting UTF-8.
 func truncatedDocHit(ch db.DocChunk, budget int) (db.SearchHit, int, bool) {
 	runes := []rune(ch.Content)
 	build := func(n int) db.SearchHit {
@@ -199,6 +187,7 @@ func (s *Service) captureDocumentCorrelation(
 		"budget_exceeded":   budgetExceeded,
 		"byte_budget_used":  byteBudgetUsed,
 		"results_omitted":   resultsOmitted,
+		"intent_zero_match": 0,
 	})
 	if err != nil {
 		s.logger.WithContext(ctx).Warn("correlation marshal failed",
