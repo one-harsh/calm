@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -273,15 +274,58 @@ func TestHook_SummaryLogShape_ReplaceUnsupported(t *testing.T) {
 	}
 }
 
+func TestHook_SummaryLogShape_CompactReplacement(t *testing.T) {
+	mc := calm.NewMockClient(t)
+	expectEstablish(mc, "tok-obs")
+	log, buf := summaryCaptureLogger(t)
+	d, _, _ := depsWithLogger(t, mc, log)
+
+	var payload map[string]any
+	if err := json.Unmarshal(loadHookFixture(t, "claude_posttooluse_bash.json"), &payload); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	tr, ok := payload["tool_response"].(map[string]any)
+	if !ok {
+		t.Fatalf("fixture missing tool_response object; got %v", payload["tool_response"])
+	}
+	tr["stdout"] = strings.Repeat("compact-path payload line\n", 160)
+	patched, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("remarshal fixture: %v", err)
+	}
+
+	if _, code := dispatchHook(t, d, patched); code != 0 {
+		t.Fatalf("exit = %d; want 0", code)
+	}
+	e := findSummary(t, buf, "observation completed")
+	assertCanonicalSummary(t, e)
+	if e[obs.KeyReplaced] != true {
+		t.Errorf("replaced = %v; want true (the replacement wire was emitted)", e[obs.KeyReplaced])
+	}
+	if e[obs.KeyPresentationMode] != obs.PresentationModeSummary {
+		t.Errorf("presentation mode = %v; want %q (a compact digest was emitted, not the payload)",
+			e[obs.KeyPresentationMode], obs.PresentationModeSummary)
+	}
+	vb := visibleBytes(t, e)
+	raw, rok := e[obs.KeyResponseRawBytes].(float64)
+	if !rok {
+		t.Fatalf("raw_bytes missing or not numeric; got %v", e[obs.KeyResponseRawBytes])
+	}
+	if vb <= 0 || raw <= vb {
+		t.Errorf("raw/visible = %v/%v; want raw > visible > 0 (digest smaller than payload)", raw, vb)
+	}
+}
+
 func TestFeedback_SummaryLogShape(t *testing.T) {
+	const ref = "0195c2a6-7c4d-7e15-b3a1-0000000000aa"
 	c := calm.NewMockClient(t)
 	expectEstablish(c, "tok1")
-	c.EXPECT().Feedback(mock.Anything, "tok1", "ref-1", "success").Return(nil).Once()
+	c.EXPECT().Feedback(mock.Anything, "tok1", ref, "success").Return(nil).Once()
 	log, buf := summaryCaptureLogger(t)
 	d, _, _ := depsWithLogger(t, c, log)
 
 	Dispatch(context.Background(), d, execArgs("conv", "printf hello"))
-	if code := Dispatch(context.Background(), d, []string{"feedback", "--session", "conv", "ref-1", "success"}); code != 0 {
+	if code := Dispatch(context.Background(), d, []string{"feedback", "--session", "conv", ref, "success"}); code != 0 {
 		t.Fatalf("exit = %d; want 0", code)
 	}
 	e := findSummary(t, buf, "feedback completed")
@@ -294,6 +338,9 @@ func TestFeedback_SummaryLogShape(t *testing.T) {
 	}
 	if raw, ok := e[obs.KeyResponseRawBytes].(float64); !ok || raw != 0 {
 		t.Errorf("raw_bytes = %v; want present and 0", e[obs.KeyResponseRawBytes])
+	}
+	if e[obs.KeyCorrelationID] != ref {
+		t.Errorf("correlation_id = %v; want the ref (feedback joins its correlations row)", e[obs.KeyCorrelationID])
 	}
 }
 

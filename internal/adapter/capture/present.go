@@ -87,6 +87,7 @@ func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r e
 		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
 		return formatInline(raw, r)
 	}
+	logging.BindSummary(ctx, obs.PresentationModeFieldSummary)
 	return formatCompact(sum, r, token, recall)
 }
 

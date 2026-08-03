@@ -23,8 +23,6 @@ import (
 const (
 	hookPassThrough = 0
 
-	// hookStdinLimit bounds the payload read so a hostile stdin cannot exhaust
-	// memory on the hot path.
 	hookStdinLimit = 1 << 20
 )
 
@@ -64,6 +62,8 @@ func HookDegraded(ctx context.Context, stdin io.Reader, stdout io.Writer) int {
 }
 
 func runHook(ctx context.Context, c hookConfig) int {
+	// Hook latency includes harness delivery read and parse.
+	start := time.Now()
 	stdin, err := readStdin(c.stdin)
 	if err != nil {
 		return hookPassThrough
@@ -73,7 +73,7 @@ func runHook(ctx context.Context, c hookConfig) int {
 	case harness.KindRewrite:
 		return c.handleRewrite(ev.Rewrite)
 	case harness.KindObserve:
-		return c.handleObserve(ctx, ev.Observe)
+		return c.handleObserve(ctx, ev.Observe, start)
 	case harness.KindSessionStart:
 		return c.handleSessionStart(ctx, ev.SessionStart)
 	default:

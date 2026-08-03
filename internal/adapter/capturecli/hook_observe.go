@@ -19,7 +19,7 @@ import (
 	"github.com/one-harsh/calm/internal/adapter/session"
 )
 
-func (c hookConfig) handleObserve(ctx context.Context, ev harness.ObserveEvent) int {
+func (c hookConfig) handleObserve(ctx context.Context, ev harness.ObserveEvent, start time.Time) int {
 	if ev.SessionID == "" || strings.TrimSpace(ev.Command) == "" || ev.IsImage {
 		return hookPassThrough
 	}
@@ -31,8 +31,6 @@ func (c hookConfig) handleObserve(ctx context.Context, ev harness.ObserveEvent) 
 		return hookPassThrough
 	}
 
-	// Duration covers the full adapter path from harness delivery.
-	start := time.Now()
 	ctx = withCallSummary(ctx)
 	// The engine's selected presentation is not model-visible until rendering succeeds.
 	logging.BindSummary(ctx, obs.PresentationModeFieldInline, obs.ReplacedFieldFalse)

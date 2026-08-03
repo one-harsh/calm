@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/adapter/calm"
@@ -37,6 +38,10 @@ func (d Deps) feedbackCmd(ctx context.Context, args []string) int {
 
 	start := time.Now()
 	ctx = withCallSummary(ctx)
+	// Invalid refs cannot be truthful correlation join keys.
+	if u, err := uuid.Parse(ref); err == nil {
+		logging.BindSummary(ctx, obs.CorrelationID(u.String()))
+	}
 	defer func() {
 		d.Logger.SummaryWithContext(ctx).Info(
 			"feedback completed",
