@@ -34,12 +34,25 @@ func newServiceHarness(t *testing.T, cacheSize int) *serviceHarness {
 	clients := db.NewMockClientRepo(t)
 	dal.EXPECT().Sessions().Return(sessions).Maybe()
 	dal.EXPECT().Clients().Return(clients).Maybe()
+	wireWithTx(dal, sessions, clients)
+	// Create/InsertLabels are orthogonal to the label-free cache scenarios here;
+	// let the empty-label InsertLabels pass through so tests assert only Insert.
+	sessions.EXPECT().InsertLabels(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	return &serviceHarness{
 		svc:      New(dal, Config{CacheSize: cacheSize}, logging.Nop()),
 		dal:      dal,
 		sessions: sessions,
 		clients:  clients,
 	}
+}
+
+// wireWithTx makes the mocked DAL's WithTx run its closure against the mocked
+// repos, so service orchestration composed in WithTx exercises the repo mocks.
+func wireWithTx(dal *db.MockDAL, sessions *db.MockSessionRepo, clients *db.MockClientRepo) {
+	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, fn func(db.Repos) error) error {
+			return fn(db.Repos{Sessions: sessions, Clients: clients})
+		}).Maybe()
 }
 
 // hashFor centralizes the namespace-scoped hashing the service performs
@@ -86,7 +99,7 @@ func TestCreate_HappyPath_InsertsSessionThenPrimesCache(t *testing.T) {
 	expectedCreatedAt := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 
 	var minted string
-	h.sessions.EXPECT().Create(mock.Anything, mock.Anything).
+	h.sessions.EXPECT().Insert(mock.Anything, mock.Anything).
 		RunAndReturn(func(_ context.Context, s *db.Session) error {
 			// Service must have minted the raw token and populated the hash
 			// before reaching the DAL boundary.
@@ -129,7 +142,7 @@ func TestCreate_HappyPath_InsertsSessionThenPrimesCache(t *testing.T) {
 
 func TestCreate_EmptyClientDefaults(t *testing.T) {
 	h := newServiceHarness(t, 100)
-	h.sessions.EXPECT().Create(mock.Anything, mock.Anything).Return(nil).Once()
+	h.sessions.EXPECT().Insert(mock.Anything, mock.Anything).Return(nil).Once()
 
 	in := &db.Session{Namespace: "ns-a", TTLMinutes: 60}
 	if err := h.svc.Create(context.Background(), in, ""); err != nil {
@@ -145,7 +158,7 @@ func TestCreate_ClientNotFound_CacheNotPrimed(t *testing.T) {
 	// (namespace, client) → clients FK to ErrClientNotFound. Service.Create
 	// just surfaces it; no separate Register step exists.
 	h := newServiceHarness(t, 100)
-	h.sessions.EXPECT().Create(mock.Anything, mock.Anything).
+	h.sessions.EXPECT().Insert(mock.Anything, mock.Anything).
 		RunAndReturn(func(_ context.Context, _ *db.Session) error {
 			return db.ErrClientNotFound
 		}).Once()
@@ -168,7 +181,7 @@ func TestCreate_ClientNotFound_CacheNotPrimed(t *testing.T) {
 func TestCreate_SessionInsertFails_CacheNotPrimed(t *testing.T) {
 	h := newServiceHarness(t, 100)
 	insertErr := db.ErrSessionExists
-	h.sessions.EXPECT().Create(mock.Anything, mock.Anything).Return(insertErr).Once()
+	h.sessions.EXPECT().Insert(mock.Anything, mock.Anything).Return(insertErr).Once()
 
 	in := &db.Session{Namespace: "ns-a", Client: "alice", TTLMinutes: 60}
 	err := h.svc.Create(context.Background(), in, "")
@@ -335,9 +348,10 @@ func TestTouch_TransientErrorDoesNotEvict(t *testing.T) {
 func TestDelete_SuccessEvictsCache(t *testing.T) {
 	h := newServiceHarness(t, 100)
 	h.svc.cache.Put(cacheKey{Namespace: "ns-a", SessionToken: "s1"}, SessionMetadata{Client: "alice"})
-	h.sessions.EXPECT().Delete(mock.Anything, "ns-a", hashFor("ns-a", "s1")).Return(
-		db.DeleteSessionResult{ID: 9, Cascaded: db.CascadeCounts{Events: 7}}, nil,
-	).Once()
+	h.sessions.EXPECT().LockByTokenHash(mock.Anything, "ns-a", hashFor("ns-a", "s1")).Return(int64(9), "alice", nil).Once()
+	h.sessions.EXPECT().CascadeCounts(mock.Anything, int64(9)).Return(db.CascadeCounts{Events: 7}, nil).Once()
+	h.clients.EXPECT().BumpActivity(mock.Anything, "ns-a", "alice", mock.Anything).Return(nil).Once()
+	h.sessions.EXPECT().DeleteByIDRow(mock.Anything, int64(9)).Return(nil).Once()
 
 	res, err := h.svc.Delete(context.Background(), "ns-a", "s1")
 	if err != nil {
@@ -355,9 +369,7 @@ func TestDelete_SuccessEvictsCache(t *testing.T) {
 func TestDelete_NotFoundStillEvictsCache(t *testing.T) {
 	h := newServiceHarness(t, 100)
 	h.svc.cache.Put(cacheKey{Namespace: "ns-a", SessionToken: "s1"}, SessionMetadata{Client: "alice"})
-	h.sessions.EXPECT().Delete(mock.Anything, "ns-a", hashFor("ns-a", "s1")).Return(
-		db.DeleteSessionResult{}, db.ErrSessionNotFound,
-	).Once()
+	h.sessions.EXPECT().LockByTokenHash(mock.Anything, "ns-a", hashFor("ns-a", "s1")).Return(int64(0), "", db.ErrSessionNotFound).Once()
 
 	if _, err := h.svc.Delete(context.Background(), "ns-a", "s1"); !errors.Is(err, db.ErrSessionNotFound) {
 		t.Fatalf("Delete: %v; want ErrSessionNotFound", err)
@@ -373,7 +385,7 @@ func TestDelete_TransientErrorDoesNotEvict(t *testing.T) {
 	cached := SessionMetadata{Client: "alice", TTLMinutes: 60}
 	h.svc.cache.Put(cacheKey{Namespace: "ns-a", SessionToken: "s1"}, cached)
 	transient := errors.New("simulated transient storage failure")
-	h.sessions.EXPECT().Delete(mock.Anything, "ns-a", hashFor("ns-a", "s1")).Return(db.DeleteSessionResult{}, transient).Once()
+	h.sessions.EXPECT().LockByTokenHash(mock.Anything, "ns-a", hashFor("ns-a", "s1")).Return(int64(0), "", transient).Once()
 
 	if _, err := h.svc.Delete(context.Background(), "ns-a", "s1"); !errors.Is(err, transient) {
 		t.Fatalf("Delete: %v; want %v", err, transient)
@@ -394,9 +406,10 @@ func TestDeleteByID_InvalidatesNamespace(t *testing.T) {
 	keepMD := SessionMetadata{Client: "b1"}
 	h.svc.cache.Put(keepKey, keepMD)
 
-	h.sessions.EXPECT().DeleteByID(mock.Anything, "ns-a", int64(42)).Return(
-		db.DeleteSessionResult{ID: 42}, nil,
-	).Once()
+	h.sessions.EXPECT().LockByID(mock.Anything, "ns-a", int64(42)).Return("alice", time.Now().UTC(), nil).Once()
+	h.sessions.EXPECT().CascadeCounts(mock.Anything, int64(42)).Return(db.CascadeCounts{}, nil).Once()
+	h.clients.EXPECT().BumpActivity(mock.Anything, "ns-a", "alice", mock.Anything).Return(nil).Once()
+	h.sessions.EXPECT().DeleteByIDRow(mock.Anything, int64(42)).Return(nil).Once()
 
 	if _, err := h.svc.DeleteByID(context.Background(), "ns-a", 42); err != nil {
 		t.Fatalf("DeleteByID: %v", err)
@@ -469,9 +482,9 @@ func TestDeleteAll_NamespacedSuccessInvalidatesNamespaceOnly(t *testing.T) {
 	h.svc.cache.Put(keepKey, keepMD)
 
 	filter := db.ListSessionsFilter{Namespace: "ns-a"}
-	h.sessions.EXPECT().DeleteAll(mock.Anything, filter).Return(
-		db.DeleteSessionsResult{DeletedSessions: 2}, nil,
-	).Once()
+	h.sessions.EXPECT().LockAllByFilter(mock.Anything, filter).Return([]int64{1, 2}, nil).Once()
+	h.sessions.EXPECT().CascadeCountsForIDs(mock.Anything, []int64{1, 2}).Return(db.CascadeCounts{}, nil).Once()
+	h.sessions.EXPECT().DeleteRows(mock.Anything, []int64{1, 2}).Return(nil).Once()
 
 	res, err := h.svc.DeleteAll(context.Background(), filter)
 	if err != nil {
@@ -497,9 +510,9 @@ func TestDeleteAll_EmptyNamespaceSuccessPurgesEntireCache(t *testing.T) {
 	h.svc.cache.Put(cacheKey{Namespace: "ns-b", SessionToken: "t1"}, SessionMetadata{Client: "b1"})
 
 	filter := db.ListSessionsFilter{Namespace: ""}
-	h.sessions.EXPECT().DeleteAll(mock.Anything, filter).Return(
-		db.DeleteSessionsResult{DeletedSessions: 2}, nil,
-	).Once()
+	h.sessions.EXPECT().LockAllByFilter(mock.Anything, filter).Return([]int64{1, 2}, nil).Once()
+	h.sessions.EXPECT().CascadeCountsForIDs(mock.Anything, []int64{1, 2}).Return(db.CascadeCounts{}, nil).Once()
+	h.sessions.EXPECT().DeleteRows(mock.Anything, []int64{1, 2}).Return(nil).Once()
 
 	if _, err := h.svc.DeleteAll(context.Background(), filter); err != nil {
 		t.Fatalf("DeleteAll: %v", err)
@@ -521,7 +534,7 @@ func TestDeleteAll_DALErrorDoesNotInvalidate(t *testing.T) {
 	h.svc.cache.Put(cacheKey{Namespace: "ns-a", SessionToken: "t1"}, cached)
 	storageErr := errors.New("simulated bulk delete failure")
 	filter := db.ListSessionsFilter{Namespace: "ns-a"}
-	h.sessions.EXPECT().DeleteAll(mock.Anything, filter).Return(db.DeleteSessionsResult{}, storageErr).Once()
+	h.sessions.EXPECT().LockAllByFilter(mock.Anything, filter).Return(nil, storageErr).Once()
 
 	if _, err := h.svc.DeleteAll(context.Background(), filter); !errors.Is(err, storageErr) {
 		t.Fatalf("DeleteAll: %v; want %v", err, storageErr)
@@ -545,6 +558,8 @@ func TestCreate_ConcurrentRetriesAfterTTLExpiryProduceOneSession(t *testing.T) {
 	clients := db.NewMockClientRepo(t)
 	dal.EXPECT().Sessions().Return(sessions).Maybe()
 	dal.EXPECT().Clients().Return(clients).Maybe()
+	wireWithTx(dal, sessions, clients)
+	sessions.EXPECT().InsertLabels(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// Tiny TTL so the test can cross the boundary without an interactive
 	// wait. 50ms TTL + 100ms sleep is generous against scheduler jitter.
@@ -559,7 +574,7 @@ func TestCreate_ConcurrentRetriesAfterTTLExpiryProduceOneSession(t *testing.T) {
 	const client = "alice"
 
 	// First Create populates the dedup entry.
-	sessions.EXPECT().Create(mock.Anything, mock.Anything).
+	sessions.EXPECT().Insert(mock.Anything, mock.Anything).
 		RunAndReturn(func(_ context.Context, s *db.Session) error {
 			s.ID = 1
 			s.CreatedAt = time.Now().UTC()
@@ -578,7 +593,7 @@ func TestCreate_ConcurrentRetriesAfterTTLExpiryProduceOneSession(t *testing.T) {
 	// The critical assertion: across N concurrent retries with the SAME
 	// expired key, only ONE DAL.Create runs. mockery's Once() fails the test
 	// loudly if Create is invoked more than once.
-	sessions.EXPECT().Create(mock.Anything, mock.Anything).
+	sessions.EXPECT().Insert(mock.Anything, mock.Anything).
 		RunAndReturn(func(_ context.Context, s *db.Session) error {
 			s.ID = 2
 			s.CreatedAt = time.Now().UTC()

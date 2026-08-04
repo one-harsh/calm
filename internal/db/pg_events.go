@@ -6,7 +6,6 @@ package db
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -43,36 +42,45 @@ func (r *eventsRepo) Write(ctx context.Context, namespace string, sessionID int6
 		}
 	}
 
+	// namespace-isolation guard folded into the statement: INSERT ... SELECT
+	// FROM VALUES gated by EXISTS on the (id, namespace) session — no separate
+	// verify step, no transaction. First VALUES row is cast so Postgres can
+	// type the column list; the rest infer from it.
 	placeholders := make([]string, 0, len(events))
-	args := make([]any, 0, len(events)*5)
+	args := make([]any, 0, len(events)*5+2)
 	pos := 1
-	for _, e := range events {
-		placeholders = append(placeholders,
-			fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)", pos, pos+1, pos+2, pos+3, pos+4))
+	for i, e := range events {
+		if i == 0 {
+			placeholders = append(placeholders,
+				fmt.Sprintf("($%d::bigint, $%d::text, $%d::int, $%d::jsonb, $%d::bytea)", pos, pos+1, pos+2, pos+3, pos+4))
+		} else {
+			placeholders = append(placeholders,
+				fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)", pos, pos+1, pos+2, pos+3, pos+4))
+		}
 		args = append(args, sessionID, e.Type, e.Priority, e.Data, HashEventPayload(e.Type, e.Data))
 		pos += 5
 	}
-	query := `INSERT INTO session_events (session_id, type, priority, data, data_hash) VALUES ` + strings.Join(placeholders, ", ") //nolint:gosec // operator-controlled column list, value placeholders
+	args = append(args, sessionID, namespace)
+	query := `INSERT INTO session_events (session_id, type, priority, data, data_hash)
+	          SELECT v.session_id, v.type, v.priority, v.data, v.data_hash
+	          FROM (VALUES ` + strings.Join(placeholders, ", ") + `) AS v(session_id, type, priority, data, data_hash)
+	          WHERE EXISTS (SELECT 1 FROM sessions WHERE id = $` + fmt.Sprint(pos) + ` AND namespace = $` + fmt.Sprint(pos+1) + `)` //nolint:gosec // operator-controlled column list, value placeholders
 
-	accepted := 0
-	err := inTx(ctx, r.queryer, func(tx *sql.Tx) error {
-		if err := verifySessionInNamespace(ctx, tx, namespace, sessionID); err != nil {
-			return err
+	res, err := r.queryer.ExecContext(ctx, query, args...)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return 0, ErrSessionNotFound
 		}
-		res, err := tx.ExecContext(ctx, query, args...)
-		if err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-				return ErrSessionNotFound
-			}
-			return fmt.Errorf("%w: insert %d events for session %d in %q: %w",
-				ErrStorageBackend, len(events), sessionID, namespace, err)
-		}
-		n, _ := res.RowsAffected()
-		accepted = int(n)
-		return nil
-	})
-	return accepted, err
+		return 0, fmt.Errorf("%w: insert %d events for session %d in %q: %w",
+			ErrStorageBackend, len(events), sessionID, namespace, err)
+	}
+	n, _ := res.RowsAffected()
+	// EXISTS false → zero rows for a non-empty batch → session absent in this namespace.
+	if n == 0 {
+		return 0, ErrSessionNotFound
+	}
+	return int(n), nil
 }
 
 func (r *eventsRepo) Read(ctx context.Context, namespace string, sessionID int64, filter EventFilter) ([]Event, error) {

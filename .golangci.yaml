@@ -17,7 +17,17 @@ linters:
     - unused
     - gocritic
     - revive
+    - forbidigo
   settings:
+    forbidigo:
+      forbid:
+        # "Transactions live in services, not the DAL": inTx is the private engine
+        # of store.WithTx and lives only in internal/db/tx.go (excluded below).
+        # Any reappearance elsewhere is a DAL-owned transaction — a design fork.
+        - pattern: '\binTx\b'
+          msg: "transactions belong in services via store.WithTx, not the DAL (CLAUDE.md: 'Transactions live in services'); inTx is confined to internal/db/tx.go"
+        - pattern: '\bBeginTx\b'
+          msg: "open transactions only through store.WithTx; BeginTx is confined to internal/db/tx.go"
     revive:
       # Aligned with CLAUDE.md: comments only when they describe a non-obvious
       # constraint. Don't force generic doc comments on every exported symbol.
@@ -57,6 +67,10 @@ linters:
       - ".*\\.gen\\.go$"
       - "internal/api/genapi/.*"
     rules:
+      # tx.go is the sanctioned home of inTx/BeginTx — the engine behind store.WithTx.
+      - path: "internal/db/tx\\.go$"
+        linters:
+          - forbidigo
       - path: "mock_.*\\.go$"
         linters:
           - errcheck

@@ -29,6 +29,11 @@ func newServiceHarness(t *testing.T) *serviceHarness {
 	dal := db.NewMockDAL(t)
 	clients := db.NewMockClientRepo(t)
 	dal.EXPECT().Clients().Return(clients).Maybe()
+	// Delete composes its cascade in WithTx; run the closure against the mocked repo.
+	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
+		func(_ context.Context, fn func(db.Repos) error) error {
+			return fn(db.Repos{Clients: clients})
+		}).Maybe()
 	return &serviceHarness{svc: New(dal, logging.Nop()), dal: dal, clients: clients}
 }
 
@@ -74,26 +79,35 @@ func TestCountSessions_ProxiesToDAL(t *testing.T) {
 	}
 }
 
-func TestDelete_ProxiesToDAL(t *testing.T) {
+func TestDelete_ComposesCascadeInTx(t *testing.T) {
 	h := newServiceHarness(t)
-	want := db.DeleteClientResult{Client: "alice", DeletedSessions: 2, Cascaded: db.CascadeCounts{Events: 5}}
-	h.clients.EXPECT().Delete(mock.Anything, "ns-a", "alice").Return(want, nil).Once()
+	h.clients.EXPECT().LockByName(mock.Anything, "ns-a", "alice").Return(nil).Once()
+	h.clients.EXPECT().CascadeCountsForClient(mock.Anything, "ns-a", "alice").Return(2, db.CascadeCounts{Events: 5}, nil).Once()
+	h.clients.EXPECT().DeleteRow(mock.Anything, "ns-a", "alice").Return(nil).Once()
 
 	got, err := h.svc.Delete(context.Background(), "ns-a", "alice")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if got.Client != "alice" || got.DeletedSessions != 2 || got.Cascaded.Events != 5 {
-		t.Errorf("got %+v; want %+v", got, want)
+		t.Errorf("got %+v; want Client=alice DeletedSessions=2 Cascaded.Events=5", got)
 	}
 }
 
-func TestDelete_DALErrorPropagates(t *testing.T) {
+func TestDelete_LockNotFoundPropagates(t *testing.T) {
 	h := newServiceHarness(t)
-	h.clients.EXPECT().Delete(mock.Anything, "ns-a", "alice").Return(db.DeleteClientResult{}, db.ErrClientNotFound).Once()
+	h.clients.EXPECT().LockByName(mock.Anything, "ns-a", "alice").Return(db.ErrClientNotFound).Once()
 
 	if _, err := h.svc.Delete(context.Background(), "ns-a", "alice"); !errors.Is(err, db.ErrClientNotFound) {
 		t.Errorf("got %v; want ErrClientNotFound", err)
+	}
+}
+
+func TestDelete_ProtectedClientRejectedBeforeTx(t *testing.T) {
+	h := newServiceHarness(t)
+	// No repo expectations — the default client is rejected before any DAL call.
+	if _, err := h.svc.Delete(context.Background(), "ns-a", db.DefaultClient); !errors.Is(err, db.ErrClientProtected) {
+		t.Errorf("got %v; want ErrClientProtected", err)
 	}
 }
 

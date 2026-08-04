@@ -67,7 +67,12 @@ func (s *Service) Create(ctx context.Context, sess *db.Session, idempotencyKey s
 		sess.SessionToken = raw
 		sess.SessionTokenHash = auth.HashToken(sess.Namespace, raw)
 
-		if err := s.store.Sessions().Create(ctx, sess); err != nil {
+		if err := s.store.WithTx(ctx, func(r db.Repos) error {
+			if err := r.Sessions.Insert(ctx, sess); err != nil {
+				return err
+			}
+			return r.Sessions.InsertLabels(ctx, sess.ID, sess.Labels)
+		}); err != nil {
 			return dedupEntry{}, err
 		}
 
@@ -132,20 +137,70 @@ func (s *Service) Touch(ctx context.Context, namespace, sessionToken string, las
 }
 
 func (s *Service) Delete(ctx context.Context, namespace, sessionToken string) (db.DeleteSessionResult, error) {
-	result, err := s.store.Sessions().Delete(ctx, namespace, auth.HashToken(namespace, sessionToken))
+	var result db.DeleteSessionResult
+	err := s.store.WithTx(ctx, func(r db.Repos) error {
+		id, client, err := r.Sessions.LockByTokenHash(ctx, namespace, auth.HashToken(namespace, sessionToken))
+		if err != nil {
+			return err
+		}
+		result.ID = id
+		return s.deleteLockedSession(ctx, r, namespace, client, id, &result.Cascaded, time.Now().UTC())
+	})
 	if err == nil || errors.Is(err, db.ErrSessionNotFound) {
 		s.cache.Invalidate(cacheKey{Namespace: namespace, SessionToken: sessionToken})
 	}
-	return result, err
+	if err != nil {
+		return db.DeleteSessionResult{}, err
+	}
+	return result, nil
 }
 
 // Scanner has no raw token, so this evicts by namespace.
 func (s *Service) DeleteByID(ctx context.Context, namespace string, sessionID int64) (db.DeleteSessionResult, error) {
-	result, err := s.store.Sessions().DeleteByID(ctx, namespace, sessionID)
+	result := db.DeleteSessionResult{ID: sessionID}
+	err := s.store.WithTx(ctx, func(r db.Repos) error {
+		client, lastActivity, err := r.Sessions.LockByID(ctx, namespace, sessionID)
+		if err != nil {
+			return err
+		}
+		// Scanner is not client activity — bump to session.last_activity
+		// (the real work) rather than now (the scan moment).
+		return s.deleteLockedSession(ctx, r, namespace, client, sessionID, &result.Cascaded, lastActivity)
+	})
 	if namespace != "" {
 		s.cache.InvalidateNamespace(namespace)
 	}
-	return result, err
+	if err != nil {
+		return db.DeleteSessionResult{}, err
+	}
+	return result, nil
+}
+
+// deleteLockedSession runs the cascade choreography for an already-locked session:
+// count children, bump the owning client's activity, delete the row (children go
+// via ON DELETE CASCADE). Must run inside a WithTx that holds the lock.
+func (s *Service) deleteLockedSession(ctx context.Context, r db.Repos, namespace, client string, sessionID int64, cascaded *db.CascadeCounts, activityAt time.Time) error {
+	s.logger.WithContext(ctx).Debug("delete session: lock acquired", obs.SessionID(sessionID))
+	cascade, err := r.Sessions.CascadeCounts(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	*cascaded = cascade
+	s.logger.WithContext(ctx).Debug(
+		"delete session: cascade computed",
+		logging.IntField("sources", cascade.Sources),
+		logging.IntField("chunks", cascade.Chunks),
+		logging.IntField("events", cascade.Events),
+		logging.IntField("labels", cascade.Labels),
+	)
+	if err := r.Clients.BumpActivity(ctx, namespace, client, activityAt); err != nil {
+		return err
+	}
+	if err := r.Sessions.DeleteByIDRow(ctx, sessionID); err != nil {
+		return err
+	}
+	s.logger.WithContext(ctx).Debug("delete session: committed", obs.SessionID(sessionID))
+	return nil
 }
 
 func (s *Service) List(ctx context.Context, filter db.ListSessionsFilter) ([]db.ManagedSession, error) {
@@ -157,12 +212,40 @@ func (s *Service) Count(ctx context.Context, filter db.ListSessionsFilter) (int,
 }
 
 func (s *Service) DeleteAll(ctx context.Context, filter db.ListSessionsFilter) (db.DeleteSessionsResult, error) {
-	result, err := s.store.Sessions().DeleteAll(ctx, filter)
+	var result db.DeleteSessionsResult
+	err := s.store.WithTx(ctx, func(r db.Repos) error {
+		ids, err := r.Sessions.LockAllByFilter(ctx, filter)
+		if err != nil {
+			return err
+		}
+		s.logger.WithContext(ctx).Debug("delete sessions: locked rows", logging.IntField("count", len(ids)))
+		if len(ids) == 0 {
+			return nil
+		}
+		result.DeletedSessions = len(ids)
+		cascade, err := r.Sessions.CascadeCountsForIDs(ctx, ids)
+		if err != nil {
+			return err
+		}
+		result.Cascaded = cascade
+		s.logger.WithContext(ctx).Debug(
+			"delete sessions: cascade computed",
+			logging.IntField("sources", cascade.Sources),
+			logging.IntField("chunks", cascade.Chunks),
+			logging.IntField("events", cascade.Events),
+			logging.IntField("labels", cascade.Labels),
+		)
+		if err := r.Sessions.DeleteRows(ctx, ids); err != nil {
+			return err
+		}
+		s.logger.WithContext(ctx).Debug("delete sessions: committed")
+		return nil
+	})
 	if err != nil {
-		return result, err
+		return db.DeleteSessionsResult{}, err
 	}
 
-	// DAL.DeleteAll doesn't return per-row tokens, so over-evict by namespace.
+	// DeleteAll doesn't track per-row tokens, so over-evict by namespace.
 	if filter.Namespace != "" {
 		s.cache.InvalidateNamespace(filter.Namespace)
 	} else {
