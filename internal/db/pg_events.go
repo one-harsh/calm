@@ -7,9 +7,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	logging "github.com/one-harsh/context-logging"
 )
 
@@ -66,6 +68,10 @@ func (r *eventsRepo) Write(ctx context.Context, namespace string, sessionID int6
 
 	res, err := r.queryer.ExecContext(ctx, query, args...)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return 0, ErrSessionNotFound
+		}
 		return 0, fmt.Errorf("%w: insert %d events for session %d in %q: %w",
 			ErrStorageBackend, len(events), sessionID, namespace, err)
 	}

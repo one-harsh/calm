@@ -56,8 +56,9 @@ func TestCreateSession_HappyMinimal(t *testing.T) {
 	}
 }
 
-// Labels supplied at session-create time are persisted as child rows and
-// retrievable; session creation does not silently drop metadata.
+// Labels supplied at session-create time are persisted as child rows — the
+// service composes the session insert and labels insert in one transaction,
+// and creation does not silently drop metadata.
 func TestCreateSession_HappyWithLabels(t *testing.T) {
 	t.Parallel()
 	store, sqlDB, teardown := openConcreteStore(t)
@@ -76,11 +77,8 @@ func TestCreateSession_HappyWithLabels(t *testing.T) {
 		SessionTokenHash: auth.HashToken("ns-a", raw),
 		Labels:           labels,
 	}
-	if err := store.Sessions().Insert(context.Background(), sess); err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-	if err := store.Sessions().InsertLabels(context.Background(), sess.ID, sess.Labels); err != nil {
-		t.Fatalf("InsertLabels: %v", err)
+	if err := sessionSvc(store).Create(context.Background(), sess, ""); err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 	got := countRows(
 		t, sqlDB,
