@@ -1,0 +1,10 @@
+# Copyright 2026 The CALM Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Runtime dependencies for the paired-run benchmark harness (Python 3.11).
+# The offline test suite imports none of these transitively at import time:
+# httpx is used by the manage-API client, psycopg only inside the DB pull
+# (imported lazily so the specimen tests run with no driver installed).
+httpx>=0.28,<1
+psycopg[binary]>=3.1,<4
+PyYAML>=6,<7

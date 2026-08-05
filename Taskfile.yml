@@ -347,6 +347,16 @@ tasks:
     cmds:
       - task: example:eval:test
 
+  bench:paired:deps:
+    desc: Install Python dependencies for the paired-run benchmark harness
+    cmds:
+      - python3 -m pip install -r benchmarks/paired-run/requirements.txt
+
+  bench:paired:test:
+    desc: Run offline unit tests for the paired-run benchmark harness (no network/DB)
+    cmds:
+      - python3 -B -m pytest benchmarks/paired-run -q
+
   dco:check:
     desc: Verify every commit in DCO_BASE..HEAD carries a Signed-off-by trailer
     summary: |

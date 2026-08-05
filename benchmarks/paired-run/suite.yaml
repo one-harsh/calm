@@ -1,0 +1,78 @@
+# Copyright 2026 The CALM Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Paired-run benchmark task suite. Six realistic multi-hour coding tasks stratified by
+# quadrant. Prompts are IDENTICAL for all three arms (raw / mcp / hook) and
+# never mention CALM or steer tool choice.
+#
+# clone_setup.fixture:
+#   PENDING      — the seeded-state fixture commit has not been authored yet.
+#                  The runner REFUSES to run any task whose fixture is PENDING.
+#   none         — no seeded fixture; the task runs against the pinned commit
+#                  as-is (the target seam exists in the real tree today).
+#   <40-hex sha> — the pinned fixture commit, filled in before the dry-run gate.
+#
+# acceptance is a checker path under checks/ (authored during fixture work).
+# The runner also refuses to run a task whose checker file is absent, so the
+# whole suite stays blocked until fixtures + checkers land.
+
+tasks:
+  - id: t1
+    quadrant: Q1
+    clone_setup:
+      fixture: PENDING
+    acceptance: checks/t1.sh
+    timeout_minutes: 60
+    expected_cost_note: "150-400k output tokens"
+    prompt: |
+      The integration suite is failing (`task test:integration`; Postgres is already up). Root-cause the failures and fix with the minimal change. Do not modify any test file. Explain the defect and its blast radius in `DIAGNOSIS.md` (what broke, which promises it violated, why unit tests missed it).
+
+  - id: t2
+    quadrant: Q1
+    clone_setup:
+      fixture: PENDING
+    acceptance: checks/t2.sh
+    timeout_minutes: 60
+    expected_cost_note: "150-350k output tokens"
+    prompt: |
+      `task ci` fails its coverage gate. Restore it by writing meaningful tests for the uncovered branches of the affected package — error paths and boundary conditions included, following the repo's testing conventions (sentinel checks, table-driven style). No coverage-gaming: every test must assert behavior, not merely execute lines. `task ci` must pass.
+
+  - id: t3
+    quadrant: Q2
+    clone_setup:
+      fixture: none
+    acceptance: checks/t3.sh
+    timeout_minutes: 90
+    expected_cost_note: "200-400k output tokens"
+    prompt: |
+      Add a `replace_all` option to the adapter's structured file-edit tool (`internal/adapter/mcp`, `calm_edit_file`): optional boolean, default false; when true, every occurrence of the exact `old_string` is replaced and the response reports the count; when false, current exact-once semantics are unchanged (multi-match stays an error naming the count). Update the tool's input schema and description (they are the LLM-facing contract), keep the presentation/capture contract intact, and cover: single match with flag on and off, multi-match replace with count, multi-match error without flag, zero-match error, and capture/label behavior on multi-edit. `task ci` must pass.
+
+  - id: t4
+    quadrant: Q2
+    clone_setup:
+      fixture: none
+    acceptance: checks/t4.sh
+    timeout_minutes: 60
+    expected_cost_note: "150-350k output tokens"
+    prompt: |
+      Add a `--json` flag to `calm-capture search` (`internal/adapter/capturecli`): machine-readable results to stdout — one JSON object with `query`, `hits[]` (source label, snippet text, offset hint, match layer when present), and `degraded` (reason string or null). Human-readable output remains the default and byte-identical to today. Degraded calls must still exit nonzero with the JSON carrying the reason (the CLI's never-worse contract). Follow the CLI's existing flag/config patterns; unit tests for both modes including a degraded case. `task ci` must pass.
+
+  - id: t5
+    quadrant: Q3
+    clone_setup:
+      fixture: PENDING
+    acceptance: checks/t5.sh
+    timeout_minutes: 60
+    expected_cost_note: "150-400k output tokens"
+    prompt: |
+      Operator bug report: a search in one session is returning snippets from content ingested by a different session in the same namespace. This violates the project's session-isolation contract. Find the leak, fix it following the codebase's canonical guard pattern, add a regression integration test proving two sessions in one namespace cannot see each other's content through this path, and note in `DIAGNOSIS.md` which existing test SHOULD have caught it and why it didn't. `task test:integration` must pass.
+
+  - id: t6
+    quadrant: Q3
+    clone_setup:
+      fixture: none
+    acceptance: checks/t6.sh
+    timeout_minutes: 90
+    expected_cost_note: "150-350k output tokens"
+    prompt: |
+      The document-order reread path (`/v1/search` with `source` and no queries) has two paging limitations: a text-fallback chunk larger than the remaining response budget is emitted unbounded, and pages stop at a fixed chunk count rather than filling toward `budget_bytes`. Improve `internal/search`'s document-order path: bound text-fallback emission to the remaining budget — a truncated chunk must be a verbatim prefix carrying the existing truncation marker and a re-requestable offset — and fill each page greedily until the next chunk would exceed the remaining budget. The response shape in `docs/api/openapi.yaml` must not change; `budget_bytes` remains a server-clamped hint. Add unit tests for exact-fit, one-over, and oversized-single-chunk boundaries, plus an integration scenario paging a large capture end-to-end via continuation offsets, asserting no page exceeds the budget and that re-requesting a truncated chunk's offset with a larger budget returns it whole. `task ci` must pass.

@@ -1,0 +1,19 @@
+{
+  "primary_repo": "/Users/you/Codes/calm",
+  "pinned_sha": "PENDING",
+  "benchmark_branch": "bench/main",
+  "calm_base_url": "http://localhost:8080",
+  "calm_api_key_ref": "[file:/Users/you/.calm/benchmark_api.key]",
+  "calm_api_key_value": "RESOLVE-BEFORE-USE-never-commit-the-real-key",
+  "namespace": "bench",
+  "db_dsn": "postgresql://postgres:postgres@localhost:5432/calm",
+  "model": "opus",
+  "adapter_bin": "/Users/you/Codes/calm/bin/calm-adapter",
+  "capture_cli_bin": "/Users/you/Codes/calm/bin/calm-capture",
+  "adapter_commit": "PIN-THE-ADAPTER-BUILD-COMMIT",
+  "oauth_token_path": "/Users/you/.claude/benchmark-oauth-token",
+  "output_dir": "/Users/you/bench-out/traces",
+  "work_root": "/Users/you/bench-out/work",
+  "arms_to_run": ["raw", "mcp", "hook"],
+  "claude_bin": "claude"
+}
