@@ -131,8 +131,10 @@ def scrub_env(parent_env: dict[str, str]) -> dict[str, str]:
 
 
 def encode_project_dir(cwd: str) -> str:
-    """Claude Code encodes the transcript project dir as cwd with '/' -> '-'."""
-    return cwd.replace("/", "-")
+    """Claude Code encodes the transcript project dir as cwd with BOTH '/' and
+    '.' collapsed to '-' (empirically confirmed on the live gate: a '/.'
+    boundary yields a double dash, e.g. '/Users/x/.calm' -> '-Users-x--calm')."""
+    return cwd.replace("/", "-").replace(".", "-")
 
 
 def transcript_path(config_dir: Path, cwd: str, session_id: str) -> Path:
@@ -140,11 +142,23 @@ def transcript_path(config_dir: Path, cwd: str, session_id: str) -> Path:
 
 
 def newest_transcript(config_dir: Path, cwd: str) -> Path | None:
+    """Locate the cell's transcript, newest-first. The encoded project dir is
+    tried first; failing that, ANY transcript under this config home is fair game
+    — the config home is per-cell, so any *.jsonl in it belongs to this cell.
+    That makes a future encoding-rule drift non-fatal rather than cell-fatal."""
     project_dir = Path(config_dir) / "projects" / encode_project_dir(cwd)
-    if not project_dir.exists():
+    candidates = (
+        sorted(project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if project_dir.exists()
+        else []
+    )
+    if candidates:
+        return candidates[0]
+    projects_root = Path(config_dir) / "projects"
+    if not projects_root.exists():
         return None
-    candidates = sorted(project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return candidates[0] if candidates else None
+    everything = sorted(projects_root.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return everything[0] if everything else None
 
 
 def build_manifest(config: RunnerConfig, claude_cli_version: str) -> dict[str, Any]:
@@ -282,14 +296,19 @@ def prepare_clone(config: RunnerConfig, cid: str, fixture: str, base_env: dict[s
     )
     if clone.returncode != 0:
         raise HarnessFailure(f"git clone failed: {clone.stderr.strip()}")
-    _git(clone_dir, ["checkout", "--quiet", config.pinned_sha], base_env)
+    # Check out the task's substrate (an orphan whole-tree import + neutral cover
+    # commits) as the cell branch. No cherry-pick: the seeded defect lives inside
+    # the import's tree, not as any findable commit diff.
+    _git(clone_dir, ["checkout", "--quiet", fixture], base_env)
     _git(clone_dir, ["checkout", "--quiet", "-b", f"bench/{cid}"], base_env)
     # Push is physically impossible: remove origin (clone-local; primary untouched).
     _git(clone_dir, ["remote", "remove", "origin"], base_env)
-    if fixture not in ("none", ""):
-        # Commit the fixture onto the cell branch so HEAD is the seeded state;
-        # acceptance and archival then diff the agent's work-tree against HEAD.
-        _git(clone_dir, ["cherry-pick", fixture], base_env)
+    # Drop every other local branch so no pristine-code ref remains to diff the
+    # seeded substrate against — archaeology defeat is by topology, not discipline.
+    refs = _git(clone_dir, ["for-each-ref", "--format=%(refname:short)", "refs/heads/"], base_env)
+    for other in refs.stdout.split():
+        if other != f"bench/{cid}":
+            _git(clone_dir, ["branch", "-D", other], base_env)
     return clone_dir
 
 
@@ -501,9 +520,9 @@ def run_cell(
         if not self_check.passed:
             raise HarnessFailure(f"arm self-check failed: {self_check.reasons}")
 
-        # Pre-cell session snapshot (CALM arms).
+        # Pre-cell session snapshot (CALM arms), scoped to the bench namespace.
         is_calm_arm = arm.surface in (arms.SURFACE_MCP, arms.SURFACE_PLUGIN)
-        before = manage_client.list_managed_sessions(client=arm.client_tag) if is_calm_arm else []
+        before = _session_snapshot(config) if is_calm_arm else []
 
         payload = spawn_claude(
             config,
@@ -536,7 +555,7 @@ def run_cell(
         # Post-cell snapshot + join integrity (CALM arms).
         calm_measures = extract.CalmMeasures()
         if is_calm_arm:
-            after = manage_client.list_managed_sessions(client=arm.client_tag)
+            after = _session_snapshot(config)
             session = extract.assert_one_new_session(before, after)
             calm_measures.session_snapshot = session
             calm_measures = _pull_correlations(config, arm, session, calm_home, calm_measures)
@@ -573,6 +592,15 @@ def _reset_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _session_snapshot(config: RunnerConfig) -> list[dict[str, Any]]:
+    """Session snapshot for the benchmark namespace. Sourced from a read-only DB
+    query because /v1/manage/sessions is not implemented (501); isolated here so
+    a switch to the manage API is a one-function change. The namespace is the
+    join discriminator — the MCP arm's client tag is overridden to 'claude-code'
+    by the adapter's clientInfo preference, so client-tag joins are unreliable."""
+    return extract.fetch_sessions_by_namespace(config.db_dsn, config.namespace)
+
+
 def _pull_correlations(
     config: RunnerConfig,
     arm: arms.Arm,
@@ -582,15 +610,13 @@ def _pull_correlations(
 ) -> extract.CalmMeasures:
     log_file = calm_home / "logs" / "calm-capture.log"
     ids = extract.correlation_ids_from_log(log_file)
-    namespace = str(session.get("namespace", config.namespace))
-    since = str(session.get("created_at", ""))
     try:
         if ids:
             rows = extract.fetch_correlations(config.db_dsn, correlation_ids=ids)
         else:
-            rows = extract.fetch_correlations(
-                config.db_dsn, namespace=namespace, client=arm.client_tag, since_iso=since
-            )
+            # The snapshot delta hands us the session id — scope the fallback by
+            # it, not a client+time window.
+            rows = extract.fetch_correlations(config.db_dsn, session_id=session.get("id"))
     except Exception as err:  # noqa: BLE001 - a DB-pull miss must not kill the cell (never-worse).
         print(f"correlations pull failed for {arm.client_tag}: {err}", file=sys.stderr)
         return measures

@@ -6,11 +6,13 @@
 # never mention CALM or steer tool choice.
 #
 # clone_setup.fixture:
-#   PENDING      — the seeded-state fixture commit has not been authored yet.
-#                  The runner REFUSES to run any task whose fixture is PENDING.
-#   none         — no seeded fixture; the task runs against the pinned commit
-#                  as-is (the target seam exists in the real tree today).
-#   <40-hex sha> — the pinned fixture commit, filled in before the dry-run gate.
+#   PENDING      — the substrate tip sha has not been wired yet. The runner
+#                  REFUSES to run any task whose fixture is PENDING.
+#   <40-hex sha> — the substrate tip to CHECK OUT: an orphan whole-tree import
+#                  (base + CLAUDE.md strip, plus the task's fixture where it has
+#                  one) with neutral cover commits on top. t1/t2/t5 point at
+#                  their own substrate; t3/t4/t6/t-smoke share bench/base's tip.
+#                  Filled in from create-benchmark-branch.sh before the dry-run gate.
 #
 # acceptance is a checker path under checks/ (authored during fixture work).
 # The runner also refuses to run a task whose checker file is absent, so the
@@ -40,7 +42,7 @@ tasks:
   - id: t3
     quadrant: Q2
     clone_setup:
-      fixture: none
+      fixture: PENDING
     acceptance: checks/t3.sh
     timeout_minutes: 90
     expected_cost_note: "200-400k output tokens"
@@ -50,7 +52,7 @@ tasks:
   - id: t4
     quadrant: Q2
     clone_setup:
-      fixture: none
+      fixture: PENDING
     acceptance: checks/t4.sh
     timeout_minutes: 60
     expected_cost_note: "150-350k output tokens"
@@ -70,7 +72,7 @@ tasks:
   - id: t6
     quadrant: Q3
     clone_setup:
-      fixture: none
+      fixture: PENDING
     acceptance: checks/t6.sh
     timeout_minutes: 60
     expected_cost_note: "150-350k output tokens"
@@ -80,7 +82,7 @@ tasks:
   - id: t-smoke
     quadrant: Q4
     clone_setup:
-      fixture: none
+      fixture: PENDING
     acceptance: checks/t-smoke.sh
     timeout_minutes: 10
     expected_cost_note: "trivial — pipe liveness check, not a measured cell"

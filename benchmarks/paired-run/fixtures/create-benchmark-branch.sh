@@ -2,42 +2,41 @@
 # Copyright 2026 The CALM Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# USER-RUN. Builds the local benchmark branch and the three fixture branches for
-# the paired-run benchmark, entirely from the committed patch files beside
-# this script. Local refs only: it never pushes and never touches remotes.
+# USER-RUN. Builds the four local benchmark substrate branches for the paired-run
+# benchmark from the committed patch files beside this script. Local refs only:
+# it never pushes and never touches remotes.
 #
-# It refuses to run unless the tracked working tree is clean and the recorded
-# base commit is in the current history, and it aborts (rather than clobbering)
-# if any target branch already exists — so a re-run is safe. Delete the branches
-# to redo.
+# Each substrate is an ORPHAN branch: a single whole-tree import commit (the base
+# tree + the stripped contributor directive, plus the task's fixture where it has
+# one), followed by the SAME neutral cover commits. A seeded defect therefore
+# never exists as any findable commit diff — it lives inside the whole-tree
+# import, and the history shape is identical across every task.
 #
-# Layout it creates:
-#   bench/main   = base + the stripped contributor-directive commit  (the pin)
-#   fixture/t1   = bench/main + one commit from t1.patch
-#   fixture/t2   = bench/main + one commit from t2.patch
-#   fixture/t5   = bench/main + one commit from t5.patch
+#   bench/base  = base tree + strip                 (t3/t4/t6/t-smoke run here)
+#   bench/t1    = base tree + strip + t1 fixture
+#   bench/t2    = base tree + strip + t2 fixture
+#   bench/t5    = base tree + strip + t5 fixture
 #
-# The runner cherry-picks a fixture commit onto the pin inside a disposable
-# clone; each fixture branch's single commit is exactly that cherry-pick source.
+# It refuses if any target branch already exists or the tracked tree is dirty,
+# and it aborts if the base commit is missing. Safe to re-run after deleting the
+# four branches.
 set -euo pipefail
 
-# The commit the fixtures were authored against (also the sweep pin's parent).
-# The benchmark substrate is cut from main WITHOUT the harness commit: clones
-# must never contain benchmarks/paired-run (checkers and fixture patches are
-# the benchmark's answer key).
-BASE_SHA="a15896e80719115a30335fd889bee915dbf11d01"
+# The commit whose tree seeds every substrate (its code == the sweep pin's code;
+# it predates the in-repo benchmark harness, so cells carry only product code).
+BASE_SHA="a15896e"
 
-# Resolve locations before any branch switch (the patches and this script may
-# live in commits that are not present in BASE_SHA's tree).
 FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(git -C "$FIXTURES_DIR" rev-parse --show-toplevel)"
 
-# Neutral, truthful-sounding commit messages. A benchmark cell can read the git
-# log, so nothing here may reveal that these commits seed the benchmark.
-BENCH_MSG="Relocate adapter tooling guidance out of the contributor directive"
-T1_MSG="Simplify the session snapshot query"
-T2_MSG="Drop a redundant session service unit test file"
-T5_MSG="Fold source-label scoping into the search predicate"
+# Neutral, boring, jargon-free commit messages. Benchmark cells read git log, so
+# nothing here may hint at a benchmark or a seeded change. The cover messages
+# and diffs are identical across all four branches.
+IMPORT_MSG="Import project sources"
+COVER_A_MSG="Describe CALM as a sidecar in the README opener"
+COVER_B_MSG="Document the calm server run entrypoint"
+
+PATCHES=(claude-md-strip.patch t1.patch t2.patch t5.patch cover-a.patch cover-b.patch)
 
 # --- preflight -------------------------------------------------------------
 git update-index -q --refresh || true
@@ -46,78 +45,85 @@ if ! git diff-index --quiet HEAD --; then
   exit 1
 fi
 if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-  echo "refuse: recorded base commit $BASE_SHA not found (git fetch / pull --ff-only?)" >&2
+  echo "refuse: base commit $BASE_SHA not found (git fetch / pull --ff-only?)" >&2
   exit 1
 fi
-if ! git merge-base --is-ancestor "$BASE_SHA" HEAD; then
-  echo "refuse: recorded base $BASE_SHA is not an ancestor of HEAD" >&2
-  exit 1
-fi
-for b in bench/main fixture/t1 fixture/t2 fixture/t5; do
+for b in bench/base bench/t1 bench/t2 bench/t5; do
   if git show-ref --verify --quiet "refs/heads/$b"; then
     echo "refuse: branch $b already exists; delete it to re-run (git branch -D $b)" >&2
     exit 1
   fi
 done
-for p in claude-md-strip.patch t1.patch t2.patch t5.patch; do
+for p in "${PATCHES[@]}"; do
   [ -f "$FIXTURES_DIR/$p" ] || { echo "refuse: missing patch $FIXTURES_DIR/$p" >&2; exit 1; }
 done
 
-START_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-
-# Copy the patches out of the tree: checking out bench/main at BASE_SHA removes
-# the (later-committed) fixtures/ dir from the working tree, so read the patches
-# from a location that survives the branch switch.
+# Copy patches out of the tree; the import worktree checks out a base that lacks
+# the fixtures/ dir, so read patches from a location that survives.
 TMP="$(mktemp -d)"
-cleanup() { git checkout -q "$START_BRANCH" 2>/dev/null || true; rm -rf "$TMP"; }
+cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
-cp "$FIXTURES_DIR"/claude-md-strip.patch "$FIXTURES_DIR"/t1.patch \
-   "$FIXTURES_DIR"/t2.patch "$FIXTURES_DIR"/t5.patch "$TMP/"
+for p in "${PATCHES[@]}"; do cp "$FIXTURES_DIR/$p" "$TMP/"; done
 
-apply_commit() { # <patch-file> <message>
-  git apply --index "$TMP/$1"
-  git commit -s -q -m "$2"
+# build_substrate <branch> [fixture-patch]
+# Materializes the seeded tree in a throwaway worktree at BASE_SHA, commits it as
+# an orphan root, then layers the identical cover commits on top.
+build_substrate() {
+  local branch="$1" fixture="${2:-}"
+  local wt
+  wt="$(mktemp -d)"
+  git worktree add --quiet --detach "$wt" "$BASE_SHA"
+  (
+    cd "$wt"
+    git apply "$TMP/claude-md-strip.patch"
+    [ -n "$fixture" ] && git apply "$TMP/$fixture"
+    git checkout --quiet --orphan "$branch"
+    git add -A
+    git commit -s -q -m "$IMPORT_MSG"
+    git apply "$TMP/cover-a.patch"; git add -A; git commit -s -q -m "$COVER_A_MSG"
+    git apply "$TMP/cover-b.patch"; git add -A; git commit -s -q -m "$COVER_B_MSG"
+  )
+  git worktree remove --force "$wt"
 }
 
-# --- bench/main: base + stripped contributor directive ---------------------
-git checkout -q -b bench/main "$BASE_SHA"
-apply_commit claude-md-strip.patch "$BENCH_MSG"
-BENCH_SHA="$(git rev-parse HEAD)"
+build_substrate bench/base
+build_substrate bench/t1 t1.patch
+build_substrate bench/t2 t2.patch
+build_substrate bench/t5 t5.patch
 
-# --- fixture branches: one commit each, off bench/main ---------------------
-git checkout -q -b fixture/t1 bench/main
-apply_commit t1.patch "$T1_MSG"
-T1_SHA="$(git rev-parse HEAD)"
-
-git checkout -q -b fixture/t2 bench/main
-apply_commit t2.patch "$T2_MSG"
-T2_SHA="$(git rev-parse HEAD)"
-
-git checkout -q -b fixture/t5 bench/main
-apply_commit t5.patch "$T5_MSG"
-T5_SHA="$(git rev-parse HEAD)"
-
-# cleanup trap returns us to START_BRANCH.
+BASE_TIP="$(git rev-parse bench/base)"
+T1_TIP="$(git rev-parse bench/t1)"
+T2_TIP="$(git rev-parse bench/t2)"
+T5_TIP="$(git rev-parse bench/t5)"
 
 cat <<EOF
 
-Benchmark branches created (local only — nothing was pushed).
+Benchmark substrates created (local only — nothing was pushed).
 
-  pinned_sha (bench/main): $BENCH_SHA
-  fixture/t1:              $T1_SHA
-  fixture/t2:              $T2_SHA
-  fixture/t5:              $T5_SHA
+FIRST, delete the OLD generated branches from the previous design if present
+(script-generated, safe to remove):
+    git branch -D bench/main fixture/t1 fixture/t2 fixture/t5 2>/dev/null || true
 
-Wire the shas in before the dry-run gate:
+Substrate tips:
+    bench/base: $BASE_TIP
+    bench/t1:   $T1_TIP
+    bench/t2:   $T2_TIP
+    bench/t5:   $T5_TIP
 
-1) benchmarks/paired-run/suite.yaml — set each task's clone_setup.fixture:
-     t1:  fixture: $T1_SHA
-     t2:  fixture: $T2_SHA
-     t5:  fixture: $T5_SHA
-   (t3, t4, t6, and t-smoke stay 'fixture: none'.)
+Wire the tips in before the dry-run gate:
+
+1) benchmarks/paired-run/suite.yaml — set each task's clone_setup.fixture to the
+   substrate tip that task checks out:
+     t1:       fixture: $T1_TIP
+     t2:       fixture: $T2_TIP
+     t5:       fixture: $T5_TIP
+     t3:       fixture: $BASE_TIP
+     t4:       fixture: $BASE_TIP
+     t6:       fixture: $BASE_TIP
+     t-smoke:  fixture: $BASE_TIP
 
 2) ~/.calm/paired-run.config.json — set:
-     "pinned_sha": "$BENCH_SHA"
+     "pinned_sha": "$BASE_TIP"
 
-Undo everything: git branch -D bench/main fixture/t1 fixture/t2 fixture/t5
+Undo everything: git branch -D bench/base bench/t1 bench/t2 bench/t5
 EOF

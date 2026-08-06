@@ -165,8 +165,15 @@ Adapter env `CALM_ADAPTER_CALM_KEEP_SESSION=true` skips the shutdown
 `claude -p` exit — required because extraction runs post-cell. The runner
 **never** deletes a CALM session; TTL (≥1440 min for the bench namespace)
 reclaims it. Join integrity is guarded by asserting exactly one new session
-appears in the post-cell `/v1/manage/sessions?client=<arm>` snapshot
-(`extract.assert_one_new_session`).
+appears in the post-cell snapshot (`extract.assert_one_new_session`).
+
+The snapshot is a read-only DB query scoped to the dedicated **benchmark
+namespace** (`/v1/manage/sessions` is a 501 stub), not the client tag: the MCP
+arm's sessions land with `client='claude-code'` because the adapter prefers the
+MCP handshake's `clientInfo.name` over the configured tag, and every Claude Code
+instance self-identifies identically. Cells are strictly serial, so within the
+bench namespace the before/after set difference is unambiguous; the correlations
+pull then keys off the surfaced `session_id`.
 
 ## Operational notes for the sweep operator
 

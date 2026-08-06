@@ -293,6 +293,13 @@ def test_build_correlations_by_client_window_params() -> None:
     assert params == {"namespace": "bench", "client": "bench-mcp", "since": "2026-08-03T00:00:00Z"}
 
 
+def test_build_correlations_by_session_params() -> None:
+    # The snapshot hands us the session id, so the fallback scopes by it.
+    sql, params = extract.build_correlations_by_session(4242)
+    assert "WHERE session_id = %(session_id)s" in sql
+    assert params == {"session_id": 4242}
+
+
 def test_normalize_correlation_row_hex_encodes_and_parses_meta() -> None:
     row = (
         bytes.fromhex("0190abcd12347abc8def0123456789ab"),
@@ -327,19 +334,66 @@ def test_parse_correlation_rows_aggregates_search_signal() -> None:
     assert m.outcome_counts == {"unset": 1, "success": 1}
 
 
-# --- CALM side: manage snapshot delta -------------------------------------
+# --- CALM side: session snapshot delta ------------------------------------
 
 
-def test_assert_one_new_session_ok() -> None:
-    before = [{"client": "bench-mcp", "created_at": "t0"}]
-    after = [{"client": "bench-mcp", "created_at": "t0"}, {"client": "bench-mcp", "created_at": "t1"}]
+def test_build_sessions_by_namespace_is_parameterized_single_statement() -> None:
+    sql, params = extract.build_sessions_by_namespace("bench")
+    assert sql == "SELECT id, namespace, client, created_at FROM sessions WHERE namespace = %(namespace)s"
+    assert params == {"namespace": "bench"}
+
+
+def test_build_sessions_by_client_is_parameterized_single_statement() -> None:
+    sql, params = extract.build_sessions_by_client("bench-mcp")
+    assert sql == "SELECT id, namespace, client, created_at FROM sessions WHERE client = %(client)s"
+    assert params == {"client": "bench-mcp"}
+
+
+def test_normalize_session_row_from_db_tuple() -> None:
+    # DB rows arrive as (id, namespace, client, created_at); created_at is a
+    # datetime that must stringify stably for the set-difference key.
+    from datetime import datetime, timezone
+
+    row = (77, "bench", "bench-mcp", datetime(2026, 8, 6, 1, 2, 3, tzinfo=timezone.utc))
+    norm = extract.normalize_session_row(row)
+    assert norm["id"] == 77
+    assert norm["namespace"] == "bench"
+    assert norm["client"] == "bench-mcp"
+    assert norm["created_at"] == "2026-08-06 01:02:03+00:00"
+
+
+def test_assert_one_new_session_ok_carries_db_session_id() -> None:
+    before = [extract.normalize_session_row((1, "bench", "bench-mcp", "t0"))]
+    after = [
+        extract.normalize_session_row((1, "bench", "bench-mcp", "t0")),
+        extract.normalize_session_row((2, "bench", "bench-mcp", "t1")),
+    ]
     session = extract.assert_one_new_session(before, after)
     assert session["created_at"] == "t1"
+    assert session["id"] == 2  # the snapshot delta surfaces the session id for the correlations pull
+
+
+def test_assert_one_new_session_survives_clientinfo_override() -> None:
+    # The MCP arm's session lands with client='claude-code' (the adapter prefers
+    # the MCP handshake clientInfo.name over the configured 'bench-mcp' tag). The
+    # namespace-scoped snapshot still identifies the new session because cells are
+    # serial and (client, created_at) stays unique on created_at.
+    before = [extract.normalize_session_row((1, "bench", "claude-code", "t0"))]
+    after = [
+        extract.normalize_session_row((1, "bench", "claude-code", "t0")),
+        extract.normalize_session_row((2, "bench", "claude-code", "t1")),
+    ]
+    session = extract.assert_one_new_session(before, after)
+    assert session["id"] == 2
+    assert session["client"] == "claude-code"  # not the arm tag — the join survives the override
 
 
 def test_assert_one_new_session_ambiguous_raises() -> None:
     before: list[dict] = []
-    after = [{"client": "bench-mcp", "created_at": "t1"}, {"client": "bench-mcp", "created_at": "t2"}]
+    after = [
+        extract.normalize_session_row((2, "bench", "bench-mcp", "t1")),
+        extract.normalize_session_row((3, "bench", "bench-mcp", "t2")),
+    ]
     with pytest.raises(extract.TranscriptError):
         extract.assert_one_new_session(before, after)
 

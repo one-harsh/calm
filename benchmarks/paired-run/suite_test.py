@@ -45,38 +45,53 @@ def test_prompts_are_verbatim() -> None:
         assert "use the calm_* tools" not in task.prompt.lower()
 
 
-def test_fixture_tasks_are_pending_pr2() -> None:
-    tasks = {t.id: t for t in suite.load_suite()}
-    assert tasks["t1"].fixture == suite.PENDING_FIXTURE
-    assert tasks["t2"].fixture == suite.PENDING_FIXTURE
-    assert tasks["t5"].fixture == suite.PENDING_FIXTURE
-    # T3/T4/T6 need no seeded fixture.
-    assert tasks["t3"].fixture == suite.NO_FIXTURE
-    assert tasks["t4"].fixture == suite.NO_FIXTURE
-    assert tasks["t6"].fixture == suite.NO_FIXTURE
+def test_fixture_is_uniformly_a_substrate_sha_or_pending() -> None:
+    # New model: every task's fixture is the substrate tip sha to check out (or
+    # the PENDING placeholder before wiring). There is no 'none'/fixtureless
+    # marker — fixture-less tasks share bench/base's tip once wired.
+    import re
+
+    for task in suite.load_suite():
+        assert task.fixture == suite.PENDING_FIXTURE or re.fullmatch(r"[0-9a-f]{7,40}", task.fixture), (
+            f"{task.id} fixture={task.fixture!r} is neither PENDING nor a sha"
+        )
 
 
 def test_pending_fixture_task_is_not_runnable(tmp_path: Path) -> None:
-    tasks = {t.id: t for t in suite.load_suite()}
-    runnable, reason = tasks["t1"].is_runnable(tmp_path)
+    # The runner refuses a still-unpinned fixture even when its checker exists —
+    # the PENDING placeholder is a hard gate independent of checker presence.
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    (checks / "tp.sh").write_text("exit 0\n", encoding="utf-8")
+    pending = suite.Task(
+        id="tp", quadrant="Q1", prompt="p", fixture=suite.PENDING_FIXTURE,
+        acceptance="checks/tp.sh", timeout_minutes=1, expected_cost_note="x",
+    )
+    runnable, reason = pending.is_runnable(tmp_path)
     assert not runnable
     assert suite.PENDING_FIXTURE in reason
 
 
-def test_missing_checker_blocks_even_fixtureless_task(tmp_path: Path) -> None:
-    tasks = {t.id: t for t in suite.load_suite()}
-    # t3 has fixture=none but its checker does not exist yet.
-    runnable, reason = tasks["t3"].is_runnable(tmp_path)
+def test_resolved_fixture_task_blocks_on_missing_checker(tmp_path: Path) -> None:
+    # A wired substrate sha is not enough: an absent checker still blocks.
+    task = suite.Task(
+        id="tx", quadrant="Q2", prompt="p", fixture="deadbeef",
+        acceptance="checks/tx.sh", timeout_minutes=1, expected_cost_note="x",
+    )
+    runnable, reason = task.is_runnable(tmp_path)
     assert not runnable
     assert "checker missing" in reason
 
 
-def test_fixtureless_task_runnable_once_checker_present(tmp_path: Path) -> None:
-    tasks = {t.id: t for t in suite.load_suite()}
+def test_resolved_fixture_task_runnable_once_checker_present(tmp_path: Path) -> None:
     checks = tmp_path / "checks"
     checks.mkdir()
-    (checks / "t3.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    runnable, reason = tasks["t3"].is_runnable(tmp_path)
+    (checks / "tx.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    task = suite.Task(
+        id="tx", quadrant="Q2", prompt="p", fixture="deadbeef",
+        acceptance="checks/tx.sh", timeout_minutes=1, expected_cost_note="x",
+    )
+    runnable, reason = task.is_runnable(tmp_path)
     assert runnable, reason
 
 

@@ -479,7 +479,55 @@ def _teaching_state(records: list[dict[str, Any]], calls: list[ToolCall]) -> Tea
     return state
 
 
-# --- CALM side: manage snapshot delta -------------------------------------
+# --- CALM side: session snapshot delta ------------------------------------
+#
+# The snapshot is sourced from a read-only DB query because the
+# /v1/manage/sessions endpoint is not implemented (returns 501). Rows are
+# normalized to the same {id, namespace, client, created_at} shape a manage-API
+# response would carry, so switching the source to the manage API is a contained
+# change: only the fetch function changes; the set-difference semantics are unchanged.
+#
+# The join discriminator is the dedicated benchmark NAMESPACE, not the client
+# tag: the MCP arm's sessions land with client='claude-code' because the adapter
+# prefers the MCP handshake's clientInfo.name over the configured client tag, and
+# every Claude Code instance self-identifies identically. Within the bench
+# namespace, cells run strictly serially, so the before/after set difference is
+# unambiguous regardless of client tag.
+
+SESSIONS_BY_NAMESPACE_SQL = (
+    "SELECT id, namespace, client, created_at FROM sessions WHERE namespace = %(namespace)s"
+)
+SESSIONS_BY_CLIENT_SQL = (
+    "SELECT id, namespace, client, created_at FROM sessions WHERE client = %(client)s"
+)
+
+
+def build_sessions_by_namespace(namespace: str) -> tuple[str, dict[str, Any]]:
+    return SESSIONS_BY_NAMESPACE_SQL, {"namespace": namespace}
+
+
+def build_sessions_by_client(client: str) -> tuple[str, dict[str, Any]]:
+    return SESSIONS_BY_CLIENT_SQL, {"client": client}
+
+
+def normalize_session_row(row: Any) -> dict[str, Any]:
+    """DB row (tuple or mapping) to the manage-API session shape. created_at is
+    stringified so the set-difference key is stable across two separate queries."""
+    if isinstance(row, dict):
+        sid, namespace, client, created_at = (
+            row.get("id"),
+            row.get("namespace"),
+            row.get("client"),
+            row.get("created_at"),
+        )
+    else:
+        sid, namespace, client, created_at = row
+    return {
+        "id": sid,
+        "namespace": str(namespace),
+        "client": str(client),
+        "created_at": str(created_at),
+    }
 
 
 def session_key(session: dict[str, Any]) -> tuple[str, str]:
@@ -496,9 +544,36 @@ def assert_one_new_session(before: list[dict[str, Any]], after: list[dict[str, A
     if len(fresh) != 1:
         raise TranscriptError(
             f"expected exactly one new session for this cell, found {len(fresh)} "
-            "(client+serial join is ambiguous — cell invalid)"
+            "(namespace+serial join is ambiguous — cell invalid)"
         )
     return fresh[0]
+
+
+def _fetch_sessions(dsn: str, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read-only session query. psycopg is imported lazily so the offline tests
+    run with no driver installed."""
+    import psycopg  # noqa: PLC0415 - deliberate lazy import (offline tests have no driver).
+
+    with psycopg.connect(dsn) as conn:
+        conn.read_only = True
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    return [normalize_session_row(r) for r in rows]
+
+
+def fetch_sessions_by_namespace(dsn: str, namespace: str) -> list[dict[str, Any]]:
+    """Read-only session snapshot for one namespace — the benchmark's join
+    discriminator (client tags are unreliable for the MCP arm)."""
+    sql, params = build_sessions_by_namespace(namespace)
+    return _fetch_sessions(dsn, sql, params)
+
+
+def fetch_sessions(dsn: str, client: str) -> list[dict[str, Any]]:
+    """Read-only session snapshot for one client (manage-API `?client=` parity;
+    retained for the switch-back path)."""
+    sql, params = build_sessions_by_client(client)
+    return _fetch_sessions(dsn, sql, params)
 
 
 # --- CALM side: correlations pull (read-only) ------------------------------
@@ -522,6 +597,16 @@ def correlation_id_to_bytea(uuid_text: str) -> bytes:
 
 def build_correlations_by_ids(correlation_ids: list[str]) -> tuple[str, dict[str, Any]]:
     return CORRELATIONS_BY_IDS_SQL, {"ids": [correlation_id_to_bytea(cid) for cid in correlation_ids]}
+
+
+def build_correlations_by_session(session_id: Any) -> tuple[str, dict[str, Any]]:
+    """Correlations for exactly one session — the snapshot delta gives us the
+    session id, so the fallback scopes by it rather than a client+time window."""
+    sql = (
+        "SELECT correlation_id, request_type, request_meta, outcome, created_at "
+        "FROM correlations WHERE session_id = %(session_id)s ORDER BY created_at"
+    )
+    return sql, {"session_id": session_id}
 
 
 def build_correlations_by_client_window(
@@ -609,6 +694,7 @@ def fetch_correlations(
     dsn: str,
     *,
     correlation_ids: list[str] | None = None,
+    session_id: Any = None,
     namespace: str | None = None,
     client: str | None = None,
     since_iso: str | None = None,
@@ -619,10 +705,12 @@ def fetch_correlations(
 
     if correlation_ids:
         sql, params = build_correlations_by_ids(correlation_ids)
+    elif session_id is not None:
+        sql, params = build_correlations_by_session(session_id)
     elif namespace and client and since_iso:
         sql, params = build_correlations_by_client_window(namespace, client, since_iso)
     else:
-        raise ValueError("fetch_correlations needs correlation_ids or (namespace, client, since_iso)")
+        raise ValueError("fetch_correlations needs correlation_ids, session_id, or (namespace, client, since_iso)")
 
     with psycopg.connect(dsn) as conn:
         conn.read_only = True

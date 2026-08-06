@@ -1,7 +1,7 @@
 {
   "primary_repo": "/Users/you/Codes/calm",
   "pinned_sha": "PENDING",
-  "benchmark_branch": "bench/main",
+  "benchmark_branch": "bench/base",
   "calm_base_url": "http://localhost:8080",
   "calm_api_key_ref": "[file:/Users/you/.calm/benchmark_api.key]",
   "calm_api_key_value": "RESOLVE-BEFORE-USE-never-commit-the-real-key",

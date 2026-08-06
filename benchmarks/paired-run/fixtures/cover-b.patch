@@ -1,0 +1,12 @@
+diff --git a/cmd/calm/main.go b/cmd/calm/main.go
+index 6f6cd97..ce337d3 100644
+--- a/cmd/calm/main.go
++++ b/cmd/calm/main.go
+@@ -38,6 +38,7 @@ func main() {
+ 	}
+ }
+ 
++// run loads configuration, wires dependencies, and serves until shutdown.
+ func run() error {
+ 	disableCoreDumps()
+ 

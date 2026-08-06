@@ -1,0 +1,13 @@
+diff --git a/README.md b/README.md
+index 6b4acfc..bd7c747 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,7 @@
+ 
+ **Keep bulky tool output out of live LLM context without losing access to it.**
+ 
+-CALM is a shared context-management service for LLM workloads.
++CALM is a shared context-management sidecar for LLM workloads.
+ 
+ When a tool returns a large build log, API response, file, or query result, a workload sends the raw output to CALM before calling the model. CALM stores and indexes the full content, then returns a compact representation for the model’s context. If the model later needs a detail, it can retrieve exact excerpts from the original output.
+ 

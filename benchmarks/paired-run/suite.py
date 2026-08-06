@@ -3,10 +3,12 @@
 
 """Task-suite loader and readiness gate for the paired-run benchmark.
 
-``suite.yaml`` is the source of truth for the six tasks. A task whose fixture
-is still ``PENDING`` has not been authored yet and the runner refuses to run
-it. A task is runnable only when its fixture is resolved (``none`` or a real
-sha) AND its acceptance checker exists on disk.
+``suite.yaml`` is the source of truth for the tasks. Each task's ``fixture`` is
+the substrate tip sha to check out — fixture-bearing (t1/t2/t5) and fixture-less
+(t3/t4/t6/t-smoke) tasks alike run against an orphan substrate branch, so the
+field is uniformly "the sha to check out". A ``PENDING`` fixture has not been
+wired yet and the runner refuses to run it. A task is runnable only when its
+fixture is a resolved sha AND its acceptance checker exists on disk.
 """
 
 from __future__ import annotations
@@ -17,7 +19,6 @@ from pathlib import Path
 import yaml
 
 PENDING_FIXTURE = "PENDING"
-NO_FIXTURE = "none"
 QUADRANTS = ("Q1", "Q2", "Q3", "Q4")
 
 HERE = Path(__file__).resolve().parent
@@ -41,10 +42,6 @@ class Task:
     @property
     def fixture_pending(self) -> bool:
         return self.fixture == PENDING_FIXTURE
-
-    @property
-    def has_fixture(self) -> bool:
-        return self.fixture not in (PENDING_FIXTURE, NO_FIXTURE)
 
     def checker_path(self, root: Path) -> Path:
         return (root / self.acceptance).resolve()

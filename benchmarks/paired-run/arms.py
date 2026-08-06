@@ -71,9 +71,13 @@ MCP_ALLOW = (
 )
 
 MCP_TEACHING_SYSTEM_PROMPT = (
-    "Prefer the calm_* tools over native command, file, grep, and git tools. "
-    "Use calm_search to retrieve earlier captured output instead of rerunning a "
-    "command when possible."
+    "Route every operation through the calm_* tools: calm_run_command for shell "
+    "commands, calm_git_status/calm_git_diff for git inspection, calm_read_file "
+    "for file reads, calm_grep for content searches, calm_list_dir for listings, "
+    "calm_edit_file/calm_write_file for file changes. Retrieve earlier tool "
+    "output with calm_search instead of re-running commands. Use native Bash, "
+    "Read, Grep, Edit, or Write only if a calm_* tool fails or reports CALM is "
+    "unreachable."
 )
 
 

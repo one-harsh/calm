@@ -19,7 +19,7 @@ from suite import Task, load_suite
 
 def _task() -> Task:
     return Task(
-        id="t1", quadrant="Q1", prompt="p", fixture="none",
+        id="t1", quadrant="Q1", prompt="p", fixture="deadbeef",
         acceptance="checks/t1.sh", timeout_minutes=1, expected_cost_note="x",
     )
 
@@ -69,9 +69,39 @@ def test_encode_project_dir() -> None:
     assert runner.encode_project_dir("/private/tmp/work") == "-private-tmp-work"
 
 
+def test_encode_project_dir_encodes_slash_and_dot() -> None:
+    # Empirical rule confirmed on the live gate: BOTH '/' and '.' collapse to
+    # '-', so a '/.' boundary yields a double dash.
+    cwd = "/Users/harsh/.calm/bench/work/clone-t-smoke-raw-r1"
+    assert runner.encode_project_dir(cwd) == "-Users-harsh--calm-bench-work-clone-t-smoke-raw-r1"
+
+
 def test_transcript_path_layout() -> None:
     path = runner.transcript_path(Path("/home/x"), "/w/clone", "sess-uuid")
     assert path == Path("/home/x/projects/-w-clone/sess-uuid.jsonl")
+
+
+def test_newest_transcript_finds_encoded_project_dir(tmp_path: Path) -> None:
+    cwd = "/w/.calm/clone-x"
+    proj = tmp_path / "projects" / runner.encode_project_dir(cwd)
+    proj.mkdir(parents=True)
+    (proj / "sess.jsonl").write_text("{}", encoding="utf-8")
+    assert runner.newest_transcript(tmp_path, cwd) == proj / "sess.jsonl"
+
+
+def test_newest_transcript_fallback_scans_all_project_dirs(tmp_path: Path) -> None:
+    # The transcript lives under a project dir whose encoding we did NOT predict;
+    # the per-cell config home means any *.jsonl in it is this cell's, so the
+    # last-resort scan still finds it (encoding drift is non-fatal).
+    other = tmp_path / "projects" / "-some-unexpected-encoding"
+    other.mkdir(parents=True)
+    found = other / "sess.jsonl"
+    found.write_text("{}", encoding="utf-8")
+    assert runner.newest_transcript(tmp_path, "/w/clone-that-encodes-elsewhere") == found
+
+
+def test_newest_transcript_none_when_no_projects(tmp_path: Path) -> None:
+    assert runner.newest_transcript(tmp_path, "/w/clone") is None
 
 
 def test_build_manifest_has_no_secrets() -> None:
@@ -319,3 +349,30 @@ def _config() -> "runner.RunnerConfig":
         output_dir="/out",
         work_root="/work",
     )
+
+
+def test_prepare_clone_checks_out_substrate_without_cherry_pick(tmp_path: Path, monkeypatch) -> None:
+    # New model: the substrate sha is checked out directly (no cherry-pick), and
+    # every other local branch is deleted so no pristine-code ref remains to diff.
+    calls: list[list[str]] = []
+
+    def fake_git(_clone_dir, args, _env):
+        calls.append(args)
+        out = "main\nharness\n" if args[:1] == ["for-each-ref"] else ""
+        return runner.subprocess.CompletedProcess(args=args, returncode=0, stdout=out, stderr="")
+
+    def fake_run(*_a, **_k):
+        return runner.subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(runner, "_git", fake_git)
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    config = dataclasses.replace(_config(), work_root=str(tmp_path))
+    runner.prepare_clone(config, "t1-mcp-r1", "substratesha", {})
+
+    assert ["checkout", "--quiet", "substratesha"] in calls
+    assert not any(a[:1] == ["cherry-pick"] for a in calls)
+    # Stray pristine branches are deleted; the cell branch is kept.
+    assert ["branch", "-D", "main"] in calls
+    assert ["branch", "-D", "harness"] in calls
+    assert ["branch", "-D", "bench/t1-mcp-r1"] not in calls
