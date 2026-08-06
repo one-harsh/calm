@@ -1,0 +1,13 @@
+diff --git a/internal/db/pg_textsearch.go b/internal/db/pg_textsearch.go
+index 8010e94..f522398 100644
+--- a/internal/db/pg_textsearch.go
++++ b/internal/db/pg_textsearch.go
+@@ -94,7 +94,7 @@ func (pgTextsearchExtension) classCandidatesSQL(class bm25Class) string {
+ 				SELECT to_tsvector('%[1]s', c.title || ' ' || c.content) AS vec
+ 				OFFSET 0
+ 			) doc
+-			WHERE s.session_id = $1
++			WHERE (s.session_id = $1 OR s.label = $2)
+ 			  AND EXISTS (SELECT 1 FROM sessions WHERE id = $1 AND namespace = $3)
+ 			  AND ($2 = '' OR s.label = $2)
+ 			  AND %[4]s

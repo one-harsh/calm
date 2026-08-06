@@ -294,9 +294,11 @@ def test_build_claude_argv_appends_teaching_for_mcp_only() -> None:
 
 def test_preflight_suite_blocks_until_fixtures_land(tmp_path: Path) -> None:
     blockers = runner.preflight_suite(load_suite(), tmp_path)
-    # All six blocked today: t1/t2/t5 on PENDING fixtures, t3/t4/t6 on absent checkers.
+    # Every task is blocked here: t1/t2/t5 on their PENDING fixtures, and every
+    # task because its checker resolves under the (empty) root passed in, where
+    # no checks/ tree exists. Both blocking reasons are exercised.
     ids = {b.split(":")[0] for b in blockers}
-    assert ids == {"t1", "t2", "t3", "t4", "t5", "t6"}
+    assert ids == {"t1", "t2", "t3", "t4", "t5", "t6", "t-smoke"}
 
 
 def _config() -> "runner.RunnerConfig":

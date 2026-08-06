@@ -1,0 +1,8 @@
+2 hits across 1 query:
+
+# "needle" — 2 hits
+[primary] run#1  (calm:v1:x)
+found the needle here
+[trigram] run#2  (calm:v1:y)
+another needle
+↳ feedback: calm-capture feedback corr-7

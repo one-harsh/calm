@@ -12,11 +12,19 @@ import pytest
 import suite
 
 
-def test_loads_six_tasks_with_quadrants() -> None:
+def test_loads_tasks_with_quadrants() -> None:
     tasks = suite.load_suite()
-    assert [t.id for t in tasks] == ["t1", "t2", "t3", "t4", "t5", "t6"]
+    assert [t.id for t in tasks] == ["t1", "t2", "t3", "t4", "t5", "t6", "t-smoke"]
     quadrants = {t.id: t.quadrant for t in tasks}
-    assert quadrants == {"t1": "Q1", "t2": "Q1", "t3": "Q2", "t4": "Q2", "t5": "Q3", "t6": "Q3"}
+    assert quadrants == {
+        "t1": "Q1",
+        "t2": "Q1",
+        "t3": "Q2",
+        "t4": "Q2",
+        "t5": "Q3",
+        "t6": "Q3",
+        "t-smoke": "Q4",
+    }
 
 
 def test_prompts_are_verbatim() -> None:
@@ -81,5 +89,6 @@ def test_malformed_suite_rejected(tmp_path: Path) -> None:
 
 def test_group_by_quadrant() -> None:
     grouped = suite.group_by_quadrant(suite.load_suite())
-    assert set(grouped) == {"Q1", "Q2", "Q3"}
+    assert set(grouped) == {"Q1", "Q2", "Q3", "Q4"}
     assert [t.id for t in grouped["Q1"]] == ["t1", "t2"]
+    assert [t.id for t in grouped["Q4"]] == ["t-smoke"]

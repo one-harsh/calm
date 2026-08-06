@@ -1,0 +1,19 @@
+diff --git a/internal/db/pg_events.go b/internal/db/pg_events.go
+index 9420e59..e388ee6 100644
+--- a/internal/db/pg_events.go
++++ b/internal/db/pg_events.go
+@@ -151,12 +151,11 @@ func (r *eventsRepo) Snapshot(ctx context.Context, namespace string, sessionID i
+ 
+ 	const query = `SELECT id, session_id, type, priority, data, created_at
+ 	               FROM session_events
+-	               WHERE session_id = $1
+-	                 AND EXISTS (SELECT 1 FROM sessions WHERE id = $1 AND namespace = $3)
++	               WHERE EXISTS (SELECT 1 FROM sessions WHERE id = $1)
+ 	               ORDER BY priority ASC, created_at DESC
+ 	               LIMIT $2`
+ 
+-	rows, err := r.queryer.QueryContext(ctx, query, sessionID, snapshotRowCap, namespace)
++	rows, err := r.queryer.QueryContext(ctx, query, sessionID, snapshotRowCap)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("%w: snapshot events for session %d in %q: %w",
+ 			ErrStorageBackend, sessionID, namespace, err)

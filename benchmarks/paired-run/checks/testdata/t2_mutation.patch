@@ -1,0 +1,13 @@
+diff --git a/internal/session/service.go b/internal/session/service.go
+index 95fec5d..654ac09 100644
+--- a/internal/session/service.go
++++ b/internal/session/service.go
+@@ -39,7 +39,7 @@ func New(store db.DAL, cfg Config, logger *logging.Logger) *Service {
+ }
+ 
+ func (s *Service) Create(ctx context.Context, sess *db.Session, idempotencyKey string) error {
+-	if sess.Namespace == "" {
++	if sess.Namespace != "" {
+ 		return db.ErrNamespaceRequired
+ 	}
+ 	if sess.TTLMinutes <= 0 {

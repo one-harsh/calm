@@ -72,7 +72,17 @@ tasks:
     clone_setup:
       fixture: none
     acceptance: checks/t6.sh
-    timeout_minutes: 90
+    timeout_minutes: 60
     expected_cost_note: "150-350k output tokens"
     prompt: |
-      The document-order reread path (`/v1/search` with `source` and no queries) has two paging limitations: a text-fallback chunk larger than the remaining response budget is emitted unbounded, and pages stop at a fixed chunk count rather than filling toward `budget_bytes`. Improve `internal/search`'s document-order path: bound text-fallback emission to the remaining budget — a truncated chunk must be a verbatim prefix carrying the existing truncation marker and a re-requestable offset — and fill each page greedily until the next chunk would exceed the remaining budget. The response shape in `docs/api/openapi.yaml` must not change; `budget_bytes` remains a server-clamped hint. Add unit tests for exact-fit, one-over, and oversized-single-chunk boundaries, plus an integration scenario paging a large capture end-to-end via continuation offsets, asserting no page exceeds the budget and that re-requesting a truncated chunk's offset with a larger budget returns it whole. `task ci` must pass.
+      The document-order reread path (`/v1/search` with `source` and no `queries`) fails its purpose on large captures, in two ways. First, stored chunk size is unbounded for single-element captures: a large capture that a format chunker maps to one span — a ~60 KB Markdown section with no sub-headings, or a JSON document dominated by one large value — is stored as a single chunk, and a one-chunk capture cannot be paged; the reader is forced to re-fetch the whole chunk under a larger `budget_bytes`, which is exactly what reread exists to avoid. Bound the stored chunk size: any chunk exceeding the bound is split on exact line boundaries into multiple document-order chunks, each a byte-exact substring, whose concatenation reproduces the original chunk's bytes. Second, `budget_bytes` does not govern page fill: a document-order request with a high `budget_bytes` and no `limit` still returns only the small default chunk count. When `budget_bytes` is set, fill the page with as many in-order chunks as fit; treat `limit` as an explicit cap, not a default that pre-empts the budget. The response schema must not change; if the `limit` parameter's documented semantics change, follow the spec-first workflow (`docs/api/openapi.yaml` → `task gen:api`). Add unit tests for the split (oversized input → N byte-exact chunks reassembling identically; boundary-length input stays one chunk) and for page fill (high budget without `limit` fills toward the budget; a small budget still yields a truncated verbatim prefix with a continuation offset), plus an integration scenario ingesting a large single-element capture and paging it to completion, asserting no page exceeds the budget and the concatenated pages equal the stored content. `task ci` must pass.
+
+  - id: t-smoke
+    quadrant: Q4
+    clone_setup:
+      fixture: none
+    acceptance: checks/t-smoke.sh
+    timeout_minutes: 10
+    expected_cost_note: "trivial — pipe liveness check, not a measured cell"
+    prompt: |
+      Create a file named SMOKE.md at the repository root containing exactly this sentence: CALM keeps tool output out of the context window. Then run `task build:capture` and confirm it succeeds.

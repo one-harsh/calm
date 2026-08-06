@@ -1,0 +1,13 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 0af9a71..57f3a17 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -108,8 +108,6 @@ The other two invariants that generate code-level discipline: **`never-worse`**
+ - `task test` runs unit then integration. Inner-loop dev: `task test:unit` for fast feedback; `go test ./<pkg>` and `go vet ./...` are fine. Anything whose result must match across machines (CI, builds, lint, format) goes through `task`.
+ - Never edit `go.mod` by hand for routine adds — `task tidy` is the entry.
+ - `task ci` is the gate: lint + test + build, all green.
+-- **Dogfood the adapter when it's registered.** If the `calm` MCP server is connected, use the dedicated tool for each operation: `calm_read_file` for file reads (not native `Read`, which dumps content into context with no indexing), `calm_grep` for content searches, `calm_list_dir` for listings, `calm_git_status`/`calm_git_diff` for git inspection, `calm_edit_file`/`calm_write_file` for file mutations, and `calm_run_command` for actual command execution (task targets, builds, anything without a dedicated tool). Retrieve prior output via `calm_search` instead of re-running: queries (optionally source-scoped) when you know what you're looking for; `source=<label>` with no queries to reread a capture in document order — the flow around a point, not a match — following the returned offset hint to continue. Don't chain unrelated operations with `&&` through `calm_run_command` — a combined capture collapses into one generically-labeled section and defeats per-identity labeling. Reserve native `Read` for hard preconditions (native `Edit` requires a prior `Read` in the same conversation; prefer `calm_edit_file`, which doesn't). Native tools are the fallback when CALM is unreachable (`never-worse`). The conversation's MCP tool surface is sticky to the adapter PID it bound to at session start — if that PID had a failed `initialize`, or dies mid-conversation, the host doesn't auto-rebind. Detect via the absence of `Captured N/M sections under "<label>"` on `calm_run_command` output, or `CALM not connected` from `calm_search`; when detected, ask the user to restart the conversation (`/resume` in Claude Code) so a new session binds to a fresh adapter.
+-- **Run `task closeout` at task / plan completion.** Rebuilds `bin/calm-adapter` and prints the host-reload command. The MCP host launches the adapter at connect time and never picks up new bytes until the user reloads the host's MCP config, so closeout is what makes a fresh adapter binary available to the next conversation.
+ 
+ ## HTTP server boundaries (canonical — do not drift)
+ 
