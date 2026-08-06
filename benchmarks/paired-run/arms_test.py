@@ -57,6 +57,8 @@ def test_adapter_env_uses_key_reference_not_value() -> None:
     assert env["CALM_ADAPTER_CALM_API_KEY"] == "[file:/home/u/.calm/key]"
     assert env["CALM_ADAPTER_CALM_KEEP_SESSION"] == "true"
     assert env["CALM_ADAPTER_CALM_CLIENT"] == "bench-mcp"
+    # A session that expires mid-sweep cascades its correlations away.
+    assert int(env["CALM_ADAPTER_CALM_SESSION_TTL_MINUTES"]) >= 1440
     # No raw secret material anywhere in the env values.
     assert all("secret" not in v.lower() for v in env.values())
 

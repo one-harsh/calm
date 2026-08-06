@@ -171,6 +171,7 @@ def adapter_env(
     log_file: str,
     calm_home: str | None = None,
     keep_session: bool = True,
+    session_ttl_minutes: int = 1440,
 ) -> dict[str, str]:
     """CALM_ADAPTER_* env for a cell. api_key_ref is a `[file:...]`/`[env:...]`
     reference — the raw key value never enters env, argv, or a trace artifact."""
@@ -180,6 +181,9 @@ def adapter_env(
         "CALM_ADAPTER_CALM_CLIENT": client,
         "CALM_ADAPTER_CALM_API_KEY": api_key_ref,
         "CALM_ADAPTER_CALM_KEEP_SESSION": "true" if keep_session else "false",
+        # Sessions must outlive the sweep: the TTL scanner's session delete
+        # FK-cascades the correlations rows extraction and audits read.
+        "CALM_ADAPTER_CALM_SESSION_TTL_MINUTES": str(session_ttl_minutes),
         "CALM_ADAPTER_LOG_FILE": log_file,
     }
     if calm_home:
