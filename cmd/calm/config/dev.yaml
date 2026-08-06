@@ -37,3 +37,5 @@ storage:
 namespaces:
   - name: default
     api_key: "[env:CALM_DEFAULT_KEY]"
+  - name: bench
+    api_key: "[env:CALM_BENCH_KEY]"
