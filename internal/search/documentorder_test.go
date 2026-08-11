@@ -83,6 +83,70 @@ func TestDocumentOrder_AllChunksFitOnePage(t *testing.T) {
 	}
 }
 
+func TestDocumentOrder_FillModeUsesBudgetNotDefaultLimit(t *testing.T) {
+	chunks := make([]db.DocChunk, 8)
+	for i := range chunks {
+		chunks[i] = docChunk("t", "small body", "cap.log")
+	}
+	minHit, err := wireSize(db.SearchHit{MatchLayer: matchLayerDocument})
+	if err != nil {
+		t.Fatalf("wireSize: %v", err)
+	}
+	wantFetch := bigBudget/minHit + 1
+	if wantFetch <= 5 {
+		t.Fatalf("test setup: fill-mode fetch %d not above the old default of 5", wantFetch)
+	}
+
+	sources := db.NewMockSourcesRepo(t)
+	sources.EXPECT().ChunksInOrder(mock.Anything, "ns-a",
+		mock.MatchedBy(func(in db.DocOrderInput) bool { return in.Limit == wantFetch })).
+		Return(chunks, false, nil).Once()
+	corr := db.NewMockCorrelationsRepo(t)
+	corr.EXPECT().Insert(
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+	).Return(nil).Maybe()
+	dal := db.NewMockDAL(t)
+	dal.EXPECT().Sources().Return(sources).Maybe()
+	dal.EXPECT().Correlations().Return(corr).Maybe()
+	svc := New(dal, logging.Nop())
+
+	got, err := svc.DocumentOrder(context.Background(), "ns-a", 1, mustCorrelationID(t), "cap.log", 0, 0, bigBudget)
+	if err != nil {
+		t.Fatalf("DocumentOrder: %v", err)
+	}
+	if len(got.Queries[0].Hits) != 8 {
+		t.Fatalf("hits = %d; want all 8 (budget fills the page, no default-5 cap)", len(got.Queries[0].Hits))
+	}
+	if got.NextOffset != nil {
+		t.Errorf("next_offset = %d; want absent (every chunk fit)", *got.NextOffset)
+	}
+}
+
+func TestDocumentOrder_FillModeSmallBudgetTruncatesWithContinuation(t *testing.T) {
+	big := docChunk("big", strings.Repeat("A", 600), "cap.log")
+	tail := docChunk("small", "tail", "cap.log")
+	budget := docHitSize(t, big) / 2
+	svc := docService(t, []db.DocChunk{big, tail}, false)
+
+	got, err := svc.DocumentOrder(context.Background(), "ns-a", 1, mustCorrelationID(t), "cap.log", 0, 0, budget)
+	if err != nil {
+		t.Fatalf("DocumentOrder: %v", err)
+	}
+	hits := got.Queries[0].Hits
+	if len(hits) != 1 || !hits[0].Truncated {
+		t.Fatalf("hits = %+v; want a single truncated head prefix", hits)
+	}
+	if !strings.HasPrefix(big.Content, hits[0].Snippet) || len(hits[0].Snippet) >= len(big.Content) {
+		t.Error("snippet is not a strict exact-text prefix (content-fidelity)")
+	}
+	if got.ByteBudgetUsed > budget {
+		t.Errorf("byte_budget_used %d overshot budget %d", got.ByteBudgetUsed, budget)
+	}
+	if got.NextOffset == nil || *got.NextOffset != 1 {
+		t.Errorf("next_offset = %v; want 1 (continuation past the truncated head)", got.NextOffset)
+	}
+}
+
 func TestDocumentOrder_LimitBindsBeforeBudget(t *testing.T) {
 	chunks := []db.DocChunk{
 		docChunk("a", "one", "cap.log"),

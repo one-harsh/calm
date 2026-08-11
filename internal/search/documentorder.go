@@ -25,10 +25,24 @@ func (s *Service) DocumentOrder(
 	source string,
 	limit, offset, budgetBytes int,
 ) (Result, error) {
+	// limit is an explicit cap; when absent (<= 0) budget_bytes alone fills the
+	// page. Fill mode still needs a fetch bound: every hit costs at least the
+	// empty-hit envelope, so budgetBytes/minHit+1 chunks can never all fit —
+	// fetching that many guarantees the budget binds before the fetch cap, and
+	// fewer rows returned means the source is exhausted.
+	fetchLimit := limit
+	if fetchLimit <= 0 {
+		minHit, err := wireSize(db.SearchHit{MatchLayer: matchLayerDocument})
+		if err != nil {
+			return Result{}, err
+		}
+		fetchLimit = budgetBytes/minHit + 1
+	}
+
 	chunks, hasMoreBeyondLimit, err := s.store.Sources().ChunksInOrder(ctx, namespace, db.DocOrderInput{
 		SessionID: sessionID,
 		Source:    source,
-		Limit:     limit,
+		Limit:     fetchLimit,
 		Offset:    offset,
 	})
 	if err != nil {

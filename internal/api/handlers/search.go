@@ -46,10 +46,6 @@ func (h *Handlers) Search(
 	if request.Body.Source != nil {
 		source = *request.Body.Source
 	}
-	limit := defaultSearchLimit
-	if request.Body.Limit != nil {
-		limit = *request.Body.Limit
-	}
 	budget := h.searchBudget(ctx, request.Body.BudgetBytes)
 
 	var result search.Result
@@ -65,8 +61,16 @@ func (h *Handlers) Search(
 		if request.Body.Offset != nil && *request.Body.Offset > 0 {
 			offset = *request.Body.Offset
 		}
+		limit := 0
+		if request.Body.Limit != nil {
+			limit = *request.Body.Limit
+		}
 		result, err = h.deps.Search.DocumentOrder(ctx, namespace, md.ID, correlationID, source, limit, offset, budget)
 	} else {
+		limit := defaultSearchLimit
+		if request.Body.Limit != nil {
+			limit = *request.Body.Limit
+		}
 		in := db.SearchInput{SessionID: md.ID, Source: source, Limit: limit}
 		variant := h.resolveAllocator(namespace, request.Params.XCALMAllocatorVariant)
 		result, err = h.deps.Search.Search(ctx, namespace, md.ID, correlationID, in, queries, budget, variant)

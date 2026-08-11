@@ -776,7 +776,14 @@ components:
           type: integer
           minimum: 1
           maximum: 50
-          default: 5
+          description: |
+            Explicit cap on the number of returned chunks — never a
+            page-filling default. In ranked mode, the maximum hits per query
+            (a small server default applies when omitted). In document-order
+            mode, the maximum chunks per page; when omitted, the page is
+            governed by `budget_bytes` alone — as many in-order chunks as fit
+            are returned rather than a fixed default count. When both `limit`
+            and `budget_bytes` apply, the page ends at whichever binds first.
         offset:
           type: integer
           minimum: 0

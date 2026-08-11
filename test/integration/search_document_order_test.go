@@ -6,6 +6,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -283,5 +284,198 @@ func TestSearchDocumentOrder_NegativeOffsetRejected400(t *testing.T) {
 	}
 	if resp.StatusCode() != http.StatusBadRequest {
 		t.Fatalf("status = %d; want 400 (offset minimum 0) body=%s", resp.StatusCode(), string(resp.Body))
+	}
+}
+
+// A large heading-free markdown section maps to a single span that the stored
+// bound splits into several chunks. With no limit and a mid-size budget, the
+// page count is driven by the budget, every page stays within it, and the pages
+// reassemble byte-identically to the stored content.
+func TestSearchDocumentOrder_LargeCaptureFillsToBudgetAndPages(t *testing.T) {
+	t.Parallel()
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+
+	var b strings.Builder
+	b.WriteString("# Large Capture\n\n")
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&b, "line %04d: the quick brown fox jumps over the lazy dog repeatedly\n", i)
+	}
+	mdFormat := genapi.Markdown
+	ir, err := client.IngestWithResponse(context.Background(),
+		&genapi.IngestParams{XCALMSessionToken: sess.SessionToken},
+		genapi.IngestJSONRequestBody{Source: "big.md", Content: b.String(), Format: &mdFormat})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if ir.StatusCode() != http.StatusOK {
+		t.Fatalf("ingest status = %d body=%s", ir.StatusCode(), string(ir.Body))
+	}
+
+	ground := storedChunks(t, sess.ID, "big.md")
+	if len(ground) < 3 {
+		t.Fatalf("stored %d chunks; want the bound to split the section into several", len(ground))
+	}
+	var truth strings.Builder
+	maxSize := 0
+	for _, c := range ground {
+		truth.WriteString(c.Content)
+		if s := wholeChunkSize(t, c); s > maxSize {
+			maxSize = s
+		}
+	}
+
+	// Several whole chunks per page (page fills toward the budget, not a fixed
+	// count), none large enough to truncate, well below the total so it paginates.
+	budget := 3 * maxSize
+	offset := 0
+	var got strings.Builder
+	for pages := 0; ; pages++ {
+		if pages > len(ground)+4 {
+			t.Fatalf("walk did not terminate within %d pages", pages)
+		}
+		resp, err := client.SearchWithResponse(context.Background(),
+			&genapi.SearchParams{XCALMSessionToken: sess.SessionToken},
+			genapi.SearchJSONRequestBody{Source: strPtr("big.md"), Offset: ptrInt(offset), BudgetBytes: ptrInt(budget)})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			t.Fatalf("search status = %d body=%s", resp.StatusCode(), string(resp.Body))
+		}
+		res := resp.JSON200
+		if res.ByteBudgetUsed > budget {
+			t.Errorf("page byte_budget_used %d exceeds budget %d", res.ByteBudgetUsed, budget)
+		}
+		for _, h := range res.Results[0].Hits {
+			if h.Truncated != nil && *h.Truncated {
+				t.Errorf("unexpected truncation: budget %d fits every whole chunk", budget)
+			}
+			got.WriteString(h.Snippet)
+		}
+		if res.NextOffset == nil {
+			break
+		}
+		offset = *res.NextOffset
+	}
+	if got.String() != truth.String() {
+		t.Error("paged fill-mode walk did not reassemble the stored content byte-identically")
+	}
+
+	// A high budget with no limit fills the whole capture in one page.
+	full, err := client.SearchWithResponse(context.Background(),
+		&genapi.SearchParams{XCALMSessionToken: sess.SessionToken},
+		genapi.SearchJSONRequestBody{Source: strPtr("big.md"), BudgetBytes: ptrInt(testSearchMaxBudgetBytes)})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if full.JSON200.NextOffset != nil {
+		t.Errorf("next_offset = %d; want absent — a high budget fills the whole capture in one page", *full.JSON200.NextOffset)
+	}
+	if len(full.JSON200.Results[0].Hits) != len(ground) {
+		t.Errorf("hits = %d; want all %d chunks on one budget-filled page", len(full.JSON200.Results[0].Hits), len(ground))
+	}
+}
+
+// A single newline-free oversized value (a minified-JSON member) is the reread
+// pathology this hardening kills: the stored bound rune-splits it into several
+// pageable chunks, and a no-limit walk pages it to completion, reassembling the
+// stored bytes exactly with no page over budget.
+func TestSearchDocumentOrder_NewlineFreeBlobPagesToCompletion(t *testing.T) {
+	t.Parallel()
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+
+	blob := strings.Repeat("a", 90000) // one minified value, no newlines
+	content := `{"blob": "` + blob + `"}`
+	jsonFormat := genapi.Json
+	ir, err := client.IngestWithResponse(context.Background(),
+		&genapi.IngestParams{XCALMSessionToken: sess.SessionToken},
+		genapi.IngestJSONRequestBody{Source: "blob.json", Content: content, Format: &jsonFormat})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if ir.StatusCode() != http.StatusOK {
+		t.Fatalf("ingest status = %d body=%s", ir.StatusCode(), string(ir.Body))
+	}
+
+	ground := storedChunks(t, sess.ID, "blob.json")
+	if len(ground) < 3 {
+		t.Fatalf("stored %d chunks; want the newline-free value rune-split into several", len(ground))
+	}
+	var truth strings.Builder
+	maxSize := 0
+	for _, c := range ground {
+		truth.WriteString(c.Content)
+		if s := wholeChunkSize(t, c); s > maxSize {
+			maxSize = s
+		}
+	}
+
+	budget := 3 * maxSize
+	offset := 0
+	var got strings.Builder
+	for pages := 0; ; pages++ {
+		if pages > len(ground)+4 {
+			t.Fatalf("walk did not terminate within %d pages", pages)
+		}
+		resp, err := client.SearchWithResponse(context.Background(),
+			&genapi.SearchParams{XCALMSessionToken: sess.SessionToken},
+			genapi.SearchJSONRequestBody{Source: strPtr("blob.json"), Offset: ptrInt(offset), BudgetBytes: ptrInt(budget)})
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if resp.StatusCode() != http.StatusOK {
+			t.Fatalf("search status = %d body=%s", resp.StatusCode(), string(resp.Body))
+		}
+		res := resp.JSON200
+		if res.ByteBudgetUsed > budget {
+			t.Errorf("page byte_budget_used %d exceeds budget %d", res.ByteBudgetUsed, budget)
+		}
+		for _, h := range res.Results[0].Hits {
+			got.WriteString(h.Snippet)
+		}
+		if res.NextOffset == nil {
+			break
+		}
+		offset = *res.NextOffset
+	}
+	if got.String() != truth.String() {
+		t.Error("paged walk did not reassemble the stored newline-free blob byte-identically")
+	}
+}
+
+// An explicit limit is a hard cap even when the budget could fit far more: with
+// a high budget the page still stops at the limit and next_offset advances, so
+// callers keep count control independent of the byte budget.
+func TestSearchDocumentOrder_ExplicitLimitCapsBelowBudget(t *testing.T) {
+	t.Parallel()
+	sess := createSessionForTest(t, testNamespace)
+	client := env.clientForNamespace(t, testNamespace)
+	ingestForSearch(t, client, sess.SessionToken, "cap.log", "alpha\n\nbeta\n\ngamma\n\ndelta")
+
+	ground := storedChunks(t, sess.ID, "cap.log")
+	if len(ground) < 3 {
+		t.Fatalf("stored %d chunks; want >= 3 so a limit of 2 caps below the total", len(ground))
+	}
+
+	resp, err := client.SearchWithResponse(context.Background(),
+		&genapi.SearchParams{XCALMSessionToken: sess.SessionToken},
+		genapi.SearchJSONRequestBody{Source: strPtr("cap.log"), Limit: ptrInt(2), BudgetBytes: ptrInt(testSearchMaxBudgetBytes)})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		t.Fatalf("status = %d body=%s", resp.StatusCode(), string(resp.Body))
+	}
+	res := resp.JSON200
+	if len(res.Results[0].Hits) != 2 {
+		t.Fatalf("hits = %d; want exactly 2 (explicit limit caps below the budget)", len(res.Results[0].Hits))
+	}
+	if res.BudgetExceeded {
+		t.Error("budget_exceeded = true; want false (the limit bound the page, not the budget)")
+	}
+	if res.NextOffset == nil || *res.NextOffset != 2 {
+		t.Errorf("next_offset = %v; want 2 (limit stopped the page with chunks remaining)", res.NextOffset)
 	}
 }
