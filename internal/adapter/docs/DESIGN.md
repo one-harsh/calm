@@ -184,6 +184,12 @@ Explicit workspace mutation. Mutation intent signaled in both name and descripti
 
 The adapter's canonical read surface makes host-native write tools that depend on host-native reads unusable; see AD04. The adapter's write surface keeps the read/write loop coherent and ensures every edit lands in CALM as a captured artifact and a `file_touched` event — closing the snapshot-reconstruction gap that host-native edits leave open.
 
+**Basis-verified mutation.** Every mutation names its basis. `calm_edit_file` requires the `basis` label — the caller's latest read/write/edit capture of the target file; `calm_write_file` requires it when the target exists. Creating an absent file needs no basis: absence is the assertion, and an unexpectedly-present file is a rejection, never an overwrite. Verification is local — the basis label's recorded content hash against the file's current bytes; no CALM round trip. A current basis applies the mutation and returns a bare confirmation plus the new capture's label — the basis for the next mutation, so a chain of edits pays one read at first touch and none after. A stale or unknown basis rejects, and the rejection re-captures the file and carries the fresh label with a compact state summary: the rejection is the re-read, and retry is possible from the response alone. There is no basis-free mutation tier — an unverified path permits blind overwrites of externally-changed files and forces view-restoration response shapes (echoing edited content back) whose only purpose is compensating for uncertainty the basis requirement removes.
+
+The response contract follows one principle: every response carries what the agent's next action needs — a read hands the edit basis, a successful mutation hands the next basis, a rejection hands the recovery basis. The contract is taught by descriptions and reinforced in-band by responses; the agent never learns it from a dead-end error.
+
+Degraded behavior: verification runs regardless of CALM reachability, and a verified mutation applies — an observability failure must not stop workload work (never-worse) — but no successor label can be minted; the response states that capture is degraded, and the standing degraded-mode fallback applies from there.
+
 ## Arbitrary Execution
 
 `calm_run_command` is the long-tail local execution surface — build/test runners, pipelines, ad-hoc debugging commands, anything the adapter has not learned to model.
