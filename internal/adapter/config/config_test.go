@@ -37,7 +37,7 @@ func TestLoad_DefaultsWhenNoFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Calm.URL != "http://localhost:8080" || cfg.Calm.Client != "calm-adapter" || cfg.Calm.SessionTTLMinutes != 120 {
+	if cfg.Calm.URL != "http://localhost:8080" || cfg.Calm.Client != "calm-adapter" || cfg.Calm.SessionTTLMinutes != 10_080 {
 		t.Errorf("defaults = %+v", cfg.Calm)
 	}
 	if cfg.Log.Level != "info" || cfg.Log.Format != "json" {

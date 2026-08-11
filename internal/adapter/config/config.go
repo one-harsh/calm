@@ -74,7 +74,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("calm.url", "http://localhost:8080")
 	v.SetDefault("calm.api_key", "")
 	v.SetDefault("calm.client", "calm-adapter")
-	v.SetDefault("calm.session_ttl_minutes", 120)
+	v.SetDefault("calm.session_ttl_minutes", 10_080)
 	v.SetDefault("calm.gc_sample_rate", 20)
 	v.SetDefault("calm.keep_session", false)
 	v.SetDefault("log.level", "info")
