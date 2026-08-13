@@ -12,19 +12,24 @@
 # never exists as any findable commit diff — it lives inside the whole-tree
 # import, and the history shape is identical across every task.
 #
-#   bench/base  = base tree + strip              (t3/t4/t7/t8/t-smoke run here)
-#   bench/t1    = base tree + strip + t1 fixture
-#   bench/t2    = base tree + strip + t2 fixture
-#   bench/t5    = base tree + strip + t5 fixture
+#   bench2/base = base tree + strip              (t3/t4/t7/t8/t-smoke run here)
+#   bench2/t1   = base tree + strip + t1 fixture
+#   bench2/t2   = base tree + strip + t2 fixture
+#   bench2/t5   = base tree + strip + t5 fixture
+#
+# Earlier sweeps' substrate branches (bench/*) are the recorded provenance of
+# their results files and are never rebuilt or deleted; each sweep gets a fresh
+# prefix.
 #
 # It refuses if any target branch already exists or the tracked tree is dirty,
 # and it aborts if the base commit is missing. Safe to re-run after deleting the
 # four branches.
 set -euo pipefail
 
-# The commit whose tree seeds every substrate (its code == the sweep pin's code;
-# it predates the in-repo benchmark harness, so cells carry only product code).
-BASE_SHA="a15896e"
+# The commit whose tree seeds every substrate (its code == the sweep pin's code).
+# The in-repo benchmark harness is stripped from the import below, so cells
+# carry only product code — never the suite, checkers, or oracle fixtures.
+BASE_SHA="aba4585"
 
 FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(git -C "$FIXTURES_DIR" rev-parse --show-toplevel)"
@@ -48,7 +53,7 @@ if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
   echo "refuse: base commit $BASE_SHA not found (git fetch / pull --ff-only?)" >&2
   exit 1
 fi
-for b in bench/base bench/t1 bench/t2 bench/t5; do
+for b in bench2/base bench2/t1 bench2/t2 bench2/t5; do
   if git show-ref --verify --quiet "refs/heads/$b"; then
     echo "refuse: branch $b already exists; delete it to re-run (git branch -D $b)" >&2
     exit 1
@@ -75,6 +80,9 @@ build_substrate() {
   git worktree add --quiet --detach "$wt" "$BASE_SHA"
   (
     cd "$wt"
+    # Cells carry only product code: the harness, checkers, and oracle fixtures
+    # must never exist in a substrate tree.
+    rm -rf benchmarks
     git apply "$TMP/claude-md-strip.patch"
     [ -n "$fixture" ] && git apply "$TMP/$fixture"
     git checkout --quiet --orphan "$branch"
@@ -86,29 +94,25 @@ build_substrate() {
   git worktree remove --force "$wt"
 }
 
-build_substrate bench/base
-build_substrate bench/t1 t1.patch
-build_substrate bench/t2 t2.patch
-build_substrate bench/t5 t5.patch
+build_substrate bench2/base
+build_substrate bench2/t1 t1.patch
+build_substrate bench2/t2 t2.patch
+build_substrate bench2/t5 t5.patch
 
-BASE_TIP="$(git rev-parse bench/base)"
-T1_TIP="$(git rev-parse bench/t1)"
-T2_TIP="$(git rev-parse bench/t2)"
-T5_TIP="$(git rev-parse bench/t5)"
+BASE_TIP="$(git rev-parse bench2/base)"
+T1_TIP="$(git rev-parse bench2/t1)"
+T2_TIP="$(git rev-parse bench2/t2)"
+T5_TIP="$(git rev-parse bench2/t5)"
 
 cat <<EOF
 
 Benchmark substrates created (local only — nothing was pushed).
 
-FIRST, delete the OLD generated branches from the previous design if present
-(script-generated, safe to remove):
-    git branch -D bench/main fixture/t1 fixture/t2 fixture/t5 2>/dev/null || true
-
 Substrate tips:
-    bench/base: $BASE_TIP
-    bench/t1:   $T1_TIP
-    bench/t2:   $T2_TIP
-    bench/t5:   $T5_TIP
+    bench2/base: $BASE_TIP
+    bench2/t1:   $T1_TIP
+    bench2/t2:   $T2_TIP
+    bench2/t5:   $T5_TIP
 
 Wire the tips in before the dry-run gate:
 
@@ -126,5 +130,5 @@ Wire the tips in before the dry-run gate:
 2) ~/.calm/paired-run.config.json — set:
      "pinned_sha": "$BASE_TIP"
 
-Undo everything: git branch -D bench/base bench/t1 bench/t2 bench/t5
+Undo everything: git branch -D bench2/base bench2/t1 bench2/t2 bench2/t5
 EOF
