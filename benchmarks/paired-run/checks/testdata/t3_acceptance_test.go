@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -28,27 +29,25 @@ import (
 // check fail — the oracle rejects the unfixed tree.
 
 // (a) replace_all=false on a single match keeps exact-once semantics: the file
-// is edited and the response echoes the post-edit content verbatim, with no
-// replacement count layered onto the presentation.
+// is edited and the mutation succeeds under the tool's standing response
+// contract (a confirmation carrying the successor basis; content not echoed).
 func TestReplaceAllOracle_SingleMatchFlagOff(t *testing.T) {
 	m := calm.NewMockClient(t)
 	inspectSession(t, m)
-	sourcesCapture(m, 2)
-	eventsDone, _ := eventCapture(m)
+	sourcesCapture(m, 3)
 
 	ws := t.TempDir()
 	writeWorkspaceFileMCP(t, ws, "f.txt", "alpha NEEDLE omega\n")
 	h := newWorkspaceHarness(t, m, ws)
 	initSession(t, h, "claude-code")
 
-	res := callTool(t, h, 2, "calm_edit_file", map[string]any{
-		"path": "f.txt", "old_string": "NEEDLE", "new_string": "MET", "replace_all": false,
+	basis := readBasis(t, h, 2, m, "f.txt")
+	eventsDone, _ := eventCapture(m)
+	res := callTool(t, h, 3, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "NEEDLE", "new_string": "MET", "replace_all": false,
 	})
 	if res.IsError {
 		t.Fatalf("flag-off single edit errored: %+v", res)
-	}
-	if got := resultText(t, res); got != "alpha MET omega\n" {
-		t.Errorf("flag-off visible = %q; want post-edit content verbatim (unchanged semantics)", got)
 	}
 	disk, _ := os.ReadFile(filepath.Join(ws, "f.txt"))
 	if string(disk) != "alpha MET omega\n" {
@@ -58,29 +57,26 @@ func TestReplaceAllOracle_SingleMatchFlagOff(t *testing.T) {
 }
 
 // (b) replace_all=true on a single match still replaces it and reports a count
-// of 1 in the response, while the post-edit content stays in the presentation.
+// of 1 in the response.
 func TestReplaceAllOracle_SingleMatchFlagOnReportsCountOne(t *testing.T) {
 	m := calm.NewMockClient(t)
 	inspectSession(t, m)
-	sourcesCapture(m, 2)
-	eventsDone, _ := eventCapture(m)
+	sourcesCapture(m, 3)
 
 	ws := t.TempDir()
 	writeWorkspaceFileMCP(t, ws, "f.txt", "alpha NEEDLE omega\n")
 	h := newWorkspaceHarness(t, m, ws)
 	initSession(t, h, "claude-code")
 
-	res := callTool(t, h, 2, "calm_edit_file", map[string]any{
-		"path": "f.txt", "old_string": "NEEDLE", "new_string": "MET", "replace_all": true,
+	basis := readBasis(t, h, 2, m, "f.txt")
+	eventsDone, _ := eventCapture(m)
+	res := callTool(t, h, 3, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "NEEDLE", "new_string": "MET", "replace_all": true,
 	})
 	if res.IsError {
 		t.Fatalf("flag-on single edit errored: %+v", res)
 	}
-	got := resultText(t, res)
-	if !strings.Contains(got, "alpha MET omega") {
-		t.Errorf("flag-on visible = %q; want the post-edit content present (presentation intact)", got)
-	}
-	if !strings.Contains(got, "1") {
+	if got := resultText(t, res); !regexp.MustCompile(`\b1\b`).MatchString(got) {
 		t.Errorf("flag-on visible = %q; want the replacement count (1) reported", got)
 	}
 	disk, _ := os.ReadFile(filepath.Join(ws, "f.txt"))
@@ -96,25 +92,22 @@ func TestReplaceAllOracle_SingleMatchFlagOnReportsCountOne(t *testing.T) {
 func TestReplaceAllOracle_MultiMatchReplacesAllWithCountAndCapture(t *testing.T) {
 	m := calm.NewMockClient(t)
 	inspectSession(t, m)
-	mu, sources := sourcesCapture(m, 2)
-	eventsDone, events := eventCapture(m)
+	mu, sources := sourcesCapture(m, 3)
 
 	ws := t.TempDir()
 	writeWorkspaceFileMCP(t, ws, "f.txt", "a NEEDLE b NEEDLE c NEEDLE d\n")
 	h := newWorkspaceHarness(t, m, ws)
 	initSession(t, h, "claude-code")
 
-	res := callTool(t, h, 2, "calm_edit_file", map[string]any{
-		"path": "f.txt", "old_string": "NEEDLE", "new_string": "MET", "replace_all": true,
+	basis := readBasis(t, h, 2, m, "f.txt")
+	eventsDone, events := eventCapture(m)
+	res := callTool(t, h, 3, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "NEEDLE", "new_string": "MET", "replace_all": true,
 	})
 	if res.IsError {
 		t.Fatalf("multi-match replace_all errored: %+v", res)
 	}
-	got := resultText(t, res)
-	if !strings.Contains(got, "a MET b MET c MET d") {
-		t.Errorf("visible = %q; want every occurrence replaced in the presentation", got)
-	}
-	if !strings.Contains(got, "3") {
+	if got := resultText(t, res); !regexp.MustCompile(`\b3\b`).MatchString(got) {
 		t.Errorf("visible = %q; want the replacement count (3) reported", got)
 	}
 	disk, _ := os.ReadFile(filepath.Join(ws, "f.txt"))
@@ -127,9 +120,9 @@ func TestReplaceAllOracle_MultiMatchReplacesAllWithCountAndCapture(t *testing.T)
 	awaitSignal(t, eventsDone)
 
 	mu.Lock()
-	want := []string{"calm:v1:file:edit:f.txt#1", "calm:v1:file:read:f.txt"}
-	if len(*sources) != 2 || (*sources)[0] != want[0] || (*sources)[1] != want[1] {
-		t.Errorf("ingest order = %v; want history-then-latest %v (capture/label contract)", *sources, want)
+	want := []string{"calm:v1:file:read:f.txt", "calm:v1:file:edit:f.txt#2", "calm:v1:file:read:f.txt"}
+	if len(*sources) != 3 || (*sources)[0] != want[0] || (*sources)[1] != want[1] || (*sources)[2] != want[2] {
+		t.Errorf("ingest order = %v; want basis read, then history-then-latest %v (capture/label contract)", *sources, want)
 	}
 	mu.Unlock()
 
@@ -149,11 +142,13 @@ func TestReplaceAllOracle_MultiMatchReplacesAllWithCountAndCapture(t *testing.T)
 
 // (d)+(e) Error paths stay as promised: without the flag, multiple matches fail
 // with a count-bearing error and the file is untouched; and a zero-match edit is
-// an error even with replace_all set — there is nothing to replace. A strict
-// mock (no ingest/event expectations) proves the failed edits capture nothing.
+// an error even with replace_all set — there is nothing to replace. Beyond the
+// opening basis read, no ingest/event expectations exist, proving the failed
+// edits capture nothing.
 func TestReplaceAllOracle_ErrorPathsUnchanged(t *testing.T) {
 	m := calm.NewMockClient(t)
 	inspectSession(t, m)
+	sourcesCapture(m, 1)
 
 	ws := t.TempDir()
 	const content = "a NEEDLE b NEEDLE c NEEDLE d\n"
@@ -161,15 +156,17 @@ func TestReplaceAllOracle_ErrorPathsUnchanged(t *testing.T) {
 	h := newWorkspaceHarness(t, m, ws)
 	initSession(t, h, "claude-code")
 
-	res := callTool(t, h, 2, "calm_edit_file", map[string]any{
-		"path": "f.txt", "old_string": "NEEDLE", "new_string": "MET", "replace_all": false,
+	basis := readBasis(t, h, 2, m, "f.txt")
+
+	res := callTool(t, h, 3, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "NEEDLE", "new_string": "MET", "replace_all": false,
 	})
 	if !res.IsError || !strings.Contains(resultText(t, res), "matches 3 times") {
 		t.Errorf("multi-match without flag = %+v; want count-bearing failure", res)
 	}
 
-	res = callTool(t, h, 3, "calm_edit_file", map[string]any{
-		"path": "f.txt", "old_string": "ABSENT", "new_string": "MET", "replace_all": true,
+	res = callTool(t, h, 4, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "ABSENT", "new_string": "MET", "replace_all": true,
 	})
 	if !res.IsError {
 		t.Errorf("zero-match with flag = %+v; want a failure", res)

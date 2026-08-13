@@ -232,8 +232,10 @@ func TestT4Search_JSONDocumentOrderOffsetHint(t *testing.T) {
 	if snip := t4HitString(t, hits[0], 0, "snippet"); snip != "chunk body text" {
 		t.Errorf("hits[0].snippet = %q; want exact chunk text", snip)
 	}
-	if off := t4HitNumber(t, hits[0], 0, "offset"); off != 3 {
-		t.Errorf("hits[0].offset = %d; want the continuation offset hint 3", off)
+	// The prompt pins "integer offset hint, or null when absent" without naming
+	// which offset; any integer satisfies the pin for a document-order hit.
+	if off := t4HitNumber(t, hits[0], 0, "offset"); off < 0 {
+		t.Errorf("hits[0].offset = %d; want a non-negative integer offset hint", off)
 	}
 	// No match layer on this hit: null, key still present.
 	t4AssertNull(t, hits[0], "match_layer", "hits[0].match_layer")

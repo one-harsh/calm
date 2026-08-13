@@ -22,7 +22,7 @@ tasks:
   - id: t1
     quadrant: Q1
     clone_setup:
-      fixture: PENDING
+      fixture: aeb2d5db546ab052ce634944048fc3b0b7cdad27
     acceptance: checks/t1.sh
     timeout_minutes: 60
     expected_cost_note: "150-400k output tokens"
@@ -32,7 +32,7 @@ tasks:
   - id: t2
     quadrant: Q1
     clone_setup:
-      fixture: PENDING
+      fixture: c514becf381cdaac4efad4b6e09b3274b74a450b
     acceptance: checks/t2.sh
     timeout_minutes: 60
     expected_cost_note: "150-350k output tokens"
@@ -42,7 +42,7 @@ tasks:
   - id: t3
     quadrant: Q2
     clone_setup:
-      fixture: PENDING
+      fixture: 70384a2ae2f61b7fd9ed8268b50851da55b079f3
     acceptance: checks/t3.sh
     timeout_minutes: 90
     expected_cost_note: "200-400k output tokens"
@@ -52,7 +52,7 @@ tasks:
   - id: t4
     quadrant: Q2
     clone_setup:
-      fixture: PENDING
+      fixture: 70384a2ae2f61b7fd9ed8268b50851da55b079f3
     acceptance: checks/t4.sh
     timeout_minutes: 60
     expected_cost_note: "150-350k output tokens"
@@ -77,7 +77,7 @@ tasks:
   - id: t5
     quadrant: Q3
     clone_setup:
-      fixture: PENDING
+      fixture: da02886487b4d70b7560ff5936412be6e4d3699c
     acceptance: checks/t5.sh
     timeout_minutes: 60
     expected_cost_note: "150-400k output tokens"
@@ -87,7 +87,7 @@ tasks:
   - id: t7
     quadrant: Q2
     clone_setup:
-      fixture: PENDING
+      fixture: 70384a2ae2f61b7fd9ed8268b50851da55b079f3
     acceptance: checks/t7.sh
     timeout_minutes: 90
     expected_cost_note: "150-400k output tokens"
@@ -97,7 +97,7 @@ tasks:
   - id: t8
     quadrant: Q3
     clone_setup:
-      fixture: PENDING
+      fixture: 70384a2ae2f61b7fd9ed8268b50851da55b079f3
     acceptance: checks/t8.sh
     timeout_minutes: 90
     expected_cost_note: "150-400k output tokens"
@@ -107,7 +107,7 @@ tasks:
   - id: t-smoke
     quadrant: Q4
     clone_setup:
-      fixture: PENDING
+      fixture: 70384a2ae2f61b7fd9ed8268b50851da55b079f3
     acceptance: checks/t-smoke.sh
     timeout_minutes: 10
     expected_cost_note: "trivial — pipe liveness check, not a measured cell"
