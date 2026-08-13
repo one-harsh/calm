@@ -14,7 +14,7 @@ import suite
 
 def test_loads_tasks_with_quadrants() -> None:
     tasks = suite.load_suite()
-    assert [t.id for t in tasks] == ["t1", "t2", "t3", "t4", "t5", "t6", "t-smoke"]
+    assert [t.id for t in tasks] == ["t1", "t2", "t3", "t4", "t5", "t7", "t8", "t-smoke"]
     quadrants = {t.id: t.quadrant for t in tasks}
     assert quadrants == {
         "t1": "Q1",
@@ -22,7 +22,8 @@ def test_loads_tasks_with_quadrants() -> None:
         "t3": "Q2",
         "t4": "Q2",
         "t5": "Q3",
-        "t6": "Q3",
+        "t7": "Q2",
+        "t8": "Q3",
         "t-smoke": "Q4",
     }
 
@@ -38,7 +39,8 @@ def test_prompts_are_verbatim() -> None:
     assert "replace_all" in tasks["t3"].prompt
     assert "--json" in tasks["t4"].prompt
     assert tasks["t5"].prompt.startswith("Operator bug report")
-    assert "document-order reread path" in tasks["t6"].prompt
+    assert "management API endpoints" in tasks["t7"].prompt
+    assert "extract pipeline" in tasks["t8"].prompt
     for task in tasks.values():
         # No arm-specific steering: prompts never instruct preferring calm_* tools.
         assert "Prefer the calm" not in task.prompt

@@ -1,9 +1,9 @@
 # Copyright 2026 The CALM Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Paired-run benchmark task suite. Six realistic multi-hour coding tasks stratified by
-# quadrant. Prompts are IDENTICAL for all three arms (raw / mcp / hook) and
-# never mention CALM or steer tool choice.
+# Paired-run benchmark task suite. Seven realistic multi-hour coding tasks stratified by
+# quadrant. Prompts are IDENTICAL for every arm and never mention CALM or steer
+# tool choice.
 #
 # clone_setup.fixture:
 #   PENDING      — the substrate tip sha has not been wired yet. The runner
@@ -11,7 +11,7 @@
 #   <40-hex sha> — the substrate tip to CHECK OUT: an orphan whole-tree import
 #                  (base + CLAUDE.md strip, plus the task's fixture where it has
 #                  one) with neutral cover commits on top. t1/t2/t5 point at
-#                  their own substrate; t3/t4/t6/t-smoke share bench/base's tip.
+#                  their own substrate; t3/t4/t7/t8/t-smoke share bench/base's tip.
 #                  Filled in from create-benchmark-branch.sh before the dry-run gate.
 #
 # acceptance is a checker path under checks/ (authored during fixture work).
@@ -57,7 +57,22 @@ tasks:
     timeout_minutes: 60
     expected_cost_note: "150-350k output tokens"
     prompt: |
-      Add a `--json` flag to `calm-capture search` (`internal/adapter/capturecli`): machine-readable results to stdout — one JSON object with `query`, `hits[]` (source label, snippet text, offset hint, match layer when present), and `degraded` (reason string or null). Human-readable output remains the default and byte-identical to today. Degraded calls must still exit nonzero with the JSON carrying the reason (the CLI's never-worse contract). Follow the CLI's existing flag/config patterns; unit tests for both modes including a degraded case. `task ci` must pass.
+      Add a `--json` flag to `calm-capture search` (`internal/adapter/capturecli`): machine-readable results to stdout. The output must be exactly one JSON object with exactly this shape and these field names:
+
+        {
+          "query": "<the query string as given>",
+          "hits": [
+            {
+              "source": "<source label>",
+              "snippet": "<exact snippet text>",
+              "offset": <integer offset hint, or null when absent>,
+              "match_layer": "<match layer string, or null when absent>"
+            }
+          ],
+          "degraded": "<reason string, or null when the call succeeded>"
+        }
+
+      Hits appear in result order; absent values are null, never omitted keys; no extra top-level keys. Human-readable output remains the default and byte-identical to today. Degraded calls must still exit nonzero with the JSON carrying the reason (the CLI's never-worse contract). Follow the CLI's existing flag/config patterns; unit tests for both modes including a degraded case. `task ci` must pass.
 
   - id: t5
     quadrant: Q3
@@ -69,15 +84,25 @@ tasks:
     prompt: |
       Operator bug report: a search in one session is returning snippets from content ingested by a different session in the same namespace. This violates the project's session-isolation contract. Find the leak, fix it following the codebase's canonical guard pattern, add a regression integration test proving two sessions in one namespace cannot see each other's content through this path, and note in `DIAGNOSIS.md` which existing test SHOULD have caught it and why it didn't. `task test:integration` must pass.
 
-  - id: t6
+  - id: t7
+    quadrant: Q2
+    clone_setup:
+      fixture: PENDING
+    acceptance: checks/t7.sh
+    timeout_minutes: 90
+    expected_cost_note: "150-400k output tokens"
+    prompt: |
+      The management API endpoints under `/v1/manage/*` are fully specified in `docs/api/openapi.yaml` but currently return 501. Implement all four operations (list sessions, delete sessions, list clients, delete client) against the committed spec — the spec is the contract; do not change it. Management is namespace-scoped: follow the repository's isolation discipline (cross-namespace requests see nothing; deletes cascade through the established teardown path), its DAL and transaction patterns, and its logging taxonomy. Add integration scenarios named after the promises they verify, covering at minimum: listing reflects created sessions, the client filter, cross-namespace invisibility, and post-delete content invisibility. `task test:integration` and `task ci` must pass.
+
+  - id: t8
     quadrant: Q3
     clone_setup:
       fixture: PENDING
-    acceptance: checks/t6.sh
-    timeout_minutes: 60
-    expected_cost_note: "150-350k output tokens"
+    acceptance: checks/t8.sh
+    timeout_minutes: 90
+    expected_cost_note: "150-400k output tokens"
     prompt: |
-      The document-order reread path (`/v1/search` with `source` and no `queries`) fails its purpose on large captures, in two ways. First, stored chunk size is unbounded for single-element captures: a large capture that a format chunker maps to one span — a ~60 KB Markdown section with no sub-headings, or a JSON document dominated by one large value — is stored as a single chunk, and a one-chunk capture cannot be paged; the reader is forced to re-fetch the whole chunk under a larger `budget_bytes`, which is exactly what reread exists to avoid. Bound the stored chunk size: any chunk exceeding the bound is split on exact line boundaries into multiple document-order chunks, each a byte-exact substring, whose concatenation reproduces the original chunk's bytes. Second, `budget_bytes` does not govern page fill: a document-order request with a high `budget_bytes` and no `limit` still returns only the small default chunk count. When `budget_bytes` is set, fill the page with as many in-order chunks as fit; treat `limit` as an explicit cap, not a default that pre-empts the budget. The response schema must not change; if the `limit` parameter's documented semantics change, follow the spec-first workflow (`docs/api/openapi.yaml` → `task gen:api`). Add unit tests for the split (oversized input → N byte-exact chunks reassembling identically; boundary-length input stays one chunk) and for page fill (high budget without `limit` fills toward the budget; a small budget still yields a truncated verbatim prefix with a continuation offset), plus an integration scenario ingesting a large single-element capture and paging it to completion, asserting no page exceeds the budget and the concatenated pages equal the stored content. `task ci` must pass.
+      Captured tool output is sectioned for retrieval, and the section header is the attribution surface a later search hit reports. Two capture families section poorly today: (1) a git diff captures as one section regardless of how many files and hunks it spans, so a hit deep in the diff is attributed to the whole capture and large diffs cannot be paged by file; (2) source-code captures section on boundaries unrelated to the code's structure, so hits get attributed to headers that do not name the code they show. Improve the sectioning in the adapter's extract pipeline (`internal/adapter/extract`): git-diff content sections per file per hunk with the hunk header naming the section; code content sections on declaration/paragraph boundaries where the format makes them visible, with the section header naming what the section actually contains. The labeling contract in `internal/adapter/docs/LABELING.md` governs identities — sectioning must not change capture identities, only section boundaries and titles within a capture. Unit tests over representative fixtures (multi-file multi-hunk diff; a Go source file) proving boundaries and titles. `task ci` must pass.
 
   - id: t-smoke
     quadrant: Q4

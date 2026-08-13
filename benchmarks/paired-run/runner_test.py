@@ -72,8 +72,8 @@ def test_encode_project_dir() -> None:
 def test_encode_project_dir_encodes_slash_and_dot() -> None:
     # Empirical rule confirmed on the live gate: BOTH '/' and '.' collapse to
     # '-', so a '/.' boundary yields a double dash.
-    cwd = "/Users/harsh/.calm/bench/work/clone-t-smoke-raw-r1"
-    assert runner.encode_project_dir(cwd) == "-Users-harsh--calm-bench-work-clone-t-smoke-raw-r1"
+    cwd = "/Users/dev/.calm/bench/work/clone-t-smoke-raw-r1"
+    assert runner.encode_project_dir(cwd) == "-Users-dev--calm-bench-work-clone-t-smoke-raw-r1"
 
 
 def test_transcript_path_layout() -> None:
@@ -328,7 +328,7 @@ def test_preflight_suite_blocks_until_fixtures_land(tmp_path: Path) -> None:
     # task because its checker resolves under the (empty) root passed in, where
     # no checks/ tree exists. Both blocking reasons are exercised.
     ids = {b.split(":")[0] for b in blockers}
-    assert ids == {"t1", "t2", "t3", "t4", "t5", "t6", "t-smoke"}
+    assert ids == {"t1", "t2", "t3", "t4", "t5", "t7", "t8", "t-smoke"}
 
 
 def _config() -> "runner.RunnerConfig":
