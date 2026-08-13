@@ -115,7 +115,7 @@ func TestSearch_SourceOnly_RoutesDocumentOrder(t *testing.T) {
 	m.EXPECT().CreateSession(mock.Anything, "claude-code", 60, mock.Anything).Return("tok-1", nil).Once()
 	m.EXPECT().DeleteSession(mock.Anything, "tok-1").Return(nil).Once()
 	m.EXPECT().Search(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.SearchInput) bool {
-		return len(in.Queries) == 0 && in.Source == src && in.Offset == 0 && in.BudgetBytes == 0
+		return len(in.Queries) == 0 && in.Source == src && in.Offset == 0 && in.BudgetBytes == calm.DocumentOrderBudgetDefault
 	})).Return(docOrderResults(
 		nil,
 		calm.Hit{Title: "big.txt#1", Snippet: "first chunk body", Source: src, MatchLayer: "document"},

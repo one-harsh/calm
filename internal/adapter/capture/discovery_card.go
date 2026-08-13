@@ -38,9 +38,8 @@ func recallAffordance(recall string) string {
 	fmt.Fprintf(&b, "   • find by query:        %s \"<terms>\"\n", recall)
 	fmt.Fprintf(&b, "   • scope to one capture:  %s source=<label> \"<terms>\"\n", recall)
 	fmt.Fprintf(&b, "   • reread in order:       %s source=<label>\n", recall)
-	b.WriteString("   <label> is the source= value on each capture's trailer line; pass it\n")
-	b.WriteString("   verbatim — it validates locally and reports staleness rather than empty.\n")
-	b.WriteString("   Captures store and search exact text, never a paraphrase.")
+	b.WriteString("   <label> is the source= value on a capture's trailer; pass it verbatim\n")
+	b.WriteString("   (it reports staleness rather than empty, and returns exact text).")
 	return b.String()
 }
 

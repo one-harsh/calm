@@ -25,7 +25,7 @@ func (d Deps) searchCmd(ctx context.Context, args []string) int {
 	source := fs.String("source", "", "source label to scope retrieval to")
 	offset := fs.Int("offset", 0, "document-order start offset")
 	limit := fs.Int("limit", 0, "max hits per query / chunks per page")
-	budget := fs.Int("budget-bytes", 0, "response byte budget")
+	budget := fs.Int("budget-bytes", 0, "response byte budget (document-order rereads default to a full page)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -84,6 +84,9 @@ func (d Deps) searchCmd(ctx context.Context, args []string) int {
 	in := calm.SearchInput{Queries: queries, Source: calmSource, Limit: *limit, BudgetBytes: *budget}
 	if documentOrder {
 		in.Offset = *offset
+		if *budget == 0 {
+			in.BudgetBytes = calm.DocumentOrderBudgetDefault
+		}
 	}
 	sctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()

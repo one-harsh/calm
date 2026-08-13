@@ -44,19 +44,19 @@ func awaitSignal(t *testing.T, done <-chan struct{}) {
 	}
 }
 
-// bigEcho returns an echo command whose raw payload exceeds the inline
-// threshold, forcing summary-mode presentation; payload is the exact raw
-// output the adapter sees.
+// bigEcho returns an echo command whose raw payload exceeds the
+// whole-consumption inline floor, forcing summary-mode presentation; payload is
+// the exact raw output the adapter sees.
 func bigEcho(prefix string) (cmd, payload string) {
-	arg := prefix + strings.Repeat("x", 600)
+	arg := prefix + strings.Repeat("x", 5000)
 	return "echo " + arg, arg + "\n"
 }
 
-// writeFixture writes a workspace file whose content exceeds the inline
-// threshold, so captures of it present in summary mode.
+// writeFixture writes a workspace file whose content exceeds the
+// whole-consumption inline floor, so captures of it present in summary mode.
 func writeFixture(t *testing.T, dir, name, marker string) {
 	t.Helper()
-	content := marker + strings.Repeat("y", 600) + "\n"
+	content := marker + strings.Repeat("y", 5000) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatalf("write fixture %s: %v", name, err)
 	}

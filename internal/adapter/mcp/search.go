@@ -26,14 +26,17 @@ const (
 	maxSearchLimit   = 50
 )
 
-const searchDescription = "Retrieve tool output already captured into CALM this session, verbatim. " +
+const searchDescription = "Retrieve output the calm_* tools captured this session, verbatim — the recall " +
+	"surface their capture trailers name (a capture minted elsewhere, e.g. the native-shell hook, is recalled " +
+	"through that surface, not here). " +
 	"Prefer this over re-running a command to see its output again. Two modes: with one or more `queries`, " +
 	"returns relevance-ranked snippets, optionally scoped to a single `source` label (the label " +
 	"calm_run_command returns) with `limit` hits per query. With a `source` and no `queries`, rereads that " +
 	"source's captured content in original document order, paginated — pass `offset` to continue from where a " +
-	"prior page ended (the output names the next offset). `budget_bytes` raises the response byte budget " +
-	"(server default 4 KB) — re-request a truncated chunk's offset with a larger budget to get it whole. " +
-	"Supply `queries`, `source`, or both."
+	"prior page ended (the output names the next offset). A document-order reread already fills each page " +
+	"toward a useful budget, so pass `budget_bytes` only to recover a single chunk larger than that page " +
+	"(re-request its offset with a larger budget to get it whole) or to fit more ranked hits; the server " +
+	"clamps it to the operator ceiling. Supply `queries`, `source`, or both."
 
 const searchSchema = `{
   "type": "object",
@@ -42,7 +45,7 @@ const searchSchema = `{
     "source": {"type": "string", "description": "Source label to scope to one identity (e.g. from calm_run_command). Required, with queries omitted, for document-order reread."},
     "limit": {"type": "integer", "description": "Optional maximum number of hits per query (ranked) or chunks per page (document-order)."},
     "offset": {"type": "integer", "minimum": 0, "description": "Document-order only: zero-based chunk index to start the page from, for continuation. Ignored when queries are present."},
-    "budget_bytes": {"type": "integer", "minimum": 1, "description": "Optional response byte budget — the server defaults it (4 KB) and clamps to the operator ceiling. Raise it to recover a truncated document-order chunk (re-request the same offset with a larger budget) or to fit more ranked hits."}
+    "budget_bytes": {"type": "integer", "minimum": 1, "description": "Optional response byte budget, clamped to the operator ceiling. A document-order reread already fills each page toward a useful budget; raise this only to recover a single document-order chunk larger than that page (re-request the same offset with a larger budget) or to fit more ranked hits."}
   },
   "additionalProperties": false
 }`
@@ -122,6 +125,9 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 	in := calm.SearchInput{Queries: a.Queries, Source: calmSource, Limit: a.Limit, BudgetBytes: a.BudgetBytes}
 	if documentOrder {
 		in.Offset = a.Offset
+		if a.BudgetBytes == 0 {
+			in.BudgetBytes = calm.DocumentOrderBudgetDefault
+		}
 	}
 
 	sctx, cancel := context.WithTimeout(ctx, searchTimeout)

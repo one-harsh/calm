@@ -77,9 +77,10 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 	engine := capture.NewEngine(d.Client, mgr, mgr, d.Logger, recallFor(hookBinPath(), sid), capture.WithDiscoveryCard())
 	raw := capture.CommandPayload(r)
 	out := engine.Capture(ctx, capture.Spec{
-		Ingest:  raw,
-		Visible: raw,
-		Res:     r,
+		Ingest:      raw,
+		Visible:     raw,
+		Res:         r,
+		Consumption: capture.ConsumptionWhole,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.DerivePlan(
 				extract.Invocation{Seq: seq, Command: command, Cwd: cwd, WorkspaceRoot: cwd},

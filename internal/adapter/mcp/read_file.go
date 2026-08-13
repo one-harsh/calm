@@ -90,10 +90,11 @@ func (s *Server) readFile(ctx context.Context, args json.RawMessage) (ToolResult
 
 	r := exec.Result{Stdout: full, Truncated: truncated}
 	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
-		Ingest:     full,
-		Visible:    visible,
-		Res:        r,
-		RangedView: a.StartLine > 0 || a.EndLine > 0,
+		Ingest:      full,
+		Visible:     visible,
+		Res:         r,
+		RangedView:  a.StartLine > 0 || a.EndLine > 0,
+		Consumption: capture.ConsumptionWhole,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.PlanFileRead(s.invocation(seq, b, "", b.Root), execResultOf(r), a.Path), nil
 		},

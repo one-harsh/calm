@@ -78,9 +78,10 @@ func (s *Server) listDir(ctx context.Context, args json.RawMessage) (ToolResult,
 
 	r := exec.Result{Stdout: listing}
 	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
-		Ingest:  listing,
-		Visible: listing,
-		Res:     r,
+		Ingest:      listing,
+		Visible:     listing,
+		Res:         r,
+		Consumption: capture.ConsumptionWhole,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.PlanListDir(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Path), nil
 		},

@@ -166,7 +166,7 @@ func newAdapterLoop(t *testing.T, workspace string) (*recordingClient, string, *
 	return rc, token, d
 }
 
-// parseSearchSource extracts the source label the compact rep advertises,
+// parseSearchSource extracts the source label the presentation advertises,
 // stripping the fused `@<token>` staleness suffix (per LABELING.md §2) so
 // callers that hit CALM directly — e.g., hitCount — see the CALM-facing base.
 // parseSearchSourceFused returns the raw suffix-bearing form for tests that
@@ -180,18 +180,25 @@ func parseSearchSource(t *testing.T, text string) string {
 	return fused
 }
 
+// parseSearchSourceFused reads the fused label from the capture-label line every
+// labeled presentation carries — `Captured … under "<fused>".` — so it holds
+// whether the output came back as a verbatim whole presentation (compact
+// address only) or a summary digest (address plus retrieval command). Only a
+// sub-floor inline capture omits a label, and every caller here pushes past the
+// floor on purpose.
 func parseSearchSourceFused(t *testing.T, text string) string {
 	t.Helper()
-	const key = "source="
-	idx := strings.Index(text, key)
+	const key = `under "`
+	idx := strings.LastIndex(text, key)
 	if idx < 0 {
-		t.Fatalf("compact rep has no source= handle:\n%s", text)
+		t.Fatalf("presentation carries no capture label:\n%s", text)
 	}
 	rest := text[idx+len(key):]
-	if cut := strings.IndexAny(rest, " \n"); cut >= 0 {
-		rest = rest[:cut]
+	if cut := strings.IndexByte(rest, '"'); cut >= 0 {
+		return rest[:cut]
 	}
-	return rest
+	t.Fatalf("capture label not terminated:\n%s", text)
+	return ""
 }
 
 func writeWorkspaceFile(t *testing.T, dir, name, content string) {
@@ -201,9 +208,10 @@ func writeWorkspaceFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-// inlinePad pushes a capture past the adapter's inline threshold so the
-// response presents in summary mode and advertises a recall label — for tests
-// whose subject is labeling, not presentation.
+// inlinePad pushes a capture past the label-less inline floor so the
+// presentation advertises a recall label — for tests whose subject is labeling,
+// not presentation. At this size a whole-consumption capture comes back verbatim
+// with a compact address; the mutation surfaces still digest.
 var inlinePad = strings.Repeat("pad ", 160)
 
 // eventData reads back the first persisted event of eventType through CALM,

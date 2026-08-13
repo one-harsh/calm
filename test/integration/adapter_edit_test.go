@@ -55,8 +55,8 @@ func TestAdapterEdit_ThreeEditLoopWithHistory(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("read after edits errored: %+v", res)
 	}
-	// Above the inline threshold the read returns a summary; verify content
-	// via CALM search on the latest label instead.
+	// The read advertises its recall label; verify the final content via a CALM
+	// search on that label rather than parsing it out of the presentation.
 	latest := parseSearchSource(t, res.Content[0].Text)
 	if latest != "calm:v1:file:read:foo.go" {
 		t.Fatalf("latest label = %q", latest)

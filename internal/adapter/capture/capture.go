@@ -88,16 +88,32 @@ type DeliveryStrategy interface {
 	Deliver(ctx context.Context, token string, unit CaptureUnit) Delivery
 }
 
+// Consumption tells the presenter how a reader consumes this output, which
+// selects the verbatim-inline floor for a successful result. A failing result
+// is whole-consumption regardless of this hint — the reader needs the failure
+// evidence — so the failure path overrides it.
+type Consumption int
+
+const (
+	// ConsumptionSparse is read for a slice (large file reads, and the
+	// mutation echoes that stay on the smaller floor); the zero value.
+	ConsumptionSparse Consumption = iota
+	// ConsumptionWhole is read start to end (listings, grep results, status,
+	// short command output), so its verbatim floor is raised.
+	ConsumptionWhole
+)
+
 // Spec carries one executed local action into the shared CALM capture pipeline.
 // Ingest and Visible differ only for a ranged calm_read_file slice
 // (capture-full-present-range per DESIGN.md §3); every other tool passes the
 // same payload for both.
 type Spec struct {
-	Ingest     string
-	Visible    string
-	Res        exec.Result
-	RangedView bool
-	Plan       func(seq int64) (extract.Plan, error)
+	Ingest      string
+	Visible     string
+	Res         exec.Result
+	RangedView  bool
+	Consumption Consumption
+	Plan        func(seq int64) (extract.Plan, error)
 }
 
 type Engine struct {

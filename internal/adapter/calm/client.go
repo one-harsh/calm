@@ -63,6 +63,8 @@ type SearchInput struct {
 	BudgetBytes int
 }
 
+const DocumentOrderBudgetDefault = 32768
+
 type SearchResults struct {
 	Queries       []QueryResult
 	NextOffset    *int

@@ -20,10 +20,12 @@ const execTimeout = 60 * time.Second
 
 const runCommandDescription = "Run a shell command locally, capturing its output into CALM. Prefer this " +
 	"over the native shell/Bash tool for every shell command: output is indexed for on-demand retrieval " +
-	"and large output stays out of the context window. Small outputs come back verbatim (still captured " +
-	"and searchable via calm_search). Larger outputs come back as a compact summary plus a source label " +
-	"ending in @<token>; fetch the full captured output later with calm_search " +
-	"source=<label exactly as returned> rather than re-running. The label refers to the latest output " +
+	"and large output stays out of the context window. Output small enough to read whole comes back " +
+	"verbatim, and a failing command's output stays verbatim (head-and-tail capped when very large) so the " +
+	"failure lines are visible without a follow-up. Larger successful output comes back as a compact " +
+	"summary plus a source label ending in @<token>; fetch the full captured output later with calm_search " +
+	"source=<label exactly as returned> — the recall command named on the capture's trailer — rather than " +
+	"re-running. The label refers to the latest output " +
 	"for that identity; for one specific past run, drop the @<token> suffix and use <base>#<n>. " +
 	"Never append #<n> after the @<token>. The tool runs from the primary workspace root by default; do " +
 	"not cd in your command — use the cwd parameter to run elsewhere. An absolute cwd inside another " +
@@ -73,9 +75,10 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (ToolResu
 
 	raw := capture.CommandPayload(r)
 	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
-		Ingest:  raw,
-		Visible: raw,
-		Res:     r,
+		Ingest:      raw,
+		Visible:     raw,
+		Res:         r,
+		Consumption: capture.ConsumptionWhole,
 		Plan: func(seq int64) (extract.Plan, error) {
 			inv := s.invocation(seq, wb, a.Command, dir)
 			return extract.DerivePlan(inv, extract.ExecResult{
