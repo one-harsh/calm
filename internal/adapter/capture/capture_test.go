@@ -74,7 +74,7 @@ func planFor(command, raw string) func(int64) (extract.Plan, error) {
 // validate later.
 func TestCapture_Happy_DualWriteDeliversAndRecords(t *testing.T) {
 	m := calm.NewMockClient(t)
-	raw := strings.Repeat("x", inlineMaxBytes+1) // force summary mode so the recall label appears
+	raw := strings.Repeat("x", wholeInlineMaxBytes+1) // force summary mode so the recall line appears
 	m.EXPECT().Ingest(mock.Anything, "tok-1", mock.MatchedBy(func(in calm.IngestInput) bool {
 		return in.Source == "calm:v1:vcs:git:status#1"
 	})).Return(calm.IngestSummary{Source: "calm:v1:vcs:git:status#1", SectionsIndexed: 1, SectionsTotal: 1}, nil).Once()

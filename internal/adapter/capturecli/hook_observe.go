@@ -54,10 +54,9 @@ func (c hookConfig) handleObserve(ctx context.Context, ev harness.ObserveEvent, 
 
 	engine := capture.NewEngine(c.deps.Client, mgr, mgr, c.deps.Logger, recallFor(c.binPath, ev.SessionID), capture.WithDiscoveryCard())
 	out := engine.Capture(ctx, capture.Spec{
-		Ingest:      raw,
-		Visible:     raw,
-		Res:         r,
-		Consumption: capture.ConsumptionWhole,
+		Ingest:  raw,
+		Visible: raw,
+		Res:     r,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.DerivePlan(
 				extract.Invocation{Seq: seq, Command: ev.Command, Cwd: ev.Cwd, WorkspaceRoot: ev.Cwd},

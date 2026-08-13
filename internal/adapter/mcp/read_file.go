@@ -25,7 +25,9 @@ const readFileDescription = "Read a file from the workspace, capturing its conte
 	"calm_search source=<label exactly as returned> rather than re-reading. Optional start_line/end_line " +
 	"limit only what is shown — a scoped range comes back verbatim (capped past a size ceiling), while the " +
 	"capture is always the full file. The label refers to the latest read " +
-	"of this file. Never append #<n> after the @<token>. In multi-workspace sessions, set " +
+	"of this file, and it is the `basis` that calm_edit_file / calm_write_file require to mutate this path — " +
+	"read once, then chain each mutation's returned label into the next. " +
+	"Never append #<n> after the @<token>. In multi-workspace sessions, set " +
 	"workspace=<id> to target a non-default workspace."
 
 const readFileSchema = `{
@@ -77,7 +79,8 @@ func (s *Server) readFile(ctx context.Context, args json.RawMessage) (ToolResult
 		return ToolResult{}, werr
 	}
 
-	full, truncated, rerr := readCapped(b.resolve(a.Path))
+	abs := b.resolve(a.Path)
+	full, truncated, rerr := readCapped(abs)
 	if rerr != nil {
 		return TextResult("read failed: "+rerr.Error(), true), nil
 	}
@@ -89,16 +92,21 @@ func (s *Server) readFile(ctx context.Context, args json.RawMessage) (ToolResult
 	}
 
 	r := exec.Result{Stdout: full, Truncated: truncated}
-	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
-		Ingest:      full,
-		Visible:     visible,
-		Res:         r,
-		RangedView:  a.StartLine > 0 || a.EndLine > 0,
-		Consumption: capture.ConsumptionWhole,
+	out := s.engine.Capture(ctx, capture.Spec{
+		Ingest:     full,
+		Visible:    visible,
+		Res:        r,
+		RangedView: a.StartLine > 0 || a.EndLine > 0,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.PlanFileRead(s.invocation(seq, b, "", b.Root), execResultOf(r), a.Path), nil
 		},
-	}))
+	})
+	// A truncated read captured less than the file holds, so its label cannot
+	// assert knowledge of the current bytes and must never become a basis.
+	if !truncated {
+		s.basis.Record(out.Label, abs, full)
+	}
+	return s.outcomeToResult(out)
 }
 
 // readCapped reads at most exec.MaxOutputBytes — the shared cap keeps native

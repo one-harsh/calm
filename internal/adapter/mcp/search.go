@@ -147,6 +147,12 @@ func (s *Server) search(ctx context.Context, args json.RawMessage) (ToolResult, 
 	if res.CorrelationID != "" {
 		logging.BindSummary(ctx, obs.CorrelationID(res.CorrelationID))
 	}
+	// Only a document-order reread that returned content counts as the read-back
+	// a rejection-minted basis requires: a ranked query sees snippets — possibly
+	// none — and must not unlock a full overwrite.
+	if documentOrder && len(res.Queries) > 0 && len(res.Queries[0].Hits) > 0 {
+		s.basis.MarkRead(a.Source)
+	}
 
 	// Empty pages are healthy retrieval results, not degradation.
 	var out string

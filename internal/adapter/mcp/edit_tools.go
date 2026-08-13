@@ -11,9 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	logging "github.com/one-harsh/context-logging"
+
 	"github.com/one-harsh/calm/internal/adapter/capture"
 	"github.com/one-harsh/calm/internal/adapter/exec"
 	"github.com/one-harsh/calm/internal/adapter/extract"
+	"github.com/one-harsh/calm/internal/adapter/obs"
 )
 
 const (
@@ -23,34 +26,50 @@ const (
 
 const editFileDescription = "Edit a workspace file by replacing exactly one occurrence of old_string " +
 	"with new_string — this mutates the file on disk. Prefer this over host-native edit tools: the " +
-	"post-edit content is captured and indexed, keeping this file's read label current. old_string must " +
-	"match the file bytes exactly once, including whitespace and line endings; zero or multiple matches " +
-	"fail without touching the file. Small post-edit files come back verbatim (doubling as verification " +
-	"of the applied change). Larger files come back as a compact summary plus a source label ending in " +
-	"@<token>; fetch the content with calm_search source=<label exactly as returned>. The label refers " +
-	"to the latest content of this file (the same label calm_read_file emits); for the file state after " +
-	"one specific past edit, use calm:v1:file:edit:<path>#<n> without any @<token>. Never append #<n> " +
-	"after the @<token>. In multi-workspace sessions, set workspace=<id> to target a non-default workspace."
+	"post-edit content is captured and indexed, keeping this file's read label current. " +
+	"Requires basis: the source label ending in @<token> that your latest calm_read_file, calm_edit_file, " +
+	"or calm_write_file of this same path returned. The basis asserts you know the file's current bytes " +
+	"and is checked against the file on disk before anything is written, so a file changed behind your " +
+	"back is never silently overwritten. old_string must match the file bytes exactly once, including " +
+	"whitespace and line endings; zero or multiple matches fail without touching the file. " +
+	"On success the response is a short confirmation plus basis=<new label> — the edited content is not " +
+	"echoed; pass that label as the basis of your next edit or write of this file, and read the new " +
+	"content with calm_search source=<that label> if you need to see it. If the basis is missing, unknown, " +
+	"or no longer matches the file, nothing is written: the response recaptures the file and hands you its " +
+	"fresh label plus a size summary, so you can retry from the response alone without re-reading. " +
+	"For the file state after one specific past edit, use calm:v1:file:edit:<path>#<n> without any " +
+	"@<token>. Never append #<n> after the @<token>. In multi-workspace sessions, set workspace=<id> to " +
+	"target a non-default workspace."
 
 const writeFileDescription = "Write full content to a workspace file, creating it or replacing its " +
 	"entire contents — this mutates the file on disk. Prefer this over host-native write tools: the new " +
 	"content is captured and indexed, keeping this file's read label current. For partial changes to an " +
-	"existing file prefer calm_edit_file. Small files come back verbatim (doubling as verification). " +
-	"Larger files come back as a compact summary plus a source label ending in @<token>; fetch the " +
-	"content with calm_search source=<label exactly as returned>. The label refers to the latest content " +
-	"of this file (the same label calm_read_file emits); for the file state after one specific past " +
-	"write, use calm:v1:file:edit:<path>#<n> without any @<token>. Never append #<n> after the @<token>. " +
-	"In multi-workspace sessions, set workspace=<id> to target a non-default workspace."
+	"existing file prefer calm_edit_file. " +
+	"Creating a file that does not exist needs no basis — the absence is the assertion. Replacing a file " +
+	"that does exist requires basis: the source label ending in @<token> that your latest calm_read_file, " +
+	"calm_edit_file, or calm_write_file of this same path returned. An existing file is never overwritten " +
+	"without a current basis, so a path you expected to be free is a rejection rather than data loss. " +
+	"On success the response is a short confirmation plus basis=<new label> — the content is not echoed " +
+	"back; pass that label as the basis of your next edit or write of this file, and read it with " +
+	"calm_search source=<that label> if you need to see it. If the file exists and the basis is missing, " +
+	"unknown, or no longer matches it, nothing is written: the response recaptures the file and hands you " +
+	"its fresh label plus a size summary. A rejection's label must be read before it authorizes an " +
+	"overwrite — retrieve it with calm_search source=<that label>, then retry with the same basis; a full " +
+	"rewrite of content you have not seen is refused. " +
+	"For the file state after one specific past write, use calm:v1:file:edit:<path>#<n> without any " +
+	"@<token>. Never append #<n> after the @<token>. In multi-workspace sessions, set workspace=<id> to " +
+	"target a non-default workspace."
 
 const editFileSchema = `{
   "type": "object",
   "properties": {
     "path": {"type": "string", "description": "File path, workspace-relative."},
+    "basis": {"type": "string", "description": "Source label ending in @<token> from your latest read, edit, or write capture of this path; asserts you know the file's current bytes."},
     "old_string": {"type": "string", "description": "Exact bytes to replace; must match the file exactly once, including whitespace and line endings."},
     "new_string": {"type": "string", "description": "Replacement bytes; may be empty to delete the matched text."},
     "workspace": {"type": "string", "description": "Workspace ID to target; defaults to the primary workspace."}
   },
-  "required": ["path", "old_string", "new_string"],
+  "required": ["path", "basis", "old_string", "new_string"],
   "additionalProperties": false
 }`
 
@@ -59,6 +78,7 @@ const writeFileSchema = `{
   "properties": {
     "path": {"type": "string", "description": "File path, workspace-relative; created if absent."},
     "content": {"type": "string", "description": "Full file content, written verbatim."},
+    "basis": {"type": "string", "description": "Source label ending in @<token> from your latest read, edit, or write capture of this path. Required when the file already exists; omit when creating a new file."},
     "workspace": {"type": "string", "description": "Workspace ID to target; defaults to the primary workspace."}
   },
   "required": ["path", "content"],
@@ -67,6 +87,7 @@ const writeFileSchema = `{
 
 type editFileArgs struct {
 	Path      string `json:"path"`
+	Basis     string `json:"basis"`
 	OldString string `json:"old_string"`
 	NewString string `json:"new_string"`
 	Workspace string `json:"workspace"`
@@ -75,6 +96,7 @@ type editFileArgs struct {
 type writeFileArgs struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
+	Basis     string `json:"basis"`
 	Workspace string `json:"workspace"`
 }
 
@@ -110,6 +132,8 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 	if a.OldString == a.NewString {
 		return ToolResult{}, &ArgError{Detail: "old_string and new_string are identical — nothing to change"}
 	}
+	s.mutations.Lock()
+	defer s.mutations.Unlock()
 
 	wb, werr := s.workspaceForPath(a.Workspace, a.Path)
 	if werr != nil {
@@ -129,6 +153,10 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 		return TextResult("edit failed: "+rerr.Error(), true), nil
 	}
 
+	if v := s.verifyBasis(a.Basis, abs, old, "no basis was supplied"); !v.ok {
+		return s.rejectMutation(ctx, "edit", wb, a.Path, abs, old, v)
+	}
+
 	n := strings.Count(old, a.OldString)
 	if n != 1 {
 		return TextResult(fmt.Sprintf(
@@ -145,14 +173,14 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 	}
 
 	r := exec.Result{Stdout: newContent}
-	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
+	return s.confirmMutation(ctx, "edited", a.Path, abs, newContent, capture.Spec{
 		Ingest:  newContent,
 		Visible: newContent,
 		Res:     r,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.PlanFileEdit(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Path, old, newContent), nil
 		},
-	}))
+	})
 }
 
 func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResult, error) {
@@ -167,18 +195,36 @@ func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResul
 		return TextResult(oversizeMsg("write"), true), nil
 	}
 
+	s.mutations.Lock()
+	defer s.mutations.Unlock()
+
 	wb, werr := s.workspaceForPath(a.Workspace, a.Path)
 	if werr != nil {
 		return ToolResult{}, werr
 	}
 	abs := wb.resolve(a.Path)
 	op := extract.OperationWrite
+	verb := "wrote"
 	perm := os.FileMode(0o600)
 	old := ""
 	fi, serr := os.Stat(abs)
 	switch {
 	case os.IsNotExist(serr):
+		// A basis names a file the caller believes exists; recreating over an
+		// out-of-band deletion would silently undo it. The rejection carries no
+		// recapture — there is nothing to capture — but names the retry.
+		if strings.TrimSpace(a.Basis) != "" {
+			logging.BindSummary(ctx, obs.PresentationModeFieldSummary)
+			s.log.WithContext(ctx).Debug("mutation basis rejected",
+				logging.StringField(keyBasisState, basisStateDeleted))
+			return TextResult(fmt.Sprintf(
+				"write rejected: the file was deleted since basis %s. %s does not exist. "+
+					"To create it fresh, retry without basis.",
+				a.Basis, a.Path,
+			), true), nil
+		}
 		op = extract.OperationCreate
+		verb = "created"
 	case serr != nil:
 		return TextResult("write failed: "+serr.Error(), true), nil
 	case fi.IsDir():
@@ -189,6 +235,22 @@ func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResul
 		if old, rerr = readFull(abs); rerr != nil {
 			return TextResult("write failed: "+rerr.Error(), true), nil
 		}
+		if v := s.verifyBasis(a.Basis, abs, old, "no basis was supplied and the file already exists"); !v.ok {
+			return s.rejectMutation(ctx, "write", wb, a.Path, abs, old, v)
+		}
+		// A full overwrite has no old_string anchor proving the caller saw what it
+		// replaces, so possession of a rejection-minted basis is not enough — the
+		// content must have been read back through this shell first.
+		if s.basis.Unread(a.Basis) {
+			logging.BindSummary(ctx, obs.PresentationModeFieldSummary)
+			s.log.WithContext(ctx).Debug("mutation basis rejected",
+				logging.StringField(keyBasisState, basisStateUnreadWrite))
+			return TextResult(fmt.Sprintf(
+				"write rejected: basis %s was issued by a rejection and its content has not been read. "+
+					"Read it first — %s source=%s — then retry with the same basis.",
+				a.Basis, toolNameSearch, a.Basis,
+			), true), nil
+		}
 	}
 
 	if werr := atomicWriteFile(abs, a.Content, perm); werr != nil {
@@ -196,14 +258,129 @@ func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResul
 	}
 
 	r := exec.Result{Stdout: a.Content}
-	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
+	return s.confirmMutation(ctx, verb, a.Path, abs, a.Content, capture.Spec{
 		Ingest:  a.Content,
 		Visible: a.Content,
 		Res:     r,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.PlanFileWrite(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Path, op, old, a.Content), nil
 		},
-	}))
+	})
+}
+
+// basis states name why a supplied basis did not hold; they are a closed set so
+// the operator can slice rejections without reading the agent-facing text.
+const (
+	basisStateMissing     = "missing"
+	basisStateUnknown     = "unknown"
+	basisStateStale       = "stale"
+	basisStateUnreadWrite = "unread_write"
+	basisStateDeleted     = "deleted"
+	keyBasisState         = "basis_state"
+)
+
+type basisVerdict struct {
+	ok    bool
+	state string
+	cause string // agent-facing clause naming what did not hold
+}
+
+func (s *Server) verifyBasis(basis, abs, current, missingCause string) basisVerdict {
+	if strings.TrimSpace(basis) == "" {
+		return basisVerdict{state: basisStateMissing, cause: missingCause}
+	}
+	known, fresh := s.basis.Verify(basis, abs, current)
+	switch {
+	case !known:
+		return basisVerdict{state: basisStateUnknown, cause: "basis " + basis + " is not a capture this session recorded for this file"}
+	case !fresh:
+		return basisVerdict{state: basisStateStale, cause: "the file changed since basis " + basis}
+	}
+	return basisVerdict{ok: true}
+}
+
+// confirmMutation is the bare success shape: what changed, and the label that is
+// the next mutation's basis. The content itself never rides back — the label
+// addresses it, and echoing it would restore the view the basis requirement
+// makes unnecessary.
+func (s *Server) confirmMutation(ctx context.Context, verb, path, abs, content string, spec capture.Spec) (ToolResult, error) {
+	out := s.engine.Capture(ctx, spec)
+	s.basis.Record(out.Label, abs, content)
+	logging.BindSummary(ctx, obs.PresentationModeFieldSummary)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s (%d bytes).\n", verb, path, len(content))
+	writeBasisLine(&b, out.Label, "pass this as basis for the next edit or write of this file; read the new content with")
+	return s.mutationResult(TextResult(b.String(), false), out)
+}
+
+// rejectMutation is the productive half of the contract: the rejection performs
+// the re-read the caller would otherwise have to make, so the response alone
+// carries everything a retry needs.
+func (s *Server) rejectMutation(ctx context.Context, verb string, wb WorkspaceBinding, path, abs, current string, v basisVerdict) (ToolResult, error) {
+	s.log.WithContext(ctx).Debug("mutation basis rejected",
+		logging.StringField(keyBasisState, v.state))
+
+	r := exec.Result{Stdout: current}
+	out := s.engine.Capture(ctx, capture.Spec{
+		Ingest:  current,
+		Visible: current,
+		Res:     r,
+		Plan: func(seq int64) (extract.Plan, error) {
+			return extract.PlanFileRead(s.invocation(seq, wb, "", wb.Root), execResultOf(r), path), nil
+		},
+	})
+	s.basis.RecordUnread(out.Label, abs, current)
+	logging.BindSummary(ctx, obs.PresentationModeFieldSummary)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s rejected: %s. %s is unchanged.\n", verb, v.cause, path)
+	fmt.Fprintf(&b, "Current state: %d bytes, %d lines.\n", len(current), lineCount(current))
+	// The named next action must be the one that succeeds: an edit retry is
+	// anchored by its old text, but an overwrite unlocks only after the read.
+	if verb == "write" {
+		writeBasisLine(&b, out.Label, "read the current content with")
+		if out.Label != "" {
+			b.WriteString(", then retry with this basis — an unread rejection basis does not authorize an overwrite")
+		}
+	} else {
+		writeBasisLine(&b, out.Label, "retry with this basis — the edit lands only where your old text still matches; to see what changed first, read it with")
+	}
+	return s.mutationResult(TextResult(b.String(), true), out)
+}
+
+// writeBasisLine names the token the next action needs, or says plainly that
+// none exists — a degraded capture mints no label, and the agent must learn that
+// from the response rather than from a later rejection.
+func writeBasisLine(b *strings.Builder, label, guidance string) {
+	if label == "" {
+		b.WriteString("Capture is degraded, so no basis label was minted; " +
+			toolNameEditFile + " and " + toolNameWriteFile + " on this file are rejected until capture recovers — " +
+			"use the host's native edit tools in the meantime.")
+		return
+	}
+	fmt.Fprintf(b, "basis=%s — %s %s source=%s", label, guidance, toolNameSearch, label)
+}
+
+// mutationResult carries the engine's degradation verdict out alongside the
+// composed text so the shell layers its canonical phrasing; the local mutation
+// already happened either way (never-worse).
+func (s *Server) mutationResult(res ToolResult, out capture.Outcome) (ToolResult, error) {
+	if out.Reason == "" {
+		return res, nil
+	}
+	return res, &DegradedSignal{Reason: out.Reason, Detail: out.Detail}
+}
+
+func lineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }
 
 // readFull reads the whole file with the oversize refusal: the capture cap is

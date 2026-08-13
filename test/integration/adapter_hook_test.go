@@ -116,17 +116,17 @@ func rewriteCommand(t *testing.T, out string) string {
 	return resp.HookSpecificOutput.UpdatedInput.Command
 }
 
-// execSource pulls the base source label (staleness suffix stripped) off an exec
-// presentation trailer.
+// execSource pulls the base source label (staleness suffix stripped) off the
+// capture-label line the engine renders in every presentation body.
 func execSource(t *testing.T, out string) string {
 	t.Helper()
-	const key = "↳ source="
-	i := strings.Index(out, key)
+	const key = `under "`
+	i := strings.LastIndex(out, key)
 	if i < 0 {
-		t.Fatalf("exec presentation carried no source trailer:\n%s", out)
+		t.Fatalf("exec presentation carried no capture label:\n%s", out)
 	}
 	rest := out[i+len(key):]
-	if cut := strings.IndexAny(rest, " \n"); cut >= 0 {
+	if cut := strings.IndexByte(rest, '"'); cut >= 0 {
 		rest = rest[:cut]
 	}
 	if at := strings.LastIndex(rest, "@"); at >= 0 {
@@ -425,7 +425,7 @@ func TestInitPairsKeylessEnvironment(t *testing.T) {
 	if strings.Contains(out, obs.DegradedPhrase(obs.DegradedReasonCalmUnreachable)) || strings.Contains(out, obs.DegradedPhrase(obs.DegradedReasonAuthFailed)) {
 		t.Fatalf("keyless exec must capture, not degrade:\n%s", out)
 	}
-	if !strings.Contains(out, "↳ source=") {
-		t.Fatalf("keyless exec must carry a recall trailer:\n%s", out)
+	if !strings.Contains(out, `under "calm:v1:`) {
+		t.Fatalf("keyless exec must carry the capture's address:\n%s", out)
 	}
 }

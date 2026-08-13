@@ -181,11 +181,10 @@ func parseSearchSource(t *testing.T, text string) string {
 }
 
 // parseSearchSourceFused reads the fused label from the capture-label line every
-// labeled presentation carries — `Captured … under "<fused>".` — so it holds
+// successful capture carries — `Captured … under "<fused>".` — so it holds
 // whether the output came back as a verbatim whole presentation (compact
-// address only) or a summary digest (address plus retrieval command). Only a
-// sub-floor inline capture omits a label, and every caller here pushes past the
-// floor on purpose.
+// address only) or a summary digest (address plus retrieval command), at any
+// size. Mutation responses name their label as `basis=` instead; see parseBasis.
 func parseSearchSourceFused(t *testing.T, text string) string {
 	t.Helper()
 	const key = `under "`
@@ -208,10 +207,9 @@ func writeWorkspaceFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-// inlinePad pushes a capture past the label-less inline floor so the
-// presentation advertises a recall label — for tests whose subject is labeling,
-// not presentation. At this size a whole-consumption capture comes back verbatim
-// with a compact address; the mutation surfaces still digest.
+// inlinePad gives a fixture enough body to be a realistic multi-chunk source —
+// for tests whose subject is labeling or retrieval rather than presentation
+// size. At this size a capture comes back verbatim with its compact address.
 var inlinePad = strings.Repeat("pad ", 160)
 
 // eventData reads back the first persisted event of eventType through CALM,
@@ -275,8 +273,8 @@ func TestAdapterRunCommand_CaptureIngestSearchLoop(t *testing.T) {
 }
 
 // Inline mode (DESIGN.md §4): a small output comes back as the raw bytes
-// verbatim with no recall label in visible text — while still being captured
-// into CALM and retrievable via session-wide search.
+// verbatim, carrying its address but withholding nothing — and it is captured
+// into CALM and retrievable via session-wide search all the same.
 func TestAdapterRunCommand_SmallOutputInline_StillSearchable(t *testing.T) {
 	workspace := t.TempDir()
 	const marker = "zphloxinline"
@@ -289,8 +287,15 @@ func TestAdapterRunCommand_SmallOutputInline_StillSearchable(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("run_command errored: %+v", res)
 	}
-	if got := res.Content[0].Text; got != content {
+	got := res.Content[0].Text
+	if !strings.HasPrefix(got, content) {
 		t.Fatalf("inline text = %q; want raw output verbatim %q", got, content)
+	}
+	if !strings.Contains(got, "Captured 1/1 sections under") {
+		t.Fatalf("inline text = %q; want the capture address alongside the bytes", got)
+	}
+	if strings.Contains(got, "Retrieve full output:") {
+		t.Fatalf("inline text = %q; nothing was withheld, so no retrieval line", got)
 	}
 
 	// Capture is presentation-independent: session-wide search still finds it.

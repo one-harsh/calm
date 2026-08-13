@@ -72,6 +72,13 @@ type Server struct {
 
 	// AD03: recovery resets the registry so prior fused labels reject as stale.
 	registry *capture.Registry
+	// basis carries the local mutation precondition; it resets with the registry
+	// so one label means the same thing on both surfaces.
+	basis *basisRegistry
+	// mutations serializes verify-then-write so parallel tool calls cannot
+	// interleave between a basis check and the rename it authorized. External
+	// writers remain unguarded — advisory locks bind only cooperating processes.
+	mutations sync.Mutex
 
 	engine *capture.Engine
 }
@@ -89,6 +96,7 @@ func NewServer(cfg Config) *Server {
 		keepSession:   cfg.KeepSession,
 		workspaces:    newWorkspaceSet(cfg.LaunchDir),
 		registry:      capture.NewRegistry(),
+		basis:         newBasisRegistry(),
 		grepEngine:    probeGrepEngine(),
 	}
 	s.engine = capture.NewEngine(cfg.Calm, s, s, cfg.Logger, toolNameSearch)

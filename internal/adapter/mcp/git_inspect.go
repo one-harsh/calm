@@ -179,5 +179,5 @@ func (s *Server) runGitInspect(ctx context.Context, wb WorkspaceBinding, argv []
 		return TextResult("failed to run git: "+runErr.Error(), true), nil
 	}
 	raw := capture.CommandPayload(r)
-	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{Ingest: raw, Visible: raw, Res: r, Consumption: capture.ConsumptionWhole, Plan: planFor(r)}))
+	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{Ingest: raw, Visible: raw, Res: r, Plan: planFor(r)}))
 }

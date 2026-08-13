@@ -75,10 +75,9 @@ func (s *Server) runCommand(ctx context.Context, args json.RawMessage) (ToolResu
 
 	raw := capture.CommandPayload(r)
 	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
-		Ingest:      raw,
-		Visible:     raw,
-		Res:         r,
-		Consumption: capture.ConsumptionWhole,
+		Ingest:  raw,
+		Visible: raw,
+		Res:     r,
 		Plan: func(seq int64) (extract.Plan, error) {
 			inv := s.invocation(seq, wb, a.Command, dir)
 			return extract.DerivePlan(inv, extract.ExecResult{

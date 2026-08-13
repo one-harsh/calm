@@ -77,10 +77,9 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 	engine := capture.NewEngine(d.Client, mgr, mgr, d.Logger, recallFor(hookBinPath(), sid), capture.WithDiscoveryCard())
 	raw := capture.CommandPayload(r)
 	out := engine.Capture(ctx, capture.Spec{
-		Ingest:      raw,
-		Visible:     raw,
-		Res:         r,
-		Consumption: capture.ConsumptionWhole,
+		Ingest:  raw,
+		Visible: raw,
+		Res:     r,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.DerivePlan(
 				extract.Invocation{Seq: seq, Command: command, Cwd: cwd, WorkspaceRoot: cwd},
@@ -108,7 +107,8 @@ func (d Deps) execCmd(ctx context.Context, args []string) int {
 	return r.ExitCode
 }
 
-// Even inline captures need an address because the capture shell has no tool description.
+// The engine renders the fused label inside every captured presentation, so the
+// shell trailer carries only what the body cannot: the outcome-reporting ref.
 func composeExec(out capture.Outcome) string {
 	if out.Reason != "" {
 		v := out.Visible
@@ -117,18 +117,14 @@ func composeExec(out capture.Outcome) string {
 		}
 		return v + obs.DegradedPhrase(out.Reason) + "\n"
 	}
-	if !out.Captured || out.Label == "" {
+	if !out.Captured || out.FeedbackRef == "" {
 		return out.Visible
 	}
 	v := out.Visible
 	if v != "" && !strings.HasSuffix(v, "\n") {
 		v += "\n"
 	}
-	v += "↳ source=" + out.Label
-	if out.FeedbackRef != "" {
-		v += " · feedback: calm-capture feedback " + out.FeedbackRef
-	}
-	return v + "\n"
+	return v + "↳ feedback: calm-capture feedback " + out.FeedbackRef + "\n"
 }
 
 func (d Deps) drain(ctx context.Context, mgr *session.Manager) {

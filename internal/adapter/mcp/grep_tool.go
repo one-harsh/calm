@@ -121,10 +121,9 @@ func (s *Server) grep(ctx context.Context, args json.RawMessage) (ToolResult, er
 
 	raw := capture.CommandPayload(r)
 	return s.outcomeToResult(s.engine.Capture(ctx, capture.Spec{
-		Ingest:      raw,
-		Visible:     raw,
-		Res:         r,
-		Consumption: capture.ConsumptionWhole,
+		Ingest:  raw,
+		Visible: raw,
+		Res:     r,
 		Plan: func(seq int64) (extract.Plan, error) {
 			return extract.PlanGrep(s.invocation(seq, wb, "", wb.Root), execResultOf(r), a.Pattern, paths), nil
 		},

@@ -73,8 +73,8 @@ func TestHook_PostToolUse_CaptureAndReplace(t *testing.T) {
 	if name != "PostToolUse" {
 		t.Errorf("hookEventName = %q; want PostToolUse", name)
 	}
-	if !strings.Contains(stdout, "↳ source=") {
-		t.Errorf("replacement stdout must carry the recall trailer; got:\n%s", stdout)
+	if !strings.Contains(stdout, `under "calm:v1:`) {
+		t.Errorf("replacement stdout must carry the capture's address; got:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "AI28-marker-x7q4z") {
 		t.Errorf("replacement must present the original output verbatim; got:\n%s", stdout)

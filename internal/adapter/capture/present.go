@@ -18,9 +18,8 @@ import (
 const (
 	maxCompactSections = 5
 	maxCompactLen      = 4096
-	inlineMaxBytes     = 512
-	// wholeInlineMaxBytes is the raised verbatim floor for whole-consumption
-	// output: below it a scoped-search round trip costs more than the bytes.
+	// wholeInlineMaxBytes is the verbatim floor: below it a scoped-search round
+	// trip costs more than the bytes.
 	wholeInlineMaxBytes = 4096
 	rangedMaxBytes      = 8192
 	// failVerbatimMaxBytes bounds verbatim failure evidence; past it the head
@@ -55,7 +54,7 @@ func present(ctx context.Context, log *logging.Logger, d Delivery, spec Spec, se
 	case anyFailed:
 		logging.BindSummary(ctx, logging.BoolField(obs.KeyCaptured, true), obs.SourceLabel(d.Summary.Source))
 		out = Outcome{
-			Visible:     presentCapture(ctx, *d.Summary, spec.Visible, spec.Res, token, spec.RangedView, opts.recall, spec.Consumption),
+			Visible:     presentCapture(ctx, *d.Summary, spec.Visible, spec.Res, token, spec.RangedView, opts.recall),
 			Captured:    true,
 			Source:      d.Summary.Source,
 			Reason:      obs.DegradedReasonCapturePartial,
@@ -65,7 +64,7 @@ func present(ctx context.Context, log *logging.Logger, d Delivery, spec Spec, se
 	default:
 		logging.BindSummary(ctx, logging.BoolField(obs.KeyCaptured, true), obs.SourceLabel(d.Summary.Source))
 		out = Outcome{
-			Visible:     presentCapture(ctx, *d.Summary, spec.Visible, spec.Res, token, spec.RangedView, opts.recall, spec.Consumption),
+			Visible:     presentCapture(ctx, *d.Summary, spec.Visible, spec.Res, token, spec.RangedView, opts.recall),
 			Captured:    true,
 			Source:      d.Summary.Source,
 			Label:       fuseSource(d.Summary.Source, token),
@@ -85,10 +84,12 @@ func present(ctx context.Context, log *logging.Logger, d Delivery, spec Spec, se
 }
 
 // A ranged read stays verbatim and labeled at every size; summarizing an already
-// scoped read would violate content-fidelity. Other captures optimize by size,
-// on a floor that widens for whole-consumption shapes; a failing result is
-// whole-consumption regardless and keeps its evidence verbatim.
-func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r exec.Result, token string, rangedView bool, recall string, consumption Consumption) string {
+// scoped read would violate content-fidelity. Other captures optimize by size on
+// one floor; a failing result keeps its evidence verbatim regardless. Every
+// presented capture carries its fused label — the label is how the agent
+// addresses the content again, and for a file it is also the basis a following
+// mutation must name.
+func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r exec.Result, token string, rangedView bool, recall string) string {
 	if rangedView {
 		logging.BindSummary(ctx, obs.PresentationModeFieldRanged)
 		return formatRanged(sum, raw, token, recall)
@@ -101,15 +102,8 @@ func presentCapture(ctx context.Context, sum calm.IngestSummary, raw string, r e
 		}
 		return formatFailure(sum, raw, r, token, recall)
 	}
-	floor := inlineMaxBytes
-	if consumption == ConsumptionWhole {
-		floor = wholeInlineMaxBytes
-	}
-	if len(raw) <= floor {
+	if len(raw) <= wholeInlineMaxBytes {
 		logging.BindSummary(ctx, obs.PresentationModeFieldInline)
-		if len(raw) <= inlineMaxBytes {
-			return formatInline(raw, r)
-		}
 		return formatInlineLabeled(sum, raw, r, token)
 	}
 	logging.BindSummary(ctx, obs.PresentationModeFieldSummary)

@@ -96,8 +96,12 @@ func TestReadFile_SmallInlineVerbatim(t *testing.T) {
 	initSession(t, h, "claude-code")
 
 	res := callTool(t, h, 2, "calm_read_file", map[string]any{"path": "small.txt"})
-	if got := resultText(t, res); got != content {
+	got := resultText(t, res)
+	if !strings.HasPrefix(got, content) {
 		t.Errorf("inline text = %q; want raw content verbatim", got)
+	}
+	if !strings.Contains(got, `Captured 1/1 sections under "calm:v1:file:read:small.txt@`) {
+		t.Errorf("inline text = %q; want the fused label a following mutation names as basis", got)
 	}
 	awaitSignal(t, eventsDone)
 }
@@ -267,7 +271,7 @@ func TestReadFile_EscapePathCoexists(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("escape read errored: %+v", res)
 	}
-	if got := resultText(t, res); got != "outside content\n" {
+	if got := resultText(t, res); !strings.HasPrefix(got, "outside content\n") {
 		t.Errorf("text = %q; want the outside content (labeling-only boundary)", got)
 	}
 	awaitSignal(t, eventsDone)
@@ -291,7 +295,7 @@ func TestListDir_LabelSortAndSuffix(t *testing.T) {
 	initSession(t, h, "claude-code")
 
 	res := callTool(t, h, 2, "calm_list_dir", map[string]any{"path": "sub"})
-	if got := resultText(t, res); got != "a.txt\nnested/\nz.txt\n" {
+	if got := resultText(t, res); !strings.HasPrefix(got, "a.txt\nnested/\nz.txt\n") {
 		t.Errorf("listing = %q; want sorted entries with dir suffix", got)
 	}
 	awaitSignal(t, eventsDone)
@@ -371,7 +375,7 @@ func TestGrep_NoMatchCleanResult(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("no-match grep must not be an error result: %+v", res)
 	}
-	if got := resultText(t, res); got != "(no matches)\n" {
+	if got := resultText(t, res); !strings.HasPrefix(got, "(no matches)\n") {
 		t.Errorf("text = %q; want clean no-match payload", got)
 	}
 	awaitSignal(t, eventsDone)

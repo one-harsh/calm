@@ -854,8 +854,12 @@ func TestRunCommand_SmallOutputInline(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected isError: %+v", res)
 	}
-	if got := resultText(t, res); got != "hello\n" {
+	got := resultText(t, res)
+	if !strings.HasPrefix(got, "hello\n") {
 		t.Errorf("inline text = %q; want raw output verbatim %q", got, "hello\n")
+	}
+	if !strings.Contains(got, `Captured 1/1 sections under "calm:v1:shell:echo#1@`) {
+		t.Errorf("inline text = %q; want the fused address alongside the verbatim output", got)
 	}
 	awaitSignal(t, eventsDone)
 }

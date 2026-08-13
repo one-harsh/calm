@@ -57,10 +57,13 @@ func TestExec_Trailer_LabelAndFeedbackRef(t *testing.T) {
 		t.Fatalf("exit = %d; want 0", code)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "↳ source=calm:v1:test@") {
-		t.Errorf("trailer must carry the fused source label; got:\n%s", out)
+	if !strings.Contains(out, `under "calm:v1:test@`) {
+		t.Errorf("presentation body must carry the fused source label; got:\n%s", out)
 	}
-	if !strings.Contains(out, "feedback: calm-capture feedback corr-9") {
+	if strings.Contains(out, "↳ source=") {
+		t.Errorf("trailer must not repeat the address the body already names; got:\n%s", out)
+	}
+	if !strings.Contains(out, "↳ feedback: calm-capture feedback corr-9") {
 		t.Errorf("trailer must carry the feedback ref; got:\n%s", out)
 	}
 }

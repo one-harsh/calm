@@ -72,6 +72,7 @@ func (s *Server) recoverSession(ctx context.Context, failedToken string) *Degrad
 	case err == nil:
 		s.session = token
 		s.registry.Reset()
+		s.basis.Reset()
 		s.log.WithContext(ctx).Warn("session lost; replacement created",
 			obs.DegradedReasonFieldSessionLost)
 		return &DegradedSignal{Reason: obs.DegradedReasonSessionLost}
@@ -151,6 +152,7 @@ func (s *Server) ensureSession(ctx context.Context) (string, *DegradedSignal) {
 		s.session = token
 		s.sessionClient = client
 		s.registry.Reset()
+		s.basis.Reset()
 		s.log.WithContext(ctx).Info("session created",
 			logging.StringField("client", client))
 		return token, nil

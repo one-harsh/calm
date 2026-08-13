@@ -68,13 +68,20 @@ func TestPresentCapture_ThresholdBoundary(t *testing.T) {
 	r := exec.Result{ExitCode: 0}
 	ctx := context.Background()
 
-	at := strings.Repeat("a", inlineMaxBytes)
-	if got := presentCapture(ctx, sum, at, r, "a3f2k6", false, "calm_search", ConsumptionSparse); got != at {
-		t.Errorf("raw at threshold must present inline; got %q", got)
+	at := strings.Repeat("a", wholeInlineMaxBytes)
+	got := presentCapture(ctx, sum, at, r, "a3f2k6", false, "calm_search")
+	if !strings.HasPrefix(got, at) {
+		t.Errorf("raw at the floor must present verbatim; got len %d", len(got))
+	}
+	if !strings.Contains(got, `Captured 1/1 sections under "calm:v1:shell:seq#1@a3f2k6".`) {
+		t.Errorf("verbatim output must still carry its address; got %q", tail(got, 120))
 	}
 
-	over := strings.Repeat("a", inlineMaxBytes+1)
-	got := presentCapture(ctx, sum, over, r, "a3f2k6", false, "calm_search", ConsumptionSparse)
+	over := strings.Repeat("a", wholeInlineMaxBytes+1)
+	got = presentCapture(ctx, sum, over, r, "a3f2k6", false, "calm_search")
+	if strings.HasPrefix(got, over) {
+		t.Errorf("raw over the floor must digest, not present verbatim")
+	}
 	if !strings.Contains(got, "Captured 1/1 sections under") {
 		t.Errorf("raw over threshold must present the compact rep; got %q", got)
 	}
@@ -83,51 +90,43 @@ func TestPresentCapture_ThresholdBoundary(t *testing.T) {
 	}
 }
 
-func TestPresentCapture_WholeConsumptionFloor(t *testing.T) {
+func TestPresentCapture_VerbatimBandIsAlwaysAddressable(t *testing.T) {
 	sum := calm.IngestSummary{Source: "calm:v1:vcs:git:status#1", SectionsIndexed: 1, SectionsTotal: 1}
 	r := exec.Result{ExitCode: 0}
 	ctx := context.Background()
 
-	// Between the two floors: sparse digests, whole stays verbatim.
-	mid := strings.Repeat("a", inlineMaxBytes+1)
-	if got := presentCapture(ctx, sum, mid, r, "a3f2k6", false, "calm_search", ConsumptionSparse); !strings.Contains(got, "Retrieve full output:") {
-		t.Errorf("sparse over its floor must digest; got %q", got)
+	tiny := "M internal/adapter/capture/present.go\n"
+	got := presentCapture(ctx, sum, tiny, r, "a3f2k6", false, "calm_search")
+	if !strings.HasPrefix(got, tiny) {
+		t.Errorf("tiny output must stay verbatim; got %q", got)
 	}
-	whole := presentCapture(ctx, sum, mid, r, "a3f2k6", false, "calm_search", ConsumptionWhole)
+	if !strings.Contains(got, `Captured 1/1 sections under "calm:v1:vcs:git:status#1@a3f2k6".`) {
+		t.Errorf("tiny output must carry the compact address; got %q", got)
+	}
+	if strings.Contains(got, "Retrieve full output:") {
+		t.Errorf("nothing was withheld — the retrieval-command line must not appear; got %q", got)
+	}
+
+	mid := strings.Repeat("a", 1024)
+	whole := presentCapture(ctx, sum, mid, r, "a3f2k6", false, "calm_search")
 	if !strings.HasPrefix(whole, mid) {
-		t.Errorf("whole-consumption under its floor must present verbatim; got %q", whole)
+		t.Errorf("output under the floor must present verbatim; got %q", whole)
 	}
 	if !strings.Contains(whole, `Captured 1/1 sections under "calm:v1:vcs:git:status#1@a3f2k6".`) {
-		t.Errorf("whole-consumption verbatim must carry the compact address; got %q", whole)
+		t.Errorf("verbatim output must carry the compact address; got %q", whole)
 	}
 	if strings.Contains(whole, "Retrieve full output:") {
 		t.Errorf("nothing was withheld — the retrieval-command line must not appear; got %q", whole)
 	}
 
-	// At the floor: still verbatim.
-	at := strings.Repeat("b", wholeInlineMaxBytes)
-	if got := presentCapture(ctx, sum, at, r, "a3f2k6", false, "calm_search", ConsumptionWhole); !strings.HasPrefix(got, at) {
-		t.Errorf("whole-consumption at its floor must present verbatim; got len %d", len(got))
-	}
-
-	// One byte over: compact digest with the full recall label.
-	over := strings.Repeat("c", wholeInlineMaxBytes+1)
-	got := presentCapture(ctx, sum, over, r, "a3f2k6", false, "calm_search", ConsumptionWhole)
-	if strings.HasPrefix(got, over) {
-		t.Errorf("whole-consumption over its floor must digest, not present verbatim")
-	}
-	if !strings.Contains(got, "Retrieve full output: calm_search source=calm:v1:vcs:git:status#1@a3f2k6") {
-		t.Errorf("digest must advertise the full recall label; got %q", got)
-	}
-
-	// A truncated-but-successful raw in the whole band must still carry the
+	// A truncated-but-successful raw in the verbatim band must still carry the
 	// execution-state framing — verbatim-with-address must not read as complete.
-	trunc := presentCapture(ctx, sum, mid, exec.Result{ExitCode: 0, Truncated: true}, "a3f2k6", false, "calm_search", ConsumptionWhole)
+	trunc := presentCapture(ctx, sum, mid, exec.Result{ExitCode: 0, Truncated: true}, "a3f2k6", false, "calm_search")
 	if !strings.HasPrefix(trunc, mid) {
-		t.Errorf("truncated whole-band output must stay verbatim; got %q", trunc)
+		t.Errorf("truncated in-band output must stay verbatim; got %q", trunc)
 	}
 	if !strings.Contains(trunc, "(output truncated)") {
-		t.Errorf("truncated whole-band output must carry the truncation marker; got %q", trunc)
+		t.Errorf("truncated in-band output must carry the truncation marker; got %q", trunc)
 	}
 }
 
@@ -142,14 +141,14 @@ func TestPresentCapture_RangedView(t *testing.T) {
 	wantSmall := small +
 		"Captured 3/3 sections under \"calm:v1:file:read:data.json@a3f2k6\".\n" +
 		"Retrieve full output: calm_search source=calm:v1:file:read:data.json@a3f2k6\n"
-	if got := presentCapture(ctx, sum, small, r, "a3f2k6", true, "calm_search", ConsumptionWhole); got != wantSmall {
+	if got := presentCapture(ctx, sum, small, r, "a3f2k6", true, "calm_search"); got != wantSmall {
 		t.Errorf("small ranged view = %q; want slice + label lines %q", got, wantSmall)
 	}
 
 	// Over the inline threshold, under the ranged cap: slice verbatim + label line,
 	// no compact section chrome.
 	slice := strings.Repeat("line\n", 200) // 1000 bytes: > inlineMaxBytes, < rangedMaxBytes
-	got := presentCapture(ctx, sum, slice, r, "a3f2k6", true, "calm_search", ConsumptionWhole)
+	got := presentCapture(ctx, sum, slice, r, "a3f2k6", true, "calm_search")
 	if !strings.Contains(got, slice) {
 		t.Errorf("ranged view must present the slice verbatim; got:\n%s", got)
 	}
@@ -161,7 +160,7 @@ func TestPresentCapture_RangedView(t *testing.T) {
 	// Over the ranged cap: rune-safe prefix + the literal truncation marker naming
 	// both recoveries.
 	over := strings.Repeat("z", rangedMaxBytes+500)
-	got = presentCapture(ctx, sum, over, r, "a3f2k6", true, "calm_search", ConsumptionWhole)
+	got = presentCapture(ctx, sum, over, r, "a3f2k6", true, "calm_search")
 	if !strings.Contains(got, "ranged view capped at 8192 bytes — narrow start_line/end_line, or reread the full capture in document order with calm_search source=calm:v1:file:read:data.json@a3f2k6") {
 		t.Errorf("over-cap ranged view must carry the literal truncation marker; got:\n%s", got)
 	}
@@ -187,8 +186,11 @@ func TestPresent_SmallPartial_InlineWithSignal(t *testing.T) {
 	if out.Reason != obs.DegradedReasonCapturePartial {
 		t.Fatalf("reason = %q; want capture_partial", out.Reason)
 	}
-	if out.Visible != "tiny status\n" {
+	if !strings.HasPrefix(out.Visible, "tiny status\n") {
 		t.Errorf("visible = %q; want raw verbatim (inline-partial)", out.Visible)
+	}
+	if !strings.Contains(out.Visible, `Captured 1/1 sections under "calm:v1:vcs:git:status#1@a3f2k6".`) {
+		t.Errorf("visible = %q; want the persisted source's address alongside the partial signal", out.Visible)
 	}
 	if !out.Captured || out.Source != "calm:v1:vcs:git:status#1" {
 		t.Errorf("captured=%v source=%q; want captured under the persisted history source", out.Captured, out.Source)
@@ -200,7 +202,7 @@ func TestPresentCapture_FailureVerbatim(t *testing.T) {
 	ctx := context.Background()
 
 	small := "FAIL TestFoo\n  expected 1 got 2\n"
-	got := presentCapture(ctx, sum, small, exec.Result{ExitCode: 1}, "a3f2k6", false, "calm_search", ConsumptionWhole)
+	got := presentCapture(ctx, sum, small, exec.Result{ExitCode: 1}, "a3f2k6", false, "calm_search")
 	if !strings.HasPrefix(got, small) {
 		t.Errorf("small failure must present verbatim; got %q", got)
 	}
@@ -217,7 +219,7 @@ func TestPresentCapture_FailureVerbatim(t *testing.T) {
 	// Larger than the whole-consumption floor but under the failure cap: on a
 	// success this would digest; as a failure it stays whole and verbatim.
 	medium := "head marker\n" + strings.Repeat("x", wholeInlineMaxBytes+2000) + "\nTAIL FAILURE MARKER\n"
-	gotMed := presentCapture(ctx, sum, medium, exec.Result{ExitCode: 2}, "a3f2k6", false, "calm_search", ConsumptionWhole)
+	gotMed := presentCapture(ctx, sum, medium, exec.Result{ExitCode: 2}, "a3f2k6", false, "calm_search")
 	if !strings.Contains(gotMed, "head marker") || !strings.Contains(gotMed, "TAIL FAILURE MARKER") {
 		t.Errorf("under-cap failure must present whole verbatim; head/tail missing:\n%s", tail(gotMed, 120))
 	}
@@ -230,7 +232,7 @@ func TestPresentCapture_FailureVerbatim(t *testing.T) {
 	middle := strings.Repeat("m", 5000)
 	tailPart := strings.Repeat("t", failTailBytes) + "\nTAIL END FAILURE\n"
 	huge := head + middle + tailPart
-	gotHuge := presentCapture(ctx, sum, huge, exec.Result{ExitCode: 1}, "a3f2k6", false, "calm_search", ConsumptionWhole)
+	gotHuge := presentCapture(ctx, sum, huge, exec.Result{ExitCode: 1}, "a3f2k6", false, "calm_search")
 	if !strings.Contains(gotHuge, "HEAD START MARKER") {
 		t.Errorf("huge failure must retain the head")
 	}
