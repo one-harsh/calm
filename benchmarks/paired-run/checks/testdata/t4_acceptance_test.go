@@ -7,8 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,14 +25,17 @@ import (
 )
 
 // Oracle for the `--json` search feature. It drives the real search command
-// in-process against a mock CALM client and asserts the three promises the
-// task pins: (1) `--json` emits one machine-readable JSON object carrying the
-// query, per-hit source/snippet/match-layer, and the continuation offset hint;
-// (2) default (human) output is byte-identical to a pre-task golden captured
-// from the unfixed tree; (3) a degraded call still exits nonzero with the JSON
-// carrying the degradation reason (never-worse). Field names are matched
-// leniently where the prompt describes rather than names them, but the shape,
-// values, exit codes, and byte-identity are asserted exactly.
+// in-process against a mock CALM client and asserts exactly what the task
+// pins: (1) `--json` emits one JSON object with the pinned top-level keys
+// `query`/`hits`/`degraded` and nothing else, hits in result order, each hit
+// carrying `source`/`snippet`/`offset`/`match_layer`, with absent values null
+// rather than omitted; (2) default (human) output is byte-identical to a
+// pre-task golden captured from the unfixed tree; (3) a degraded call still
+// exits nonzero with the JSON carrying the degradation reason (never-worse).
+
+// t4TopLevelKeys is the pinned top-level key set: exactly these, always
+// present, never more.
+var t4TopLevelKeys = []string{"degraded", "hits", "query"}
 
 func t4NewDeps(t *testing.T, c calm.Client) (Deps, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
@@ -76,7 +82,8 @@ func t4RankedResult() calm.SearchResults {
 	}
 }
 
-// TestT4Search_JSONRankedSchema pins the machine-readable shape and values.
+// TestT4Search_JSONRankedSchema pins the machine-readable shape, the pinned
+// field names, result order, and the null-not-omitted rule for absent values.
 func TestT4Search_JSONRankedSchema(t *testing.T) {
 	c := calm.NewMockClient(t)
 	t4ExpectEstablish(c, "tok1")
@@ -90,35 +97,35 @@ func TestT4Search_JSONRankedSchema(t *testing.T) {
 	}
 
 	obj := t4DecodeSingleObject(t, stdout.Bytes())
+	t4AssertTopLevelKeys(t, obj)
 
-	if q := t4TopString(t, obj, "query", "queries"); !strings.Contains(q, "needle") {
-		t.Errorf("json query = %q; want it to carry the query text 'needle'", q)
+	if q := t4String(t, obj, "query"); q != "needle" {
+		t.Errorf("query = %q; want the query string as given, %q", q, "needle")
 	}
 
 	hits := t4Hits(t, obj)
-	if len(hits) != 2 {
-		t.Fatalf("json hits length = %d; want 2\nobject=%v", len(hits), obj)
+	want := []struct{ source, snippet, layer string }{
+		{"calm:v1:x", "found the needle here", "primary"},
+		{"calm:v1:y", "another needle", "trigram"},
 	}
-	want := map[string][2]string{
-		"calm:v1:x": {"found the needle here", "primary"},
-		"calm:v1:y": {"another needle", "trigram"},
+	if len(hits) != len(want) {
+		t.Fatalf("hits length = %d; want %d\nobject=%v", len(hits), len(want), obj)
 	}
 	for i, h := range hits {
-		src := t4HitField(t, h, i, "source", "source_label")
-		exp, ok := want[src]
-		if !ok {
-			t.Errorf("hit[%d] source = %q; not an expected source label", i, src)
-			continue
+		if src := t4HitString(t, h, i, "source"); src != want[i].source {
+			t.Errorf("hits[%d].source = %q; want %q (hits appear in result order)", i, src, want[i].source)
 		}
-		if snip := t4HitField(t, h, i, "snippet", "text", "snippet_text"); snip != exp[0] {
-			t.Errorf("hit[%d] snippet = %q; want exact indexed text %q", i, snip, exp[0])
+		if snip := t4HitString(t, h, i, "snippet"); snip != want[i].snippet {
+			t.Errorf("hits[%d].snippet = %q; want exact indexed text %q", i, snip, want[i].snippet)
 		}
-		if layer := t4HitField(t, h, i, "match_layer", "matchlayer", "layer"); layer != exp[1] {
-			t.Errorf("hit[%d] match layer = %q; want %q", i, layer, exp[1])
+		if layer := t4HitString(t, h, i, "match_layer"); layer != want[i].layer {
+			t.Errorf("hits[%d].match_layer = %q; want %q", i, layer, want[i].layer)
 		}
+		// Ranked results carry no continuation hint: null, key still present.
+		t4AssertNull(t, h, "offset", fmt.Sprintf("hits[%d].offset", i))
 	}
 
-	t4AssertDegradedNullOrAbsent(t, obj)
+	t4AssertNull(t, obj, "degraded", "degraded")
 }
 
 // TestT4Search_DefaultModeByteIdentical proves the human default output is
@@ -157,8 +164,8 @@ func TestT4Search_DefaultModeByteIdentical(t *testing.T) {
 }
 
 // TestT4Search_JSONDegradedCarriesReason pins the never-worse contract under
-// --json: a failed backend call still exits nonzero and the JSON carries the
-// reason.
+// --json: a failed backend call still exits nonzero, the object keeps the
+// pinned key set, and `degraded` carries the reason.
 func TestT4Search_JSONDegradedCarriesReason(t *testing.T) {
 	c := calm.NewMockClient(t)
 	t4ExpectEstablish(c, "tok1")
@@ -176,7 +183,12 @@ func TestT4Search_JSONDegradedCarriesReason(t *testing.T) {
 	if obj == nil {
 		t.Fatalf("degraded --json produced no JSON object on stdout or stderr\nstdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	v, ok := t4Get(obj, "degraded")
+	t4AssertTopLevelKeys(t, obj)
+
+	if q := t4String(t, obj, "query"); q != "needle" {
+		t.Errorf("degraded JSON (%s) query = %q; want the query string as given, %q", from, q, "needle")
+	}
+	v, ok := obj["degraded"]
 	if !ok || v == nil {
 		t.Fatalf("degraded JSON (%s) has no non-null 'degraded' field\nobject=%v", from, obj)
 	}
@@ -189,8 +201,8 @@ func TestT4Search_JSONDegradedCarriesReason(t *testing.T) {
 	}
 }
 
-// TestT4Search_JSONDocumentOrderOffsetHint pins the offset hint (continuation
-// offset) surfacing in the document-order machine output.
+// TestT4Search_JSONDocumentOrderOffsetHint pins the per-hit offset hint and the
+// null-not-omitted rule for a hit with no match layer.
 func TestT4Search_JSONDocumentOrderOffsetHint(t *testing.T) {
 	c := calm.NewMockClient(t)
 	t4ExpectEstablish(c, "tok1")
@@ -208,22 +220,25 @@ func TestT4Search_JSONDocumentOrderOffsetHint(t *testing.T) {
 	}
 
 	obj := t4DecodeSingleObject(t, stdout.Bytes())
+	t4AssertTopLevelKeys(t, obj)
 
 	hits := t4Hits(t, obj)
 	if len(hits) != 1 {
 		t.Fatalf("document-order hits length = %d; want 1\nobject=%v", len(hits), obj)
 	}
-	if src := t4HitField(t, hits[0], 0, "source", "source_label"); src != "calm:v1:x" {
-		t.Errorf("hit source = %q; want calm:v1:x", src)
+	if src := t4HitString(t, hits[0], 0, "source"); src != "calm:v1:x" {
+		t.Errorf("hits[0].source = %q; want calm:v1:x", src)
 	}
-	if snip := t4HitField(t, hits[0], 0, "snippet", "text", "snippet_text"); snip != "chunk body text" {
-		t.Errorf("hit snippet = %q; want exact chunk text", snip)
+	if snip := t4HitString(t, hits[0], 0, "snippet"); snip != "chunk body text" {
+		t.Errorf("hits[0].snippet = %q; want exact chunk text", snip)
 	}
-	if !t4HasOffsetHint(obj, 3) {
-		t.Errorf("document-order --json must surface the continuation offset hint (3)\nobject=%v", obj)
+	if off := t4HitNumber(t, hits[0], 0, "offset"); off != 3 {
+		t.Errorf("hits[0].offset = %d; want the continuation offset hint 3", off)
 	}
+	// No match layer on this hit: null, key still present.
+	t4AssertNull(t, hits[0], "match_layer", "hits[0].match_layer")
 
-	t4AssertDegradedNullOrAbsent(t, obj)
+	t4AssertNull(t, obj, "degraded", "degraded")
 }
 
 // --- JSON shape helpers ----------------------------------------------------
@@ -265,46 +280,32 @@ func t4TryObject(b []byte) map[string]any {
 	return obj
 }
 
-// t4Get finds the value under the first key that case-insensitively equals any
-// candidate (candidates must be lowercase).
-func t4Get(m map[string]any, candidates ...string) (any, bool) {
-	for k, v := range m {
-		lk := strings.ToLower(k)
-		for _, cand := range candidates {
-			if lk == cand {
-				return v, true
-			}
-		}
+// t4AssertTopLevelKeys pins the exact top-level key set: every pinned key is
+// present (absent values are null, never omitted) and nothing else is.
+func t4AssertTopLevelKeys(t *testing.T, obj map[string]any) {
+	t.Helper()
+	got := slices.Sorted(maps.Keys(obj))
+	if !slices.Equal(got, t4TopLevelKeys) {
+		t.Fatalf("top-level keys = %v; want exactly %v (absent values are null, never omitted keys; no extra top-level keys)", got, t4TopLevelKeys)
 	}
-	return nil, false
 }
 
-func t4TopString(t *testing.T, obj map[string]any, candidates ...string) string {
+func t4String(t *testing.T, obj map[string]any, key string) string {
 	t.Helper()
-	v, ok := t4Get(obj, candidates...)
+	v, ok := obj[key]
 	if !ok {
-		t.Fatalf("json object missing required field %v\nobject=%v", candidates, obj)
+		t.Fatalf("json object missing required key %q\nobject=%v", key, obj)
 	}
-	switch tv := v.(type) {
-	case string:
-		return tv
-	case []any:
-		parts := make([]string, 0, len(tv))
-		for _, e := range tv {
-			if s, ok := e.(string); ok {
-				parts = append(parts, s)
-			}
-		}
-		return strings.Join(parts, " ")
-	default:
-		t.Fatalf("field %v is %T; want a string or array of strings", candidates, v)
-		return ""
+	s, ok := v.(string)
+	if !ok {
+		t.Fatalf("%q is %T; want a string", key, v)
 	}
+	return s
 }
 
 func t4Hits(t *testing.T, obj map[string]any) []map[string]any {
 	t.Helper()
-	v, ok := t4Get(obj, "hits")
+	v, ok := obj["hits"]
 	if !ok {
 		t.Fatalf("json object missing required 'hits' array\nobject=%v", obj)
 	}
@@ -323,52 +324,42 @@ func t4Hits(t *testing.T, obj map[string]any) []map[string]any {
 	return out
 }
 
-func t4HitField(t *testing.T, h map[string]any, idx int, candidates ...string) string {
+func t4HitString(t *testing.T, h map[string]any, idx int, key string) string {
 	t.Helper()
-	v, ok := t4Get(h, candidates...)
+	v, ok := h[key]
 	if !ok {
-		t.Fatalf("hit[%d] missing required field %v\nhit=%v", idx, candidates, h)
+		t.Fatalf("hits[%d] missing required key %q (absent values are null, never omitted keys)\nhit=%v", idx, key, h)
 	}
 	s, ok := v.(string)
 	if !ok {
-		t.Fatalf("hit[%d] field %v is %T; want string", idx, candidates, v)
+		t.Fatalf("hits[%d].%s is %T; want string", idx, key, v)
 	}
 	return s
 }
 
-func t4AssertDegradedNullOrAbsent(t *testing.T, obj map[string]any) {
+func t4HitNumber(t *testing.T, h map[string]any, idx int, key string) int {
 	t.Helper()
-	if v, ok := t4Get(obj, "degraded"); ok && v != nil {
-		t.Errorf("degraded = %v; want null (or absent) on a successful search", v)
+	v, ok := h[key]
+	if !ok {
+		t.Fatalf("hits[%d] missing required key %q (absent values are null, never omitted keys)\nhit=%v", idx, key, h)
 	}
+	f, ok := v.(float64)
+	if !ok {
+		t.Fatalf("hits[%d].%s is %T; want an integer", idx, key, v)
+	}
+	return int(f)
 }
 
-// t4HasOffsetHint reports whether the offset value surfaces under any
-// offset-named key, at the top level or within a hit.
-func t4HasOffsetHint(obj map[string]any, want int) bool {
-	if t4OffsetIn(obj, want) {
-		return true
+// t4AssertNull requires the key to be present with a null value — the
+// "absent values are null, never omitted keys" rule.
+func t4AssertNull(t *testing.T, m map[string]any, key, label string) {
+	t.Helper()
+	v, ok := m[key]
+	if !ok {
+		t.Errorf("%s is omitted; absent values are null, never omitted keys", label)
+		return
 	}
-	if v, ok := t4Get(obj, "hits"); ok {
-		if arr, ok := v.([]any); ok {
-			for _, e := range arr {
-				if m, ok := e.(map[string]any); ok && t4OffsetIn(m, want) {
-					return true
-				}
-			}
-		}
+	if v != nil {
+		t.Errorf("%s = %v; want null", label, v)
 	}
-	return false
-}
-
-func t4OffsetIn(m map[string]any, want int) bool {
-	for k, v := range m {
-		if !strings.Contains(strings.ToLower(k), "offset") {
-			continue
-		}
-		if f, ok := v.(float64); ok && int(f) == want {
-			return true
-		}
-	}
-	return false
 }

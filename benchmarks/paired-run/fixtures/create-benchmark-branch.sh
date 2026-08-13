@@ -12,7 +12,7 @@
 # never exists as any findable commit diff — it lives inside the whole-tree
 # import, and the history shape is identical across every task.
 #
-#   bench/base  = base tree + strip                 (t3/t4/t6/t-smoke run here)
+#   bench/base  = base tree + strip              (t3/t4/t7/t8/t-smoke run here)
 #   bench/t1    = base tree + strip + t1 fixture
 #   bench/t2    = base tree + strip + t2 fixture
 #   bench/t5    = base tree + strip + t5 fixture
@@ -119,7 +119,8 @@ Wire the tips in before the dry-run gate:
      t5:       fixture: $T5_TIP
      t3:       fixture: $BASE_TIP
      t4:       fixture: $BASE_TIP
-     t6:       fixture: $BASE_TIP
+     t7:       fixture: $BASE_TIP
+     t8:       fixture: $BASE_TIP
      t-smoke:  fixture: $BASE_TIP
 
 2) ~/.calm/paired-run.config.json — set:

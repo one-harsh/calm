@@ -1,0 +1,35 @@
+diff --git a/a.go b/a.go
+index 1f2a3b4..5c6d7e8 100644
+--- a/a.go
++++ b/a.go
+@@ -1,5 +1,6 @@
+ package sample
+ 
++// Alpha marker line one.
+ func Alpha() string {
+ 	return "alpha"
+ }
+@@ -18,5 +19,5 @@
+ func Zeta() int {
+-	return 25
++	return 26
+ }
+ 
+ // zeta marker line two.
+diff --git a/b.go b/b.go
+index 9a8b7c6..d5e4f3a 100644
+--- a/b.go
++++ b/b.go
+@@ -3,5 +3,6 @@
+ func Beta() string {
+ 	return "beta"
+ }
++// beta marker line three.
+ 
+ var betaCount = 1
+@@ -30,3 +31,4 @@
+ func Omega() bool {
+-	return false
++	return true
++	// omega marker line four.
+ }

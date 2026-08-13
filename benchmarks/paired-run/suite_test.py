@@ -40,7 +40,7 @@ def test_prompts_are_verbatim() -> None:
     assert "--json" in tasks["t4"].prompt
     assert tasks["t5"].prompt.startswith("Operator bug report")
     assert "management API endpoints" in tasks["t7"].prompt
-    assert "extract pipeline" in tasks["t8"].prompt
+    assert "per file per hunk" in tasks["t8"].prompt
     for task in tasks.values():
         # No arm-specific steering: prompts never instruct preferring calm_* tools.
         assert "Prefer the calm" not in task.prompt
@@ -95,6 +95,20 @@ def test_resolved_fixture_task_runnable_once_checker_present(tmp_path: Path) -> 
     )
     runnable, reason = task.is_runnable(tmp_path)
     assert runnable, reason
+
+
+def test_committed_checkers_match_the_committed_suite() -> None:
+    # The checker layer and the suite are one unit: every task names a checker
+    # that exists and is runnable, and no checker lingers for a task the suite
+    # no longer defines (a retired task leaves nothing behind to be run by
+    # accident).
+    tasks = suite.load_suite()
+    for task in tasks:
+        checker = task.checker_path(suite.HERE)
+        assert checker.is_file(), f"{task.id}: checker missing at {task.acceptance}"
+        assert checker.stat().st_mode & 0o111, f"{task.id}: checker {task.acceptance} is not executable"
+    on_disk = {f"checks/{p.name}" for p in (suite.HERE / "checks").glob("*.sh")}
+    assert on_disk == {t.acceptance for t in tasks}
 
 
 def test_malformed_suite_rejected(tmp_path: Path) -> None:

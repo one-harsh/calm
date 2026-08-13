@@ -1,0 +1,30 @@
+package sample
+
+import (
+	"fmt"
+	"strings"
+)
+
+const (
+	Greeting = "hello there"
+
+	Farewell = "goodbye now"
+)
+
+type Widget struct {
+	Name string
+
+	Size int
+}
+
+func (w Widget) Describe() string {
+	label := strings.ToUpper(w.Name)
+
+	return fmt.Sprintf("%s/%d", label, w.Size)
+}
+
+func Assemble(name string, size int) Widget {
+	trimmed := strings.TrimSpace(name)
+
+	return Widget{Name: trimmed, Size: size}
+}

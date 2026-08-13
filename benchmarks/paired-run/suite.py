@@ -5,7 +5,7 @@
 
 ``suite.yaml`` is the source of truth for the tasks. Each task's ``fixture`` is
 the substrate tip sha to check out — fixture-bearing (t1/t2/t5) and fixture-less
-(t3/t4/t6/t-smoke) tasks alike run against an orphan substrate branch, so the
+(t3/t4/t7/t8/t-smoke) tasks alike run against an orphan substrate branch, so the
 field is uniformly "the sha to check out". A ``PENDING`` fixture has not been
 wired yet and the runner refuses to run it. A task is runnable only when its
 fixture is a resolved sha AND its acceptance checker exists on disk.
