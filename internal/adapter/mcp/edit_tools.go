@@ -24,14 +24,16 @@ const (
 	toolNameWriteFile = "calm_write_file"
 )
 
-const editFileDescription = "Edit a workspace file by replacing exactly one occurrence of old_string " +
-	"with new_string — this mutates the file on disk. Prefer this over host-native edit tools: the " +
+const editFileDescription = "Edit a workspace file by replacing old_string with new_string — this " +
+	"mutates the file on disk. Prefer this over host-native edit tools: the " +
 	"post-edit content is captured and indexed, keeping this file's read label current. " +
 	"Requires basis: the source label ending in @<token> that your latest calm_read_file, calm_edit_file, " +
 	"or calm_write_file of this same path returned. The basis asserts you know the file's current bytes " +
 	"and is checked against the file on disk before anything is written, so a file changed behind your " +
-	"back is never silently overwritten. old_string must match the file bytes exactly once, including " +
-	"whitespace and line endings; zero or multiple matches fail without touching the file. " +
+	"back is never silently overwritten. old_string must match the file bytes exactly, including " +
+	"whitespace and line endings; by default it must match exactly once, and zero or multiple matches " +
+	"fail without touching the file. Set replace_all=true to replace every occurrence instead — the " +
+	"confirmation then reports how many were replaced, and a zero-match still fails. " +
 	"On success the response is a short confirmation plus basis=<new label> — the edited content is not " +
 	"echoed; pass that label as the basis of your next edit or write of this file, and read the new " +
 	"content with calm_search source=<that label> if you need to see it. If the basis is missing, unknown, " +
@@ -65,8 +67,9 @@ const editFileSchema = `{
   "properties": {
     "path": {"type": "string", "description": "File path, workspace-relative."},
     "basis": {"type": "string", "description": "Source label ending in @<token> from your latest read, edit, or write capture of this path; asserts you know the file's current bytes."},
-    "old_string": {"type": "string", "description": "Exact bytes to replace; must match the file exactly once, including whitespace and line endings."},
+    "old_string": {"type": "string", "description": "Exact bytes to replace, including whitespace and line endings; must match the file exactly once unless replace_all is true."},
     "new_string": {"type": "string", "description": "Replacement bytes; may be empty to delete the matched text."},
+    "replace_all": {"type": "boolean", "description": "Replace every occurrence of old_string instead of requiring a single match; defaults to false. The confirmation reports how many were replaced; a zero-match still fails."},
     "workspace": {"type": "string", "description": "Workspace ID to target; defaults to the primary workspace."}
   },
   "required": ["path", "basis", "old_string", "new_string"],
@@ -86,11 +89,12 @@ const writeFileSchema = `{
 }`
 
 type editFileArgs struct {
-	Path      string `json:"path"`
-	Basis     string `json:"basis"`
-	OldString string `json:"old_string"`
-	NewString string `json:"new_string"`
-	Workspace string `json:"workspace"`
+	Path       string `json:"path"`
+	Basis      string `json:"basis"`
+	OldString  string `json:"old_string"`
+	NewString  string `json:"new_string"`
+	ReplaceAll bool   `json:"replace_all"`
+	Workspace  string `json:"workspace"`
 }
 
 type writeFileArgs struct {
@@ -158,12 +162,24 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 	}
 
 	n := strings.Count(old, a.OldString)
-	if n != 1 {
+	switch {
+	case n == 0:
 		return TextResult(fmt.Sprintf(
-			"edit failed: old_string matches %d times; it must match exactly once — add surrounding context to make it unique", n,
+			"edit failed: old_string matches %d times; it must appear in the file — check the exact bytes, including whitespace and line endings", n,
+		), true), nil
+	case n > 1 && !a.ReplaceAll:
+		return TextResult(fmt.Sprintf(
+			"edit failed: old_string matches %d times; it must match exactly once — add surrounding context to make it unique, or set replace_all=true to replace every occurrence", n,
 		), true), nil
 	}
-	newContent := strings.Replace(old, a.OldString, a.NewString, 1)
+
+	limit := 1
+	detail := ""
+	if a.ReplaceAll {
+		limit = n
+		detail = fmt.Sprintf("replaced %d %s", n, plural(n, "occurrence", "occurrences"))
+	}
+	newContent := strings.Replace(old, a.OldString, a.NewString, limit)
 	if len(newContent) > exec.MaxOutputBytes {
 		return TextResult(oversizeMsg("edit"), true), nil
 	}
@@ -173,7 +189,7 @@ func (s *Server) editFile(ctx context.Context, args json.RawMessage) (ToolResult
 	}
 
 	r := exec.Result{Stdout: newContent}
-	return s.confirmMutation(ctx, "edited", a.Path, abs, newContent, capture.Spec{
+	return s.confirmMutation(ctx, "edited", detail, a.Path, abs, newContent, capture.Spec{
 		Ingest:  newContent,
 		Visible: newContent,
 		Res:     r,
@@ -258,7 +274,7 @@ func (s *Server) writeFile(ctx context.Context, args json.RawMessage) (ToolResul
 	}
 
 	r := exec.Result{Stdout: a.Content}
-	return s.confirmMutation(ctx, verb, a.Path, abs, a.Content, capture.Spec{
+	return s.confirmMutation(ctx, verb, "", a.Path, abs, a.Content, capture.Spec{
 		Ingest:  a.Content,
 		Visible: a.Content,
 		Res:     r,
@@ -303,13 +319,17 @@ func (s *Server) verifyBasis(basis, abs, current, missingCause string) basisVerd
 // the next mutation's basis. The content itself never rides back — the label
 // addresses it, and echoing it would restore the view the basis requirement
 // makes unnecessary.
-func (s *Server) confirmMutation(ctx context.Context, verb, path, abs, content string, spec capture.Spec) (ToolResult, error) {
+func (s *Server) confirmMutation(ctx context.Context, verb, detail, path, abs, content string, spec capture.Spec) (ToolResult, error) {
 	out := s.engine.Capture(ctx, spec)
 	s.basis.Record(out.Label, abs, content)
 	logging.BindSummary(ctx, obs.PresentationModeFieldSummary)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s (%d bytes).\n", verb, path, len(content))
+	fmt.Fprintf(&b, "%s %s (%d bytes)", verb, path, len(content))
+	if detail != "" {
+		fmt.Fprintf(&b, ", %s", detail)
+	}
+	b.WriteString(".\n")
 	writeBasisLine(&b, out.Label, "pass this as basis for the next edit or write of this file; read the new content with")
 	return s.mutationResult(TextResult(b.String(), false), out)
 }
@@ -370,6 +390,13 @@ func (s *Server) mutationResult(res ToolResult, out capture.Outcome) (ToolResult
 		return res, nil
 	}
 	return res, &DegradedSignal{Reason: out.Reason, Detail: out.Detail}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func lineCount(s string) int {

@@ -337,6 +337,166 @@ func TestEditFile_NonUniqueMatchFails(t *testing.T) {
 	}
 }
 
+func TestEditFile_ReplaceAllReplacesEveryOccurrenceAndReportsTheCount(t *testing.T) {
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	mu, sources := sourcesCapture(m, 3)
+
+	ws := t.TempDir()
+	writeWorkspaceFileMCP(t, ws, "f.txt", "dup\ndup\ndup\n")
+	h := newWorkspaceHarness(t, m, ws)
+	initSession(t, h, "claude-code")
+
+	basis := readBasis(t, h, 2, m, "f.txt")
+
+	eventsDone, events := eventCapture(m)
+	res := callTool(t, h, 3, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "dup", "new_string": "x", "replace_all": true,
+	})
+	if res.IsError {
+		t.Fatalf("replace_all edit errored: %+v", res)
+	}
+	text := resultText(t, res)
+	if !strings.HasPrefix(text, "edited f.txt (6 bytes), replaced 3 occurrences.\n") {
+		t.Errorf("replace_all must report the count on the bare confirmation; got:\n%s", text)
+	}
+	if strings.Contains(text, "x\nx\nx") {
+		t.Errorf("success must not echo the edited content; got:\n%s", text)
+	}
+	successor := nextBasis(t, text)
+	if !strings.HasPrefix(successor, "calm:v1:file:read:f.txt@") || successor == basis {
+		t.Errorf("successor basis = %q; want a fresh fused read label", successor)
+	}
+
+	disk, _ := os.ReadFile(filepath.Join(ws, "f.txt"))
+	if string(disk) != "x\nx\nx\n" {
+		t.Errorf("disk = %q; want every occurrence replaced", disk)
+	}
+	awaitSignal(t, eventsDone)
+
+	mu.Lock()
+	want := []string{"calm:v1:file:read:f.txt", "calm:v1:file:edit:f.txt#2", "calm:v1:file:read:f.txt"}
+	if len(*sources) != 3 || (*sources)[1] != want[1] || (*sources)[2] != want[2] {
+		t.Errorf("ingest order = %v; want one read then a single history-then-latest pair %v", *sources, want)
+	}
+	mu.Unlock()
+
+	var ft map[string]any
+	for _, e := range *events {
+		if e.Type == "file_touched" {
+			ft = e.Data
+		}
+	}
+	if ft == nil {
+		t.Fatalf("no file_touched event: %+v", *events)
+	}
+	if ft["operation"] != "edit" || ft["path"] != "f.txt" {
+		t.Errorf("payload = %+v", ft)
+	}
+	diff, _ := ft["diff"].(string)
+	if !strings.Contains(diff, "-dup") || !strings.Contains(diff, "+x") {
+		t.Errorf("diff = %q; want the replacements reflected", diff)
+	}
+	if ft["latest_source"] != "calm:v1:file:read:f.txt" || ft["history_source"] != "calm:v1:file:edit:f.txt#2" {
+		t.Errorf("cross-links = %v / %v", ft["latest_source"], ft["history_source"])
+	}
+}
+
+func TestEditFile_ReplaceAllSingleMatchReportsOneOccurrence(t *testing.T) {
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	sourcesCapture(m, 3)
+
+	ws := t.TempDir()
+	writeWorkspaceFileMCP(t, ws, "f.txt", "hello old world\n")
+	h := newWorkspaceHarness(t, m, ws)
+	initSession(t, h, "claude-code")
+
+	basis := readBasis(t, h, 2, m, "f.txt")
+
+	eventsDone := writeEventsSignal(m, nil)
+	res := callTool(t, h, 3, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "old", "new_string": "new", "replace_all": true,
+	})
+	if res.IsError {
+		t.Fatalf("replace_all with a single match errored: %+v", res)
+	}
+	text := resultText(t, res)
+	if !strings.HasPrefix(text, "edited f.txt (16 bytes), replaced 1 occurrence.\n") {
+		t.Errorf("a lone match must be counted in the singular; got:\n%s", text)
+	}
+	if successor := nextBasis(t, text); !strings.HasPrefix(successor, "calm:v1:file:read:f.txt@") || successor == basis {
+		t.Errorf("successor basis = %q; want a fresh fused read label", successor)
+	}
+	awaitSignal(t, eventsDone)
+	if disk, _ := os.ReadFile(filepath.Join(ws, "f.txt")); string(disk) != "hello new world\n" {
+		t.Errorf("disk = %q; want the single occurrence replaced", disk)
+	}
+}
+
+func TestEditFile_ReplaceAllZeroMatchFails(t *testing.T) {
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	sourcesCapture(m, 1)
+
+	ws := t.TempDir()
+	const content = "nothing to see here\n"
+	writeWorkspaceFileMCP(t, ws, "f.txt", content)
+	h := newWorkspaceHarness(t, m, ws)
+	initSession(t, h, "claude-code")
+
+	basis := readBasis(t, h, 2, m, "f.txt")
+
+	res := callTool(t, h, 3, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "absent", "new_string": "x", "replace_all": true,
+	})
+	if !res.IsError || !strings.Contains(resultText(t, res), "matches 0 times") {
+		t.Errorf("zero-match replace_all = %+v; want a count-bearing failure", res)
+	}
+	if disk, _ := os.ReadFile(filepath.Join(ws, "f.txt")); string(disk) != content {
+		t.Errorf("file changed on a zero-match replace_all: %q", disk)
+	}
+}
+
+func TestEditFile_ReplaceAllFalseKeepsExactOnce(t *testing.T) {
+	m := calm.NewMockClient(t)
+	inspectSession(t, m)
+	sourcesCapture(m, 3)
+
+	ws := t.TempDir()
+	writeWorkspaceFileMCP(t, ws, "f.txt", "dup line\ndup line\nunique\n")
+	h := newWorkspaceHarness(t, m, ws)
+	initSession(t, h, "claude-code")
+
+	basis := readBasis(t, h, 2, m, "f.txt")
+
+	res := callTool(t, h, 3, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "dup line", "new_string": "x", "replace_all": false,
+	})
+	text := resultText(t, res)
+	if !res.IsError || !strings.Contains(text, "matches 2 times") {
+		t.Errorf("multiple matches with the flag off = %+v; want the count-bearing failure", res)
+	}
+	if !strings.Contains(text, "set replace_all=true") {
+		t.Errorf("the failure must name the option that would apply the edit; got:\n%s", text)
+	}
+
+	eventsDone := writeEventsSignal(m, nil)
+	res = callTool(t, h, 4, "calm_edit_file", map[string]any{
+		"path": "f.txt", "basis": basis, "old_string": "unique", "new_string": "solo", "replace_all": false,
+	})
+	if res.IsError {
+		t.Fatalf("single match with the flag off errored: %+v", res)
+	}
+	if text = resultText(t, res); !strings.HasPrefix(text, "edited f.txt (23 bytes).\n") {
+		t.Errorf("the flag-off confirmation must stay bare, with no count; got:\n%s", text)
+	}
+	awaitSignal(t, eventsDone)
+	if disk, _ := os.ReadFile(filepath.Join(ws, "f.txt")); string(disk) != "dup line\ndup line\nsolo\n" {
+		t.Errorf("disk = %q; want only the unique match replaced", disk)
+	}
+}
+
 func TestEditFile_CRLFRoundtripPreserved(t *testing.T) {
 	m := calm.NewMockClient(t)
 	inspectSession(t, m)
