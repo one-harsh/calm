@@ -43,6 +43,8 @@ func mapClientError(err error) (m errorMapping, ok bool) {
 		return errorMapping{http.StatusConflict, "client_exists", "client already registered in this namespace"}, true
 	case errors.Is(err, db.ErrClientNotFound):
 		return errorMapping{http.StatusNotFound, "client_not_found", "client not found in this namespace"}, true
+	case errors.Is(err, db.ErrClientProtected):
+		return errorMapping{http.StatusConflict, "client_protected", "the default client is the bootstrap fallback for sessions that name no client and cannot be deleted"}, true
 	case errors.Is(err, db.ErrClientNameRequired):
 		return errorMapping{http.StatusBadRequest, "invalid_request", "client name is required"}, true
 	case errors.Is(err, db.ErrInvalidClientCredential):

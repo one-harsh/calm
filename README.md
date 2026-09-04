@@ -114,11 +114,11 @@ Implemented end to end:
 - session events and snapshots
 - workload feedback and outcome attribution
 - namespace and session isolation
+- namespace-scoped administration (`/v1/manage/*` session and client listing, and cascading delete)
 - coding-agent MCP adapter
 - Claude Code shell-output capture
 - Python evaluation-harness example
-
-The `/v1/manage/*` administrative endpoints are currently stubbed and return `501`.
+- paired-run token-economics benchmark with recorded results ([benchmarks/paired-run](benchmarks/paired-run/))
 
 The public HTTP contract is defined in [docs/api/openapi.yaml](docs/api/openapi.yaml).
 
@@ -482,6 +482,9 @@ internal/
 
 examples/
   eval-harness/           direct-HTTP evaluation workflow
+
+benchmarks/
+  paired-run/             token-economics benchmark: arms, oracles, recorded sweeps
 
 docs/
   HLD.md                  canonical architecture and decisions

@@ -258,28 +258,6 @@ func TestCreateSessionHandler_ResponseHasNoLabelsField(t *testing.T) {
 	}
 }
 
-// Routes that exist in the OpenAPI spec but have no handler implementation return 501 with error=not_implemented.
-func TestNotImplementedHandlersStillReturn501(t *testing.T) {
-	httpReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet,
-		env.serverURL+"/v1/manage/sessions", http.NoBody)
-	httpReq.Header.Set(auth.HeaderAPIKey, testMasterKey)
-	httpResp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		t.Fatalf("http: %v", err)
-	}
-	defer func() { _ = httpResp.Body.Close() }()
-	if httpResp.StatusCode != http.StatusNotImplemented {
-		t.Errorf("status = %d; want 501", httpResp.StatusCode)
-	}
-	var body map[string]any
-	if err := json.NewDecoder(httpResp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode 501 body: %v", err)
-	}
-	if body["error"] != "not_implemented" {
-		t.Errorf("error = %v; want not_implemented", body["error"])
-	}
-}
-
 // A workload deletes its session; the session row and all dependent rows (labels, sources, chunks, events) are removed in cascade, and the client's last_activity_at is stamped.
 func TestDeleteSessionHandler_HappyDeletesSessionWithCascade(t *testing.T) {
 	seedClient(t, env.sqlDB, testNamespace, db.DefaultClient)

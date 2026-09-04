@@ -257,3 +257,7 @@ func (s *Service) DeleteAll(ctx context.Context, filter db.ListSessionsFilter) (
 func (s *Service) ScanExpired(ctx context.Context, now time.Time) ([]db.SessionRef, error) {
 	return s.store.Sessions().ScanExpired(ctx, now)
 }
+
+func (s *Service) InvalidateNamespaceCache(namespace string) {
+	s.cache.InvalidateNamespace(namespace)
+}

@@ -47,6 +47,19 @@ func (s *Service) CountSessions(ctx context.Context, namespace, name string) (in
 	return s.store.Clients().CountSessions(ctx, namespace, name)
 }
 
+func (s *Service) PreviewDelete(ctx context.Context, namespace, name string) (int, error) {
+	if namespace == "" {
+		return 0, db.ErrNamespaceRequired
+	}
+	if name == "" {
+		return 0, db.ErrClientNameRequired
+	}
+	if name == db.DefaultClient {
+		return 0, db.ErrClientProtected
+	}
+	return s.CountSessions(ctx, namespace, name)
+}
+
 func (s *Service) Delete(ctx context.Context, namespace, name string) (db.DeleteClientResult, error) {
 	if namespace == "" {
 		return db.DeleteClientResult{}, db.ErrNamespaceRequired

@@ -52,7 +52,8 @@ func wireWithTx(dal *db.MockDAL, sessions *db.MockSessionRepo, clients *db.MockC
 	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, fn func(db.Repos) error) error {
 			return fn(db.Repos{Sessions: sessions, Clients: clients})
-		}).Maybe()
+		},
+	).Maybe()
 }
 
 // hashFor centralizes the namespace-scoped hashing the service performs
@@ -210,6 +211,23 @@ func TestLookup_CacheHitDoesNotCallDAL(t *testing.T) {
 	}
 	if md.Client != "alice" || md.ID != 7 {
 		t.Errorf("md = %+v; want client=alice id=7", md)
+	}
+}
+
+func TestInvalidateNamespaceCache_EvictsOnlyTargetNamespace(t *testing.T) {
+	h := newServiceHarness(t, 100)
+	h.svc.cache.Put(cacheKey{Namespace: "ns-a", SessionToken: "s1"},
+		SessionMetadata{ID: 1, Client: "alice", TTLMinutes: 60, CreatedAt: time.Now().UTC()})
+	h.svc.cache.Put(cacheKey{Namespace: "ns-b", SessionToken: "s2"},
+		SessionMetadata{ID: 2, Client: "bob", TTLMinutes: 60, CreatedAt: time.Now().UTC()})
+
+	h.svc.InvalidateNamespaceCache("ns-a")
+
+	if _, ok := h.svc.cache.Lookup(cacheKey{Namespace: "ns-a", SessionToken: "s1"}); ok {
+		t.Error("ns-a entry still cached after InvalidateNamespaceCache(ns-a)")
+	}
+	if _, ok := h.svc.cache.Lookup(cacheKey{Namespace: "ns-b", SessionToken: "s2"}); !ok {
+		t.Error("ns-b entry evicted; invalidation must stop at the namespace boundary")
 	}
 }
 

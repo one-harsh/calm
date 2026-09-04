@@ -33,7 +33,8 @@ func newServiceHarness(t *testing.T) *serviceHarness {
 	dal.EXPECT().WithTx(mock.Anything, mock.Anything).RunAndReturn(
 		func(_ context.Context, fn func(db.Repos) error) error {
 			return fn(db.Repos{Clients: clients})
-		}).Maybe()
+		},
+	).Maybe()
 	return &serviceHarness{svc: New(dal, logging.Nop()), dal: dal, clients: clients}
 }
 
@@ -76,6 +77,36 @@ func TestCountSessions_ProxiesToDAL(t *testing.T) {
 	}
 	if got != 7 {
 		t.Errorf("got %d; want 7", got)
+	}
+}
+
+func TestPreviewDelete_ReportsCascadeWidth(t *testing.T) {
+	h := newServiceHarness(t)
+	h.clients.EXPECT().CountSessions(mock.Anything, "ns-a", "alice").Return(4, nil).Once()
+
+	got, err := h.svc.PreviewDelete(context.Background(), "ns-a", "alice")
+	if err != nil {
+		t.Fatalf("PreviewDelete: %v", err)
+	}
+	if got != 4 {
+		t.Errorf("got %d; want 4", got)
+	}
+}
+
+func TestPreviewDelete_ProtectedClientRefusedLikeDelete(t *testing.T) {
+	h := newServiceHarness(t)
+	// No repo expectations — previewing an impossible delete never reaches the DAL.
+	if _, err := h.svc.PreviewDelete(context.Background(), "ns-a", db.DefaultClient); !errors.Is(err, db.ErrClientProtected) {
+		t.Errorf("got %v; want ErrClientProtected", err)
+	}
+}
+
+func TestPreviewDelete_UnknownClientNotFound(t *testing.T) {
+	h := newServiceHarness(t)
+	h.clients.EXPECT().CountSessions(mock.Anything, "ns-a", "ghost").Return(0, db.ErrClientNotFound).Once()
+
+	if _, err := h.svc.PreviewDelete(context.Background(), "ns-a", "ghost"); !errors.Is(err, db.ErrClientNotFound) {
+		t.Errorf("got %v; want ErrClientNotFound", err)
 	}
 }
 

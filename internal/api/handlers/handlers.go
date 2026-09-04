@@ -4,8 +4,6 @@
 package handlers
 
 import (
-	"errors"
-
 	logging "github.com/one-harsh/context-logging"
 
 	"github.com/one-harsh/calm/internal/api/genapi"
@@ -18,9 +16,6 @@ import (
 	"github.com/one-harsh/calm/internal/session"
 	"github.com/one-harsh/calm/internal/snapshot"
 )
-
-// ErrNotImplemented is the sentinel stubs return; StrictErrorHandler maps it to 501.
-var ErrNotImplemented = errors.New("endpoint not implemented")
 
 type HandlersConfig struct {
 	DefaultTTLMinutes    int

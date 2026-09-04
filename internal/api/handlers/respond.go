@@ -5,7 +5,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	logging "github.com/one-harsh/context-logging"
@@ -15,24 +14,15 @@ import (
 )
 
 func (h *Handlers) StrictErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, ErrNotImplemented):
-		writeError(w, http.StatusNotImplemented, genapi.Error{
-			Error:    "not_implemented",
-			Detail:   ptr("endpoint not implemented yet"),
-			Endpoint: ptr(r.URL.Path),
-		})
-	default:
-		h.deps.Logger.WithContext(r.Context()).Error(
-			"handler returned unexpected error",
-			obs.Endpoint(r.URL.Path),
-			logging.ErrorField(err),
-		)
-		writeError(w, http.StatusInternalServerError, genapi.Error{
-			Error:  "internal_error",
-			Detail: ptr("unexpected error"),
-		})
-	}
+	h.deps.Logger.WithContext(r.Context()).Error(
+		"handler returned unexpected error",
+		obs.Endpoint(r.URL.Path),
+		logging.ErrorField(err),
+	)
+	writeError(w, http.StatusInternalServerError, genapi.Error{
+		Error:  "internal_error",
+		Detail: ptr("unexpected error"),
+	})
 }
 
 func writeError(w http.ResponseWriter, status int, body genapi.Error) {
