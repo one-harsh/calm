@@ -4,7 +4,7 @@
 
 # 1. Motivation & Problem Statement
 
-LLM APIs charge per token on input. The entire context window is sent as input on every turn. Anything sitting in context — whether the model needs it or not — gets billed again and again until the conversation compacts.
+LLM APIs charge per token on input, and the entire context window is sent as input on every turn. Prompt caching discounts an unchanged prefix but does not zero it: cached tokens are re-billed at reduced price on every turn, at full price on any cache miss — expiry, compaction, a change earlier in the prefix — and price aside, long contexts degrade the model's attention over what remains. Anything sitting in context, whether the model needs it or not, keeps costing until the conversation compacts.
 
 Teams running shared AI workloads — internal LLM applications, agent-based pipelines, coding-agent integrations against shared infrastructure — hit this problem at scale. When an application's tool call returns 50 KB of logs, that 50 KB enters the LLM's context window verbatim. It sits there for 10–15 turns, gets re-charged each time, before compaction clears it. There is no filtering, no relevance gating, no observability. The context window is treated as a pipe, not a managed resource.
 

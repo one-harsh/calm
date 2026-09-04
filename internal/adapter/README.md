@@ -6,12 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 # CALM Adapter
 
 A coding agent's tools spill a lot into its context window — a build
-log, a whole file, a `git diff` — and every line is re-billed on the
-model's next turn. The adapter is what puts CALM in front of that: it
-runs (or observes) the agent's action, captures the **full** output into
-a CALM session, and hands the agent back a compact, task-facing version
-plus a label to retrieve the rest on demand. The raw output stays
-searchable in CALM; the agent's context stays lean.
+log, a whole file, a `git diff` — and every line rides the input on
+every following turn: discounted when cached, never free, always in
+the way of the model's attention. The adapter is what puts CALM in front
+of that: it runs (or observes) the agent's action, captures the **full**
+output into a CALM session, and hands the agent back a task-facing version
+plus a label to retrieve the rest on demand — verbatim when the output is
+small enough to read whole (failures included), compact when it isn't. The
+raw output stays searchable in CALM; the agent's context stays lean.
 
 Concretely: the agent runs a 5,000-line test suite. Without the adapter,
 all 5,000 lines land in context. With it, the agent gets back a short
@@ -53,12 +55,13 @@ it:
   - `calm-capture init --harness=claude` — installs the Claude Code hook
     (deployment steps in the top-level README).
 
-  Every non-degraded capture prints a trailer pairing the source label
-  with the feedback ref, so recall and outcome reporting are both
-  discoverable from the result:
+  Every non-degraded capture names its source label in the presentation
+  body itself (`Captured 1/1 sections under "calm:v1:shell:sh#1@ab12cd"`),
+  at any output size, so recall is always discoverable from the result.
+  The trailer carries the one thing the body doesn't — the outcome handle:
 
   ```text
-  ↳ source=calm:v1:shell:sh#1@ab12cd · feedback: calm-capture feedback <ref>
+  ↳ feedback: calm-capture feedback <ref>
   ```
 
 **This is one CALM workload, not the universal shape of CALM

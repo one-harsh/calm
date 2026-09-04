@@ -4,9 +4,9 @@
 
 ## The problem you probably haven't noticed
 
-Every LLM API charges per token on input, and the entire context window is sent as input on every turn. So anything sitting in context — whether the model needs it or not — gets billed again and again until the platform compacts the conversation.
+Every LLM API sends the entire context window as input on every turn. Prompt caching discounts the unchanged prefix — but discounted rent is still rent, every cache miss re-bills it in full, and no discount helps the model attend to what matters. Anything sitting in context costs money on every turn and dilutes answer quality the whole time.
 
-When a team's LLM workloads call tools (logs, docs, API queries), the raw output goes straight into the context window. A 50 KB log dump sits there for 10–15 turns, re-billed each time, before compaction clears it. No filtering, no relevance gating, no observability — the context window is a pipe, not a managed resource.
+When a team's LLM workloads call tools (logs, docs, API queries), the raw output goes straight into the context window. A 50 KB log dump sits there for 10–15 turns, paying rent each turn, before compaction clears it. No filtering, no relevance gating, no observability — the context window is a pipe, not a managed resource.
 
 This compounds in two directions. **Cost** scales with data volume rather than value: real tool outputs typically compress by an order of magnitude without losing what the model needs. **Quality** degrades structurally: LLMs attend poorly to information in the middle of long contexts ([Liu et al., Stanford 2023](https://arxiv.org/abs/2307.03172)), so as context fills with stale output, answers get worse. That's how transformers work — not something providers will fix.
 
@@ -38,7 +38,7 @@ Those are illustrative, not architectural categories. Any LLM application that s
 
 ## What changes for the reader
 
-- **Token spend drops by an order of magnitude** on tool-heavy sessions.
+- **Net token spend drops where the volume is.** Bulky outputs enter context an order of magnitude smaller, and the economics are measured, not asserted — the repository ships a benchmark that prices CALM against native tooling on real coding tasks, with results recorded in-repo.
 - **The "max N tool calls" ceiling becomes unnecessary.** Pipelines throttle their own tool use today because raw output overruns context; controlling what enters context removes the ceiling.
 - **Interactive sessions survive longer before compaction.** When it does fire, state is reconstructable from the captured event stream — the model remembers what it did and what was decided.
 - **Context quality becomes observable.** When a session degrades today, teams can't tell if the model is wrong for the task or the context is polluted. CALM exposes the signals to tell them apart.
@@ -65,5 +65,5 @@ Read the [HLD](HLD.md) if any of the above is surprising or unwelcome — the re
 Concrete contributions of value, in rough order of usefulness:
 
 - A candidate workload (internal LLM app, eval harness, coding-agent integration) willing to integrate and report what works and what doesn't.
-- Visibility into existing token-spend dashboards so the compression claim can be validated against measured data rather than asserted.
+- Visibility into existing token-spend dashboards to extend the measured record beyond the repository's own paired-run benchmark (`benchmarks/paired-run/results/`) — external workloads validate what in-repo coding tasks cannot.
 - Review of the API contract at [`api/openapi.yaml`](api/openapi.yaml) and the architectural forks in HLD's Decision Log.
